@@ -3,7 +3,7 @@
 param(
     [Parameter(Mandatory)][string]$PortableDirectory,
     [string]$OutputDirectory = "desktop-msix",
-    [string]$Version = "0.1.0.0",
+    [string]$Version = "1.0.0.0",
     [Parameter(Mandatory, ParameterSetName="Development")][switch]$Development,
     [Parameter(Mandatory, ParameterSetName="Production")][string]$CertificateThumbprint,
     [Parameter(Mandatory, ParameterSetName="Production")][string]$IdentityName,
@@ -25,8 +25,8 @@ function Find-SdkTool([string]$Name) {
     return $candidate
 }
 $parts = $Version.Split(".")
-if ($parts.Count -ne 4 -or @($parts | Where-Object { $_ -notmatch '^\d{1,5}$' -or [int]$_ -gt 65535 }).Count -ne 0 -or [int]$parts[0] -eq 0 -and [int]$parts[1] -eq 0 -and [int]$parts[2] -eq 0 -and [int]$parts[3] -eq 0) {
-    throw "MSIX version must have four non-negative 16-bit components and not be all zero."
+if ($parts.Count -ne 4 -or @($parts | Where-Object { $_ -notmatch '^\d{1,5}$' -or [int]$_ -gt 65535 }).Count -ne 0 -or [int]$parts[0] -eq 0) {
+    throw "MSIX version must have four 16-bit components and a nonzero major version."
 }
 $source = (Resolve-Path $PortableDirectory).Path
 $out = [IO.Path]::GetFullPath($OutputDirectory)

@@ -85,9 +85,12 @@ jobs:
           path: desktop-publish/
       - name: Build and sign development MSIX
         shell: pwsh
-        run: ./desktop/package-msix.ps1 -PortableDirectory desktop-publish -OutputDirectory desktop-msix -Development
+        run: ./desktop/package-msix.ps1 -PortableDirectory desktop-publish -OutputDirectory desktop-msix -Version "1.0.$env:GITHUB_RUN_NUMBER.0" -Development
       - uses: actions/upload-artifact@v4
         with:
           name: GridAgent-Windows-x64-MSIX-Development
           path: desktop-msix/
           if-no-files-found: error
+      - name: Install and activate signed development MSIX
+        shell: powershell
+        run: ./desktop/msix/test-installed.ps1 -PackageDirectory desktop-msix -DisposableTestMachine

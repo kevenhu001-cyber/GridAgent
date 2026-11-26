@@ -9,5 +9,8 @@ public partial class App : Application
         AppDataPaths.ConfigureProcess();
         _window = new MainWindow();
         _window.Activate();
+        if (AppDataPaths.IsPackaged && global::Windows.ApplicationModel.Package.Current.Id.Name == "GridAgent.Development" &&
+            (args.Arguments.Trim() == "--msix-smoke" || Environment.GetCommandLineArgs().Contains("--msix-smoke")))
+            _ = MsixSmoke.RunAsync();
     }
 }
