@@ -424,3 +424,16 @@ def test_native_evidence_repair_revalidates_full_original_scope(tmp_path):
     assert not fixed["original_model_modified"]
     assert resume_repair(tmp_path, repair, solver=lambda *a, **kw: pytest.fail("Repeated solve")) == fixed
     assert diagnose_study(tmp_path, source)["source_report_sha256"] == digest
+    from gridagent.ac_repair_experience import remember_ac_repair, search_ac_experience
+
+    remembered = remember_ac_repair(tmp_path, repair)
+    assert remembered["outcomes"] == ["verified_original_scope"]
+    found = search_ac_experience(tmp_path, source)
+    assert len(found["matches"]) == 1
+    match = found["matches"][0]
+    assert match["repair_study_id"] == repair
+    assert match["direction"] == "increase"
+    assert match["same_source_report"]
+    assert match["structure_similarity"] == 1
+    assert "change" not in match and "proposed_ac_spec" not in match
+    assert found["solver_calls"] == 0

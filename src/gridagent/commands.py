@@ -202,6 +202,19 @@ def workspace_command(root, command, args, *, model_factory=None):
         from .paper import model_estimator, paper_rank
 
         yield from paper_rank(root, model_estimator(create_model()))
+    elif command in {"remember-ac-repair", "search-ac-experience"} and len(args) == 1:
+        import json
+
+        from filelock import Timeout
+
+        from .ac_repair_experience import remember_ac_repair, search_ac_experience
+
+        try:
+            report = (remember_ac_repair(root, args[0]) if command == "remember-ac-repair"
+                      else search_ac_experience(root, args[0]))
+        except Timeout as exc:
+            raise ValueError("Source evidence is currently locked") from exc
+        yield json.dumps(report, ensure_ascii=False, allow_nan=False)
     elif command in {"ac-evidence-repair", "ac-evidence-repair-resume"} and len(args) == 1:
         import json
 

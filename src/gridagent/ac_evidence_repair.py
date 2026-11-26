@@ -3,7 +3,8 @@
 from pathlib import Path
 from uuid import uuid4
 
-from .ac_check import observe, prepare as prepare_ac
+from .ac_check import observe
+from .ac_check import prepare as prepare_ac
 from .ac_check_ir import ACCheckSpec
 from .ac_diagnostic_experiment import PROTOCOL as DIAGNOSTIC_PROTOCOL
 from .ac_diagnostic_experiment import resume_experiment
