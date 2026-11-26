@@ -7,29 +7,46 @@
   <TitleBar x:Name="AppTitleBar" Title="GridAgent" Subtitle="Engineering workspace"/>
   <NavigationView x:Name="Navigation" Grid.Row="1" PaneDisplayMode="Auto" OpenPaneLength="248" IsBackButtonVisible="Collapsed"
    IsSettingsVisible="True" SelectionChanged="Navigate" AlwaysShowHeader="False" CompactModeThresholdWidth="720" ExpandedModeThresholdWidth="1100">
-   <NavigationView.MenuItems><NavigationViewItem Tag="chat" Content="Assistant" Icon="Comment"/><NavigationViewItem Tag="tasks" Content="Research tasks" Icon="AllApps"/><NavigationViewItem Tag="models" Content="Models" Icon="Library"/><NavigationViewItem Tag="runs" Content="Simulation results" Icon="View"/><NavigationViewItem Tag="studies" Content="Studies" Icon="Document"/><NavigationViewItem Tag="tools" Content="Engineering tools" Icon="Repair"/><NavigationViewItem Tag="plugins" Content="Plugins" Icon="Manage"/><NavigationViewItem Tag="knowledge" Content="Knowledge" Icon="Book"/></NavigationView.MenuItems>
+   <NavigationView.MenuItems><NavigationViewItemHeader Content="Workspace"/><NavigationViewItem Tag="chat" Content="Assistant" Icon="Comment" x:Name="AssistantNavigation"/><NavigationViewItem Tag="tasks" Content="Research tasks" Icon="AllApps"/><NavigationViewItem Tag="models" Content="Models" Icon="Library"/><NavigationViewItem Tag="runs" Content="Simulation results" Icon="View"/><NavigationViewItem Tag="studies" Content="Studies" Icon="Document"/><NavigationViewItemHeader Content="Engineering"/><NavigationViewItem Tag="tools" Content="Engineering tools" Icon="Repair"/><NavigationViewItem Tag="plugins" Content="Plugins" Icon="Manage"/><NavigationViewItem Tag="knowledge" Content="Knowledge" Icon="Book"/></NavigationView.MenuItems>
    <Grid Padding="0,0,12,12">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <InfoBar x:Name="Notice" IsOpen="False" IsClosable="True" Margin="12,0,12,8" AutomationProperties.Name="Operation notification"/>
     <Grid Grid.Row="1" x:Name="Pages" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="8">
-     <Grid x:Name="ChatPage" Padding="24,20">
+     <Grid x:Name="ChatPage" Padding="16,16">
       <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-      <Grid ColumnSpacing="12">
+      <Grid ColumnSpacing="12" Margin="8,0,8,0">
        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-       <StackPanel Spacing="4"><TextBlock Text="Engineering assistant" Style="{StaticResource TitleTextBlockStyle}"/><TextBlock Text="Ask a question, construct a model or run a verified research task." Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/></StackPanel>
-       <Button Grid.Column="1" Content="New session" Click="NewSession" VerticalAlignment="Top"/>
+       <StackPanel Spacing="2">
+        <TextBlock Text="GridAgent" Style="{StaticResource SubtitleTextBlockStyle}"/>
+        <TextBlock x:Name="ConversationModel" Text="Engineering assistant" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis"/>
+       </StackPanel>
+       <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
+        <Button Click="OpenConversationHistory" ToolTipService.ToolTip="Conversations" AutomationProperties.Name="Conversations" Style="{StaticResource SubtleButtonStyle}"><SymbolIcon Symbol="List"/></Button>
+        <Button Click="NewSession" ToolTipService.ToolTip="New conversation" AutomationProperties.Name="New conversation" Style="{StaticResource SubtleButtonStyle}"><SymbolIcon Symbol="Add"/></Button>
+       </StackPanel>
       </Grid>
-      <ScrollViewer x:Name="ConversationScroll" Grid.Row="1" Margin="0,16" VerticalScrollBarVisibility="Auto">
-       <StackPanel x:Name="Messages" MaxWidth="860" Spacing="14" Padding="4,8" HorizontalAlignment="Stretch"/>
-      </ScrollViewer>
-      <Border Grid.Row="2" Background="{ThemeResource ControlFillColorDefaultBrush}" BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12" Padding="12" MaxWidth="860" HorizontalAlignment="Stretch">
+      <Grid Grid.Row="1" Margin="0,8">
+       <ListView x:Name="Messages" SelectionMode="None" IsItemClickEnabled="False" IsTabStop="False" HorizontalContentAlignment="Stretch" AutomationProperties.Name="Conversation"
+          ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollMode="Disabled">
+        <ListView.ItemsPanel><ItemsPanelTemplate><ItemsStackPanel ItemsUpdatingScrollMode="KeepItemsInView"/></ItemsPanelTemplate></ListView.ItemsPanel>
+        <ListView.ItemContainerStyle><Style TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Padding" Value="0"/><Setter Property="MinHeight" Value="0"/></Style></ListView.ItemContainerStyle>
+        <ListView.ItemTemplate><DataTemplate><local:ConversationMessageView/></DataTemplate></ListView.ItemTemplate>
+       </ListView>
+       <StackPanel x:Name="EmptyConversation" VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="480" Spacing="12" Margin="20">
+        <TextBlock Text="What are we working on?" FontSize="26" FontWeight="SemiBold" TextAlignment="Center" TextWrapping="Wrap"/>
+        <TextBlock Text="Build a power network, analyze stability, or verify a simulation." TextAlignment="Center" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+        <Button Content="Model a two-bus network" Click="UseSuggestion" HorizontalAlignment="Center"/>
+        <Button Content="Analyze power-system stability" Click="UseSuggestion" HorizontalAlignment="Center"/>
+       </StackPanel>
+      </Grid>
+      <Border Grid.Row="2" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="20" Padding="12" MaxWidth="820" HorizontalAlignment="Stretch">
        <StackPanel Spacing="8">
-        <TextBox x:Name="Prompt" PlaceholderText="Describe an engineering problem…" MinHeight="64" MaxHeight="160" AcceptsReturn="True" TextWrapping="Wrap" AutomationProperties.Name="Research question" KeyDown="PromptKeyDown"/>
+        <TextBox x:Name="Prompt" Background="Transparent" BorderThickness="0" PlaceholderText="Ask anything about your power system…" MinHeight="64" MaxHeight="160" AcceptsReturn="True" TextWrapping="Wrap" AutomationProperties.Name="Research question" KeyDown="PromptKeyDown"/>
         <Grid ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
          <ComboBox x:Name="Mode" SelectedIndex="0" AutomationProperties.Name="Execution mode"><ComboBoxItem Content="Ask assistant"/><ComboBoxItem Content="Verified research"/><ComboBoxItem Content="Multi-agent research"/></ComboBox>
-         <Button x:Name="SendButton" Grid.Column="1" Content="Send" Click="Send" Style="{StaticResource AccentButtonStyle}" MinWidth="84"/>
+         <Button x:Name="SendButton" Grid.Column="1" Click="Send" Style="{StaticResource AccentButtonStyle}" CornerRadius="18" Width="38" Height="38" Padding="0" AutomationProperties.Name="Send message" ToolTipService.ToolTip="Send (Ctrl+Enter)"><SymbolIcon Symbol="Send"/></Button>
         </Grid>
-        <TextBlock Text="Ctrl + Enter to send. Numerical conclusions require verification." Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+        <TextBlock Text="Verify numerical results before making engineering decisions." Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
        </StackPanel>
       </Border>
      </Grid>

@@ -18,6 +18,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Markdig" Version="0.41.3" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260710003" />
     <Compile Include="../GridAgent.Windows/LocalEngine.cs" Link="LocalEngine.cs" />
   </ItemGroup>

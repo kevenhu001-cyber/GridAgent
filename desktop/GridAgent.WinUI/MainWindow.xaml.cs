@@ -1,4 +1,5 @@
 using System.IO;
+using System.Collections.ObjectModel;
 using System.Text.Json;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -15,6 +16,7 @@ public partial class MainWindow : Window
 {
     private string? _session;
     private string? _boundWorkspace;
+    private readonly ObservableCollection<ConversationMessage> _messages = new();
     private bool _busy;
     private bool _operationError;
     private EngineSettings? _activeEngine;
@@ -31,14 +33,16 @@ public partial class MainWindow : Window
         WorkspacePath.Text = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GridAgent");
         ModelName.Text = Environment.GetEnvironmentVariable("GRIDAGENT_MODEL") ?? "";
         BaseUrl.Text = Environment.GetEnvironmentVariable("GRIDAGENT_BASE_URL") ?? "";
-        Append("Describe the system you want to study, or open a saved conversation.", "Getting started");
+        Messages.ItemsSource = _messages;
+        ModelName.TextChanged += (_, _) => UpdateModelCaption();
+        UpdateModelCaption();
         Title = "GridAgent";
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         SystemBackdrop = new MicaBackdrop();
         AppWindow.Resize(new global::Windows.Graphics.SizeInt32(1200, 840));
         AppWindow.Closing += (_, args) => { if (_busy) { args.Cancel = true; Notify("A research operation is active. Wait for completion or cancel the research task.", InfoBarSeverity.Warning); } };
-        Navigation.SelectedItem = Navigation.MenuItems[0];
+        Navigation.SelectedItem = AssistantNavigation;
         Root.Loaded += async (_, _) =>
         {
             if (string.IsNullOrWhiteSpace(ModelName.Text)) await Execute(new { action = "model-settings" });
@@ -58,36 +62,50 @@ public partial class MainWindow : Window
         throw new FileNotFoundException("Bundled research engine is missing. Reinstall GridAgent.");
     }
 
-    private Expander? _toolGroup;
-    private StackPanel? _toolMessages;
-    private void ClearMessages() { Messages.Children.Clear(); _toolGroup = null; _toolMessages = null; }
+    private ConversationMessage? _toolGroup;
+    private void ClearMessages() { _messages.Clear(); _toolGroup = null; EmptyConversation.Visibility = Visibility.Visible; }
     private void Notify(string message, InfoBarSeverity severity = InfoBarSeverity.Informational)
     {
         Notice.Message = message; Notice.Severity = severity; Notice.IsOpen = true;
     }
+    private void UpdateModelCaption() => ConversationModel.Text = string.IsNullOrWhiteSpace(ModelName.Text) ? "Engineering assistant" : ModelName.Text.Trim();
+    private void OpenConversationHistory(object sender, RoutedEventArgs e) =>
+        Navigation.SelectedItem = Navigation.MenuItems.OfType<NavigationViewItem>().First(i => (string)i.Tag == "studies");
+    private void UseSuggestion(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button button && button.Content is string text) { Prompt.Text = text; Prompt.Focus(FocusState.Programmatic); }
+    }
+    private bool _scrollQueued;
+    private void QueueConversationScroll()
+    {
+        if (_scrollQueued || _messages.Count == 0) return;
+        // Coalesce bursts of history and tool updates into one dispatcher callback.
+        _scrollQueued = true;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _scrollQueued = false;
+            if (_messages.Count > 0) Messages.ScrollIntoView(_messages[^1]);
+        });
+    }
     private void Append(string text, string role = "Result")
     {
         if (string.IsNullOrWhiteSpace(text)) return;
-        _toolGroup = null; _toolMessages = null;
-        var block = new StackPanel { Spacing = 5, Margin = new Thickness(0, 0, 0, 8) };
-        block.Children.Add(new TextBlock { Text = role, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, FontSize = 13 });
-        var body = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, FontSize = 15 };
-        block.Children.Add(body);
-        var card = new Border { Padding = new Thickness(14), CornerRadius = new CornerRadius(10), Child = block };
-        card.Style = (Style)Application.Current.Resources[role == "You" ? "UserMessageCardStyle" : "ResultMessageCardStyle"];
-        Messages.Children.Add(card);
-        DispatcherQueue.TryEnqueue(() => ConversationScroll.ChangeView(null, ConversationScroll.ScrollableHeight, null, true));
+        _toolGroup = null;
+        EmptyConversation.Visibility = Visibility.Collapsed;
+        _messages.Add(new ConversationMessage(role, text));
+        QueueConversationScroll();
     }
     private void AddTool(string label)
     {
+        EmptyConversation.Visibility = Visibility.Collapsed;
+        // Only the bridge's sanitized tool summary is accepted; no raw execution payload.
         if (_toolGroup == null)
         {
-            _toolMessages = new StackPanel { Spacing = 6 };
-            _toolGroup = new Expander { Header = "Engineering activity", Content = _toolMessages, HorizontalAlignment = HorizontalAlignment.Stretch };
-            Messages.Children.Add(_toolGroup);
+            _toolGroup = new ConversationMessage("Activity", "");
+            _messages.Add(_toolGroup);
         }
-        _toolGroup.Header = "Engineering activity · " + label.Split('\n')[0];
-        _toolMessages!.Children.Add(new TextBlock { Text = label, TextWrapping = TextWrapping.Wrap });
+        _toolGroup.AddActivity(label);
+        QueueConversationScroll();
     }
     private void Navigate(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
@@ -97,7 +115,7 @@ public partial class MainWindow : Window
             page.Visibility = tag == key ? Visibility.Visible : Visibility.Collapsed;
         if (tag == "plugins" && _pluginCatalog.ValueKind != JsonValueKind.Array && !_busy) PluginCenter(this, new RoutedEventArgs());
     }
-    private void ShowChat() => Navigation.SelectedItem = Navigation.MenuItems[0];
+    private void ShowChat() => Navigation.SelectedItem = AssistantNavigation;
     private void ChangeTheme(object sender, SelectionChangedEventArgs e)
     {
         if (Root != null && sender is ComboBox choice)
@@ -199,8 +217,8 @@ public partial class MainWindow : Window
                 if (_activeResearch != researchId || stage is "passed" or "failed" or "cancelled" or "awaiting_input" or "awaiting_approval")
                     Append(data.GetProperty("summary").GetString() ?? "");
                 _activeResearch = researchId;
-                CancelButton.Visibility = _busy ? Visibility.Visible : Visibility.Collapsed;
-                StatusText.Text = $"Research · {stage} · {data.GetProperty("runs_used")} simulations";
+                CancelButton.Visibility = _busy && stage is not ("passed" or "failed" or "cancelled" or "awaiting_input" or "awaiting_approval") ? Visibility.Visible : Visibility.Collapsed;
+                StatusText.Text = $"Research · {stage} · {data.GetProperty("runs_used")}/{data.GetProperty("max_runs")} simulations";
                 break;
             case "topology": _topology = data.Clone(); break;
             case "model_revisions":
@@ -234,7 +252,7 @@ public partial class MainWindow : Window
             case "user": Append(data.GetString() ?? "", "You"); break;
             case "assistant": Append(data.GetString() ?? "", "Assistant"); break;
             case "tool": AddTool(data.GetString() ?? "Tool"); break;
-            case "result": Append(data.GetString() ?? ""); break;
+            case "result": Append(data.ValueKind == JsonValueKind.String ? data.GetString() ?? "" : "A structured result is available in the workspace."); break;
             case "status": StatusText.Text = data.GetString() ?? "Working…"; break;
             case "error": _operationError = true; Append(data.GetString() ?? "Operation failed.", "Error"); Notify("The operation reported an error. See the conversation for details.", InfoBarSeverity.Error); break;
         }
