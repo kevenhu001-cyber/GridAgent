@@ -17,10 +17,10 @@ Install Python 3.11 and the .NET 10 SDK. From the repository root:
     $env:GRIDAGENT_PYTHON = (Resolve-Path .\.venv\Scripts\python.exe).Path
     dotnet run --project desktop/GridAgent.Windows
 
-Select the Python interpreter and workspace in the settings expander.
+The developer override is only used when no bundled runtime is present. The published app automatically uses its private runtime; users do not select an interpreter.
 The default Windows workspace is %LOCALAPPDATA%\GridAgent; use
 gridagent --workspace "$env:LOCALAPPDATA\GridAgent" to share it with TUI.
-Use an absolute Python path if python is not on PATH. Set an OpenAI-compatible
+Set an OpenAI-compatible
 model, base URL and API key for online model tasks. Offline history, DMQ
 reference, eigenanalysis and optimization do not require a model key.
 
@@ -34,13 +34,22 @@ text. No rich Markdown, plot zoom/pan, model picker, persistent desktop
 preferences or cancel button yet. Closing is blocked during active work.
 The model key is not stored in SQLite or configuration.
 
-## Build
+## Portable Windows distribution
 
-    dotnet publish desktop/GridAgent.Windows -c Release -r win-x64 --self-contained true
+Run from the repository root on Windows x64 with the build SDKs installed:
 
-Windows CI builds and publishes a self-contained .NET x64 desktop artifact.
-The Python environment and solver dependencies are **not** bundled yet:
-install them separately and point the app at that interpreter. No installer,
-signature or Store release is claimed. A later release should package a
-version-pinned Python distribution with license notices and Windows x64/ARM64
-testing as applicable. Build success does not prove visual UI correctness.
+    ./desktop/package-windows.ps1 -Output desktop-publish
+
+CI publishes the complete directory as GridAgent-Windows-x64. Extract it and
+launch GridAgent.exe. The distribution contains a self-contained .NET runtime,
+private CPython 3.11, installed GridAgent/ANDES/SciPy/NumPy/LangGraph packages,
+example cases, dependency version inventory, and a gridagent-tui.cmd launcher.
+No system Python, pip, PATH configuration, or first-launch dependency download
+is required. Model APIs require network access and credentials; licensed
+commercial simulators are not included. Do not move the EXE out of its folder.
+The build checks relocation to a path with spaces with system Python off PATH,
+then runs a real bridge session, ANDES fault and eigenanalysis. Package contents
+and runtime checks remain subject to CI. The distribution is a portable folder,
+not yet a signed installer. Dependency versions are recorded per build, not
+fully locked across builds. Retain upstream package license metadata; a full
+third-party notice/source compliance review is still required before release.

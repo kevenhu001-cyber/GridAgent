@@ -16,12 +16,23 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        PythonPath.Text = Environment.GetEnvironmentVariable("GRIDAGENT_PYTHON") ?? "python";
+        RuntimeStatus.Text = File.Exists(BundledPython) ? "Bundled Python · ready" : "Developer runtime";
         WorkspacePath.Text = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GridAgent");
         ModelName.Text = Environment.GetEnvironmentVariable("GRIDAGENT_MODEL") ?? "";
         BaseUrl.Text = Environment.GetEnvironmentVariable("GRIDAGENT_BASE_URL") ?? "";
         Transcript.Text = "Start a research session, open a saved study, or run an offline numerical experiment.\n";
         Loaded += async (_, _) => await Execute(new { action = "refresh" });
+    }
+
+    private static string BundledPython => Path.Combine(AppContext.BaseDirectory, "runtime", "python.exe");
+
+    private static string ResolvePython()
+    {
+        if (File.Exists(BundledPython)) return BundledPython;
+        // Explicit developer override only; never silently search the system PATH.
+        var dev = Environment.GetEnvironmentVariable("GRIDAGENT_PYTHON");
+        if (!string.IsNullOrWhiteSpace(dev) && Path.IsPathFullyQualified(dev) && File.Exists(dev)) return dev;
+        throw new FileNotFoundException("Bundled research engine is missing. Reinstall GridAgent.");
     }
 
     private void Append(string text)
@@ -46,14 +57,14 @@ public partial class MainWindow : Window
                 StudyList.ItemsSource = null;
                 RunList.ItemsSource = null;
             }
-            var settings = new EngineSettings(PythonPath.Text.Trim(), root, ModelName.Text.Trim(), BaseUrl.Text.Trim(), ApiKey.Password);
+            var settings = new EngineSettings(ResolvePython(), root, ModelName.Text.Trim(), BaseUrl.Text.Trim(), ApiKey.Password);
             await LocalEngine.RunAsync(settings, request, Handle);
             StatusText.Text = "Ready";
         }
         catch (Exception ex)
         {
             // Do not display raw process diagnostics or provider payloads.
-            Append("Operation could not complete (" + ex.GetType().Name + "). Check Python, dependencies, workspace and model settings.");
+            Append("Operation could not complete (" + ex.GetType().Name + "). Check application installation, workspace and model settings.");
             StatusText.Text = "Check configuration";
         }
         finally { _busy = false; }

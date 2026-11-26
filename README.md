@@ -67,7 +67,8 @@ See [workspace commands](docs/workspace.md) for TUI and offline result inspectio
 ## Native Windows desktop
 
 GridAgent also has a native WPF/.NET 10 client (no Web UI, Electron or browser
-server). See [Windows setup and build](docs/windows.md). TUI and Windows use
+server). The portable Windows build bundles CPython and numerical dependencies;
+no user Python setup is intended. See [Windows setup and build](docs/windows.md). TUI and Windows use
 the same Python engine and can share a local workspace.
 
 ## Architecture

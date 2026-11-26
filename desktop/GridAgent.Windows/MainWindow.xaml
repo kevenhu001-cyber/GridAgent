@@ -57,8 +57,8 @@
      <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
      </Grid.RowDefinitions>
-     <TextBlock Text="Python executable" VerticalAlignment="Center"/>
-     <TextBox x:Name="PythonPath" Grid.Column="1" Margin="0,2" AutomationProperties.Name="Python executable"/>
+     <TextBlock Text="Research engine" VerticalAlignment="Center"/>
+     <TextBlock x:Name="RuntimeStatus" Grid.Column="1" Margin="9,6" VerticalAlignment="Center" Foreground="{StaticResource Muted}"/>
      <TextBlock Grid.Row="1" Text="Workspace" VerticalAlignment="Center"/>
      <TextBox x:Name="WorkspacePath" Grid.Row="1" Grid.Column="1" Margin="0,2" AutomationProperties.Name="Workspace"/>
      <TextBlock Grid.Row="2" Text="Model" VerticalAlignment="Center"/>

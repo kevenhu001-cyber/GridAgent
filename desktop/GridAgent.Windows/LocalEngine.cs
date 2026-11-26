@@ -23,9 +23,12 @@ internal static class LocalEngine
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8
         };
-        foreach (var arg in new[] { "-m", "gridagent.desktop_bridge", "--workspace", settings.Workspace })
+        foreach (var arg in new[] { "-X", "utf8", "-m", "gridagent.desktop_bridge", "--workspace", settings.Workspace })
             start.ArgumentList.Add(arg);
+        start.Environment.Remove("PYTHONHOME");
+        start.Environment.Remove("PYTHONPATH");
         start.Environment["PYTHONUTF8"] = "1";
+        start.Environment["PYTHONNOUSERSITE"] = "1";
         if (!string.IsNullOrWhiteSpace(settings.Model)) start.Environment["GRIDAGENT_MODEL"] = settings.Model;
         if (!string.IsNullOrWhiteSpace(settings.BaseUrl)) start.Environment["GRIDAGENT_BASE_URL"] = settings.BaseUrl;
         if (!string.IsNullOrWhiteSpace(settings.ApiKey)) start.Environment["GRIDAGENT_API_KEY"] = settings.ApiKey;

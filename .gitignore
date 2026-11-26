@@ -9,3 +9,5 @@ dist/
 *.egg-info/
 desktop/**/bin/
 desktop/**/obj/
+desktop-publish/
+desktop-publish relocated/
