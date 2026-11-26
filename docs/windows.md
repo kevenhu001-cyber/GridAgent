@@ -53,3 +53,7 @@ and runtime checks remain subject to CI. The distribution is a portable folder,
 not yet a signed installer. Dependency versions are recorded per build, not
 fully locked across builds. Retain upstream package license metadata; a full
 third-party notice/source compliance review is still required before release.
+
+The portable distribution also stages pinned PowerAgentBench training assets and original
+solver/evaluator source at build time; it excludes held-out answer data. Commercial
+simulator profiles are optional and separate from the embedded open runtime.

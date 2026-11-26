@@ -1,5 +1,6 @@
 """Run with the relocated private interpreter, with system Python off PATH."""
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -9,12 +10,18 @@ import andes
 import numpy
 import scipy
 
+from gridagent.paper import asset, training_evidence
 from gridagent.simulator import AndesSimulator
 
 
 def main():
     root = Path(sys.executable).resolve().parent
     assert Path(sys.prefix).resolve() == root, sys.prefix
+    os.environ["GRIDAGENT_BENCHMARK_ROOT"] = str(root.parent / "benchmark-assets")
+    evidence, total, eligible = training_evidence()
+    assert len(evidence) == 10 and total >= eligible > 0
+    assert asset("cases/solar_wecc/psse/Solar.sav").is_file()
+    assert not (root.parent / "benchmark-assets/benchmarks/dynamic/level2/test_memory.json").exists()
     for module in (andes, numpy, scipy):
         assert Path(module.__file__).resolve().is_relative_to(root), module.__file__
     with tempfile.TemporaryDirectory(prefix="GridAgent smoke ") as temp:

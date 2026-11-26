@@ -14,7 +14,9 @@ from .simulator import Simulator
 
 SYSTEM = """You are GridAgent, an offline power-system research assistant.
 Use tools for numerical claims. Inspect the case before a new fault study.
-Only packaged research systems are available. Never claim solver failure proves
+Open simulation tools use packaged research systems. Original IEEE39 training memory is a distinct
+historical data source, never a new simulation. Licensed paper studies require explicit user invocation.
+Never claim solver failure proves
 physical instability. Voltage severity is a proxy, not the paper's full stability
 criterion. Distinguish estimated, measured and unavailable data. Cite run IDs.
 Respect the remaining simulation budget. Explain conclusions and limitations.
@@ -68,7 +70,16 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
         return simulator.run("fault", {"case": case, "bus": bus,
                                       "duration_s": duration_s, "end_s": end_s})
 
-    tools = {t.name: t for t in [list_cases, inspect_case, power_flow, eigenanalysis, simulate_fault]}
+    @tool
+    def paper_training_history(location: str) -> dict:
+        """Retrieve author-published IEEE39 training KPIs for Bus NN or Line NN - NN; not test labels."""
+        from .paper import PIN, training_history
+
+        return {"source": "PowerAgentBench training memory", "commit": PIN,
+                "location": location, "historical": training_history(location)}
+
+    tools = {t.name: t for t in [list_cases, inspect_case, power_flow, eigenanalysis,
+                                  simulate_fault, paper_training_history]}
     bound = model.bind_tools(list(tools.values()))
 
     def decide(state: State):

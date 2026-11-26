@@ -15,6 +15,7 @@ jobs:
           python-version: '3.11'
       - run: pip install -e '.[dev]'
       - run: python scripts/sync_benchmark.py benchmark-assets
+      - run: python scripts/sync_evaluator.py offline-evaluation/test_memory.json
       - run: ruff check src tests
       - run: pytest -m 'not integration' -q
   andes:

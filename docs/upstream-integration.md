@@ -46,3 +46,18 @@ implemented; no full-workflow success is claimed. The original project and
 complete voltage/speed channel mapping must be installed and verified by the
 user. This adapter has not been tested with a commercial license. See example
 profile. Windows buttons and TUI /paper-dsr and /paper-dmq use the same commands.
+
+## Independent published holdout evaluator
+
+Run separately, outside the application and its workspace:
+
+    python scripts/sync_evaluator.py offline-evaluation/test_memory.json
+    python -m gridagent.paper_evaluation .gridagent/studies/STUDY_ID offline-evaluation/test_memory.json
+
+The evaluator verifies the exact upstream test-memory blob and matches the ten
+paper cases by location and duration_ms. It scores frozen top-three recall,
+severity MAE, stability accuracy and voltage extrema errors; full workflow and
+mitigation are deliberately not scored. Holdout labels are never copied into
+the portable distribution, policy tool or training index. The normal Agent
+now also has a bounded read-only paper_training_history tool. It reports
+historical observations, not newly simulated data.

@@ -3,6 +3,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -74,21 +75,34 @@ def original_kpis(csv_path, clearing_s, after_extra=0.1, require_full=False):
     return {"upstream_commit": PIN, "after_extra_s": after_extra, **report}
 
 
-def training_evidence():
+def training_rows():
     data = json.loads(asset(f"{LEVEL2}/semantic_memory.json").read_text(encoding="utf-8"))
     if not isinstance(data, list) or not data:
         raise ValueError("Invalid upstream training memory")
-    # duration codes are the original file-name integer (100 * seconds).
-    targets = {(location, ms // 10) for location, ms in CANDIDATES}
-    usable = [e for e in data if (e.get("location"), e.get("duration_cycles")) not in targets]
+    return data
+
+
+def training_history(location):
+    """Bounded structured lookup over the author training split only."""
+    if not re.fullmatch(r"Bus \d{2}|Line \d{2} - \d{2}", location):
+        raise ValueError("Use an original Bus NN or Line NN - NN location")
+    rows = [e for e in training_rows() if e.get("location") == location]
+    return [{k: e[k] for k in ("location", "fault_type", "duration_ms", "duration_cycles", "kpi") if k in e}
+            for e in sorted(rows, key=lambda x: x["duration_ms"])[:12]]
+
+
+def training_evidence():
+    data = training_rows()
+    targets = set(CANDIDATES)
+    usable = [e for e in data if (e.get("location"), e.get("duration_ms")) not in targets]
     evidence = {}
     for i, (location, ms) in enumerate(CANDIDATES, 1):
         fault_type = location.split()[0]
         ordered = sorted(usable, key=lambda e: (
             e.get("location") != location, e.get("fault_type") != fault_type,
-            abs(float(e.get("duration_cycles", 0)) - ms / 10)))
+            abs(float(e.get("duration_ms", 0)) - ms)))
         # Do not forward arbitrary raw fields or held-out outcomes.
-        matches = [{k: e[k] for k in ("location", "fault_type", "duration_cycles", "kpi") if k in e}
+        matches = [{k: e[k] for k in ("location", "fault_type", "duration_ms", "duration_cycles", "kpi") if k in e}
                    for e in ordered[:6]]
         evidence[f"P{i:02}"] = {"location": location, "duration_ms": ms, "matches": matches}
     return evidence, len(data), len(usable)
