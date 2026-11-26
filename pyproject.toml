@@ -21,6 +21,7 @@ dependencies = [
 ]
 [project.optional-dependencies]
 andes = ["andes>=2,<3"]
+core = ["andes>=2,<3", "pandapower>=3.2,<3.6", "highspy>=1.7,<2", "control>=0.10,<0.11", "sympy>=1.12,<2", "networkx>=3,<4"]
 engineering = ["andes>=2,<3", "pandapower>=3.2,<3.6", "pypsa>=1.0,<1.3", "highspy>=1.7,<2"]
 dev = ["pytest>=8,<10", "ruff>=0.9,<1"]
 [project.scripts]

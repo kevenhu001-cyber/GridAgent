@@ -14,14 +14,16 @@ from uuid import uuid4
 from pydantic import TypeAdapter
 
 from .native_program import PPProgram, Program
+from .plugins import available, launch
 from .workspace import artifact_folder, load_object
 
 ADAPTER = TypeAdapter(Program)
 
 
 def available_backends():
-    return [{"name": name, "installed": importlib.util.find_spec(name) is not None}
-            for name in ("andes", "pandapower", "pypsa", "highspy")]
+    return [{"name": name, "installed": available(name) if name in {"pypsa", "opendss", "pybamm"}
+             else importlib.util.find_spec(name) is not None}
+            for name in ("andes", "pandapower", "highspy", "control", "pypsa", "opendss", "pybamm")]
 
 
 def run_program(root, program, timeout_s=300):
@@ -56,16 +58,21 @@ def run_program(root, program, timeout_s=300):
     result = {"backend": request["backend"], "operation": request.get("analysis", "dispatch"),
               "status": "failed", "reason": "Native solver failed"}
     try:
-        with (folder / "solver.log").open("w", encoding="utf-8") as log:
-            proc = subprocess.run([sys.executable, "-m", "gridagent.native_worker"],
-                                  cwd=folder, env=env, stdout=log, stderr=subprocess.STDOUT,
-                                  timeout=timeout_s, check=False)
+        if request["backend"] == "pypsa":
+            proc = launch("pypsa", "gridagent.native_worker", folder, timeout_s)
+        else:
+            with (folder / "solver.log").open("w", encoding="utf-8") as log:
+                proc = subprocess.run([sys.executable, "-m", "gridagent.native_worker"],
+                                      cwd=folder, env=env, stdout=log, stderr=subprocess.STDOUT,
+                                      timeout=timeout_s, check=False)
         if proc.returncode == 0 and result_path.is_file():
             result = json.loads(result_path.read_text(encoding="utf-8"))
     except subprocess.TimeoutExpired:
         result["reason"] = "Native solver timeout"
     except OSError:
         result["reason"] = "Native solver could not start"
+    except ValueError as exc:
+        result["reason"] = str(exc)[:200]
     from .model_quality import evaluate_run
 
     quality = evaluate_run(folder, request, result)

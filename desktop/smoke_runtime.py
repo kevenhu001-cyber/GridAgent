@@ -9,7 +9,9 @@ from pathlib import Path
 import andes
 import numpy
 import pandapower
-import pypsa
+import control
+import sympy
+import networkx
 import highspy
 import scipy
 
@@ -26,7 +28,7 @@ def main():
     assert len(evidence) == 10 and total >= eligible > 0
     assert asset("cases/solar_wecc/psse/Solar.sav").is_file()
     assert not (root.parent / "benchmark-assets/benchmarks/dynamic/level2/test_memory.json").exists()
-    for module in (andes, numpy, scipy, pandapower, pypsa, highspy):
+    for module in (andes, numpy, scipy, pandapower, control, sympy, networkx, highspy):
         assert Path(module.__file__).resolve().is_relative_to(root), module.__file__
     with tempfile.TemporaryDirectory(prefix="GridAgent smoke ") as temp:
         workspace = Path(temp)
@@ -46,10 +48,9 @@ def main():
         assert eigen["status"] == "ok", eigen
         pp = run_program(workspace, {"backend": "pandapower", "base": "case14"})
         assert pp["status"] == "ok", pp
-        dispatch = run_program(workspace, {"backend": "pypsa", "hours": 2, "buses": [{"name": "b"}],
-            "loads": [{"name": "load", "bus": "b", "p_set_mw": [1, 2]}],
-            "generators": [{"name": "gen", "bus": "b", "p_nom_mw": 3, "marginal_cost": 20}]})
-        assert dispatch["status"] == "ok", dispatch
+        import importlib.util
+        assert importlib.util.find_spec("pypsa") is None, "PyPSA must not ship in Core"
+        assert importlib.util.find_spec("pip") is not None
     print("Private interpreter, native dependencies, desktop bridge, fault and eigenanalysis: OK")
 
 
