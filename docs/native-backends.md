@@ -88,3 +88,9 @@ numeric answers are injected into the policy prompt. These are public,
 small developer regression benchmarks, not held-out paper tests or a
 comprehensive measure of general Agent intelligence. The original paper
 workflows remain available separately.
+
+Additional public regression tasks: source-short-circuit (IEC 60909 at a known source),
+lossy-storage (80% charging efficiency), and lossy-link (directional 80% efficient
+transfer with renewable availability and backup generation). All use fixed inputs and
+independent analytic reference checks, never supplied as answer values to the model.
+These do not constitute an unseen-task test set.

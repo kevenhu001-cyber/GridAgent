@@ -63,7 +63,7 @@ def main():
     parser.add_argument("--wave", nargs="+", metavar="ID_OR_CHANNEL", help="View a saved run waveform")
     parser.add_argument("--study-wave", nargs="+", metavar="ID_PATH_CHANNEL", help="View a study waveform")
     parser.add_argument("--paper-dmq", metavar="PROFILE", help="Run original licensed DMQ")
-    parser.add_argument("--modeling-benchmark", choices=["two-bus", "storage-dispatch"])
+    parser.add_argument("--modeling-benchmark", choices=["two-bus", "storage-dispatch", "source-short-circuit", "lossy-storage", "lossy-link"])
     parser.add_argument("--model-repair", type=Path, metavar="MANIFEST")
     parser.add_argument("--drafts", action="store_true", help="List Python drafts awaiting review")
     parser.add_argument("--backends", action="store_true")

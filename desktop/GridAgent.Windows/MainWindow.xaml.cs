@@ -211,7 +211,9 @@ public partial class MainWindow : Window
             Owner = this, WindowStartupLocation = WindowStartupLocation.CenterOwner };
         var panel = new System.Windows.Controls.StackPanel { Margin = new Thickness(20) };
         var tasks = new System.Windows.Controls.ComboBox { Margin = new Thickness(0, 10, 0, 16) };
-        tasks.Items.Add("two-bus"); tasks.Items.Add("storage-dispatch"); tasks.SelectedIndex = 0;
+        tasks.Items.Add("two-bus"); tasks.Items.Add("storage-dispatch");
+        tasks.Items.Add("source-short-circuit"); tasks.Items.Add("lossy-storage"); tasks.Items.Add("lossy-link");
+        tasks.SelectedIndex = 0;
         panel.Children.Add(new System.Windows.Controls.TextBlock { Text = "Generate, test and repair a model (up to six attempts)." });
         panel.Children.Add(tasks);
         var run = new System.Windows.Controls.Button { Content = "Run benchmark", IsDefault = true };

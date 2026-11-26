@@ -25,7 +25,8 @@ def test_fidelity_blocks_wrong_model_before_solver(tmp_path):
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("task,package", [("two-bus", "pandapower"), ("storage-dispatch", "pypsa")])
+@pytest.mark.parametrize("task,package", [("two-bus", "pandapower"), ("storage-dispatch", "pypsa"),
+    ("source-short-circuit", "pandapower"), ("lossy-storage", "pypsa"), ("lossy-link", "pypsa")])
 def test_independent_analytic_reference(tmp_path, task, package):
     pytest.importorskip(package)
     list(benchmark_updates(tmp_path, task, lambda obs: expected_program(task), max_attempts=1))
