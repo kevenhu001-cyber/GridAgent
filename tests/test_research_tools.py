@@ -27,3 +27,17 @@ def test_waveform_and_matching_comparison(tmp_path):
     assert compare_faults(tmp_path, a, b)["metrics"]["voltage_severity_proxy"]["delta"] == pytest.approx(0.1)
     with pytest.raises(ValueError, match="snapshot"):
         compare_faults(tmp_path, a, c)
+
+
+def test_flow_comparison(tmp_path):
+    from gridagent.research_tools import compare_power_flows
+
+    a, b = "a"*32, "b"*32
+    for rid, voltages in ((a, {"1": 1.0, "2": 1.0}), (b, {"1": 0.98, "2": 0.95})):
+        folder = tmp_path / "runs" / rid
+        folder.mkdir(parents=True)
+        (folder / "result.json").write_text(json.dumps({"status": "ok", "operation": "power_flow",
+            "model_sha256": "same", "voltages_pu": voltages}))
+    result = compare_power_flows(tmp_path, a, b)
+    assert result["largest_voltage_changes"][0]["bus"] == "2"
+    assert result["candidate_voltage_min_pu"] == 0.95

@@ -117,3 +117,7 @@ workbook registration, Kundur/IEEE14/IEEE39, topology inspection, branch-hop
 paths, existing-run retrieval, waveform analysis and fingerprinted comparisons.
 Use `gridagent --import-model case.xlsx`, `gridagent --models`, then ask a
 research question in chat. The Windows file picker and TUI share the registry.
+
+General chat can also compare hypothetical steady-state scenarios with bounded
+uniform PQ load scaling and one in-service branch outage, without modifying the
+original workbook. See [general agent](docs/general-agent.md) for boundaries.

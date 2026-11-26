@@ -4,15 +4,14 @@ import os
 from pathlib import Path
 from typing import Annotated, TypedDict
 
-from pydantic import Field
-
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
+from pydantic import Field, ValidationError
 
-from .domain import CASES, CaseName, FaultRequest
+from .domain import CASES, CaseName, FaultRequest, ScenarioRequest
 from .simulator import Simulator
 
 SYSTEM = """You are GridAgent, an offline power-system research assistant.
@@ -69,6 +68,15 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
         """Solve the initial power flow and return bus voltage magnitudes."""
         return simulator.run("power_flow", {"case": case})
 
+    @tool(args_schema=ScenarioRequest)
+    def scenario_power_flow(case: CaseName = "kundur", load_scale: float = 1.0,
+                            outage_branch: str | None = None) -> dict:
+        """Run a fresh steady-state scenario: scale active PQ loads 0.5..1.5 and optionally remove one line.
+        Inspect the case first. Does not alter source models or prove transient/thermal security.
+        """
+        return simulator.run("scenario_flow", {"case": case, "load_scale": load_scale,
+                                               "outage_branch": outage_branch})
+
     @tool
     def eigenanalysis(case: CaseName = "kundur") -> dict:
         """Compute small-signal eigenvalues, modal frequency and damping; not transient stability."""
@@ -97,10 +105,11 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
             raise ValueError("Plan steps must be short and nonempty")
         return {"status": "ok", "objective": objective, "steps": steps, "verification": verification}
 
-    tool_list = [list_cases, inspect_case, power_flow, eigenanalysis, simulate_fault,
+    tool_list = [list_cases, inspect_case, power_flow, scenario_power_flow, eigenanalysis, simulate_fault,
                  paper_training_history, research_plan]
     if workspace is not None:
-        from .research_tools import analyze_voltage, compare_faults, recent_runs, run_record, topology_path
+        from .research_tools import (analyze_voltage, compare_faults, compare_power_flows,
+                                     recent_runs, run_record, topology_path)
 
         root = Path(workspace)
 
@@ -129,10 +138,15 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
             """Compare completed fault simulations with identical model hashes and end times."""
             return compare_faults(root, baseline_id, candidate_id)
 
+        @tool
+        def compare_flow_runs(baseline_id: str, candidate_id: str) -> dict:
+            """Compare steady-state bus voltages for matching model snapshots."""
+            return compare_power_flows(root, baseline_id, candidate_id)
+
         tool_list.extend([list_research_runs, read_research_run, network_path,
-                          analyze_voltage_waveform, compare_fault_runs])
+                          analyze_voltage_waveform, compare_fault_runs, compare_flow_runs])
     tools = {t.name: t for t in tool_list}
-    numerical_tools = {"power_flow", "simulate_fault", "eigenanalysis"}
+    numerical_tools = {"power_flow", "simulate_fault", "eigenanalysis", "scenario_power_flow"}
     bound = model.bind_tools(list(tools.values()))
 
     def decide(state: State):
@@ -162,6 +176,11 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
                         used += 1  # Charge attempted runs, including failures.
                     try:
                         result = tools[name].invoke(call["args"])
+                        # Serialization failures become a normal tool result rather than a crashed graph.
+                        json.dumps(result, allow_nan=False)
+                    except ValidationError as exc:
+                        result = {"status": "failed", "reason": "Invalid tool parameters",
+                                  "fields": [".".join(map(str, e["loc"])) for e in exc.errors()]}
                     except Exception as exc:  # noqa: BLE001 - isolate third-party tool failures
                         result = {"status": "failed", "reason": type(exc).__name__}
             messages.append(ToolMessage(content=json.dumps(result, allow_nan=False),
@@ -172,7 +191,14 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
         return "stop" if state["calls"] >= max_calls or state["rounds"] >= max_calls else "agent"
 
     def stop(state: State):
-        return {"messages": [AIMessage(content="Tool-call limit reached. Review completed tool results; no further simulation was executed.")]}
+        # One final synthesis call without bound tools; it cannot spend more solver budget.
+        msg = model.invoke([SystemMessage(content=SYSTEM +
+                            "\nTool-call limit reached. Summarize available evidence, failures and remaining "
+                            "uncertainty. Do not call tools or claim unfinished work is complete."),
+                            *state["messages"]])
+        if getattr(msg, "tool_calls", []):
+            msg = AIMessage(content="Tool-call limit reached; no further simulation executed. Review saved results.")
+        return {"messages": [msg]}
 
     graph = StateGraph(State)
     graph.add_node("agent", decide)
@@ -188,4 +214,4 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
 def stream_task(graph, prompt: str, history=None, max_calls: int = 12):
     state = {"messages": [*(history or []), HumanMessage(content=prompt)],
              "used": 0, "calls": 0, "rounds": 0}
-    yield from graph.stream(state, {"recursion_limit": 2 * max_calls + 5}, stream_mode="updates")
+    yield from graph.stream(state, {"recursion_limit": max(2 * max_calls + 5, 125)}, stream_mode="updates")

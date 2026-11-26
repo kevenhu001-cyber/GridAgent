@@ -13,6 +13,13 @@ class CaseRequest(BaseModel):
     case: CaseName = "kundur"
 
 
+class ScenarioRequest(CaseRequest):
+    """Local hypothetical steady-state changes, never edits the source model."""
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    load_scale: float = Field(default=1.0, ge=0.5, le=1.5)
+    outage_branch: str | None = Field(default=None, min_length=1, max_length=80)
+
+
 class FaultRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     case: CaseName = "kundur"

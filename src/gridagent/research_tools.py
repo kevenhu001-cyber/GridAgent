@@ -77,3 +77,25 @@ def compare_faults(root, baseline_id, candidate_id):
                             "delta": b["metrics"][k]-a["metrics"][k]} for k in keys},
             "caution": "Each run uses its own post-clearing window; descriptive comparison, not causal proof.",
             "stability": "not_assessed"}
+
+
+def compare_power_flows(root, baseline_id, candidate_id):
+    a, b = run_record(root, baseline_id), run_record(root, candidate_id)
+    if baseline_id == candidate_id:
+        raise ValueError("Select distinct runs")
+    for row in (a, b):
+        if (row.get("status") != "ok" or row.get("operation") not in {"power_flow", "scenario_flow"}
+                or not row.get("model_sha256")):
+            raise ValueError("Comparison needs two converged power-flow runs")
+    if a["model_sha256"] != b["model_sha256"] or set(a["voltages_pu"]) != set(b["voltages_pu"]):
+        raise ValueError("Model snapshots and buses must match")
+    delta = [{"bus": bus, "baseline_pu": v, "candidate_pu": b["voltages_pu"][bus],
+              "delta_pu": b["voltages_pu"][bus]-v} for bus, v in a["voltages_pu"].items()]
+    delta.sort(key=lambda row: (-abs(row["delta_pu"]), row["bus"]))
+    return {"baseline_run": baseline_id, "candidate_run": candidate_id,
+            "model_sha256": a["model_sha256"], "baseline_scenario": a.get("scenario"),
+            "candidate_scenario": b.get("scenario"), "buses": len(delta),
+            "largest_voltage_changes": delta[:20],
+            "candidate_voltage_min_pu": min(b["voltages_pu"].values()),
+            "candidate_voltage_max_pu": max(b["voltages_pu"].values()),
+            "scope": "steady-state voltage comparison; no thermal or transient stability verdict"}

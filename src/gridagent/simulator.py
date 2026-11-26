@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
 
-from .domain import CASES, CaseRequest, FaultRequest
+from .domain import CASES, CaseRequest, FaultRequest, ScenarioRequest
 from .models import resolve_model
 
 
@@ -21,9 +21,11 @@ class AndesSimulator:
         self.timeout_s = timeout_s
 
     def run(self, operation: str, request: dict) -> dict:
-        if operation not in {"inspect", "power_flow", "fault", "eigen"}:
+        schemas = {"inspect": CaseRequest, "power_flow": CaseRequest, "fault": FaultRequest,
+                   "eigen": CaseRequest, "scenario_flow": ScenarioRequest}
+        if operation not in schemas:
             raise ValueError("Operation is not allowed")
-        request = (FaultRequest if operation == "fault" else CaseRequest).model_validate(request).model_dump()
+        request = schemas[operation].model_validate(request).model_dump()
         source = None if request["case"] in CASES else resolve_model(self.root.parent, request["case"])
         folder = self.root / uuid4().hex
         folder.mkdir(parents=True)
