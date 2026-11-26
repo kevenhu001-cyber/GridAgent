@@ -32,8 +32,8 @@ RULES = {
         ("Conflicting capacity, balance or chronology constraints", "Insufficient reserve or network transfer",
          "Incorrect units, bounds or model formulation"),
         ("Inspect bounds, demand, initial conditions and compiled equations.",
-         "For a separately authorized diagnostic model, compare base-only and individual contingency cases; "
-         "do not relax the original acceptance criteria.")),
+         ("For a separately authorized diagnostic model, compare base-only and individual contingency cases; "
+          "do not relax the original acceptance criteria."))),
     "solver_limit": Rule("numerical", "Solver stopped at a resource or iteration limit without a verified candidate.",
         ("Insufficient evaluation or time budget", "Difficult or poorly scaled formulation"),
         ("Review callback/node counts, model scale and termination; a new solve requires a separately authorized budget.",)),
@@ -139,7 +139,7 @@ def rule_for(scope, key):
             return "storage"
         if key.startswith("unit:"):
             return "chronology"
-        if key.startswith("balance:") or key.startswith("node:"):
+        if key.startswith(("balance:", "node:")):
             return "balance"
         if key.startswith("line:"):
             return "loading" if key.endswith((":capacity", ":angle")) else "balance"

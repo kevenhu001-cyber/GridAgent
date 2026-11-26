@@ -202,6 +202,28 @@ def workspace_command(root, command, args, *, model_factory=None):
         from .paper import model_estimator, paper_rank
 
         yield from paper_rank(root, model_estimator(create_model()))
+    elif command in {"diagnostic-experiment", "diagnostic-experiment-resume"} and len(args) == 1:
+        import json
+
+        from filelock import Timeout
+
+        from .diagnostic_experiment import resume_experiment, start_experiment
+        from .diagnostic_experiment_ir import DiagnosticExperiment
+
+        try:
+            if command == "diagnostic-experiment":
+                with Path(args[0]).open("rb") as handle:
+                    payload = handle.read(1024 * 1024 + 1)
+                if len(payload) > 1024 * 1024:
+                    raise ValueError("Diagnostic experiment input exceeds 1 MiB")
+                identifier = start_experiment(root, DiagnosticExperiment.model_validate_json(payload))
+                yield "Diagnostic experiment study: " + identifier
+            else:
+                identifier = args[0]
+            report = resume_experiment(root, identifier)
+        except Timeout as exc:
+            raise ValueError("Diagnostic experiment or source study is locked") from exc
+        yield json.dumps(report, ensure_ascii=False, allow_nan=False)
     elif command == "diagnose-study" and len(args) == 1:
         import json
 
