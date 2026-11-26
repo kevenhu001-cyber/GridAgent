@@ -27,6 +27,8 @@ def reservation_for(spec):
     reservation = {"program_sha256": spec.sha256(), "route": spec.route(), "time_limit_s": spec.time_limit_s}
     if isinstance(spec, NonlinearProgram):
         reservation.update(max_iterations=spec.max_iterations, max_evaluations=spec.max_evaluations)
+        if spec.analysis is not None:
+            reservation["analysis_version"] = spec.analysis.schema_version
     else:
         reservation["node_limit"] = spec.node_limit
     return reservation

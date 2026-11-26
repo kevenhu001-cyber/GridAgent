@@ -77,6 +77,15 @@ class EvaluationLimit(RuntimeError):
 
 def solve_nonlinear(spec):
     spec = NonlinearProgram.model_validate(spec)
+    if spec.analysis is not None:
+        from .nonlinear_analysis import solve_advanced
+
+        return solve_advanced(spec)
+    return solve_single(spec)
+
+
+def solve_single(spec, *, shared_deadline=None, callback_limit=None):
+    spec = NonlinearProgram.model_validate(spec)
     spec = NonlinearProgram.model_validate(spec.canonical())
     ids = [v.id for v in spec.variables]
     bounds = [(v.lower, v.upper) for v in spec.variables]
@@ -85,11 +94,14 @@ def solve_nonlinear(spec):
     sign = 1 if spec.objective.sense == "minimize" else -1
     calls = 0
     deadline = time.monotonic() + spec.time_limit_s
+    if shared_deadline is not None:
+        deadline = min(deadline, shared_deadline)
+    limit = spec.max_evaluations if callback_limit is None else min(spec.max_evaluations, callback_limit)
     best = None
 
     def charge():
         nonlocal calls
-        if calls >= spec.max_evaluations or time.monotonic() >= deadline:
+        if calls >= limit or time.monotonic() >= deadline:
             raise EvaluationLimit
         calls += 1
 
@@ -188,6 +200,10 @@ def verify_nonlinear(spec, result):
     spec = NonlinearProgram.model_validate(spec)
     if result.get("route") != spec.route():
         raise ValueError("Solver route does not match nonlinear program")
+    if spec.analysis is not None:
+        from .nonlinear_analysis import verify_advanced
+
+        return verify_advanced(spec, result)
     primal = verify_primal(spec, result.get("values"), result.get("objective"))
     return {"primal": primal, "lp_certificate": None, "optimality_independently_checked": False,
             "classification": "verified_feasible_candidate" if primal["passed"] else "no_verified_candidate",

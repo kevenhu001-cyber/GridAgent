@@ -57,6 +57,13 @@ def study_summary(root: Path, identifier: str):
             lines.append(f"Verified objective: {verification['primal']['objective']:.6g} {report['objective_unit']}")
         if not verification["optimality_independently_checked"]:
             lines.append("Independent optimality not established")
+        advanced = verification.get("advanced_analysis")
+        if advanced:
+            lines.append(f"Verified baseline candidates: {advanced['baseline_feasible_starts']}")
+            kkt = advanced.get("kkt")
+            if kkt:
+                lines.append(f"First-order KKT diagnostic: {kkt['status']}")
+            lines.append(f"RHS reoptimization cases: {len(advanced['rhs_scan'])}")
         sensitivity = verification.get("sensitivity")
         if sensitivity:
             lines.append(f"Local derivative agreement: {sensitivity['all_derivatives_agree']}")
