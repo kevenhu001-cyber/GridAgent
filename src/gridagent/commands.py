@@ -202,6 +202,28 @@ def workspace_command(root, command, args, *, model_factory=None):
         from .paper import model_estimator, paper_rank
 
         yield from paper_rank(root, model_estimator(create_model()))
+    elif command in {"ac-diagnostic-experiment", "ac-diagnostic-experiment-resume"} and len(args) == 1:
+        import json
+
+        from filelock import Timeout
+
+        from .ac_diagnostic_experiment import resume_experiment, start_experiment
+        from .ac_diagnostic_ir import ACDiagnosticExperiment
+
+        try:
+            if command == "ac-diagnostic-experiment":
+                with Path(args[0]).open("rb") as handle:
+                    payload = handle.read(1024 * 1024 + 1)
+                if len(payload) > 1024 * 1024:
+                    raise ValueError("AC diagnostic input exceeds 1 MiB")
+                identifier = start_experiment(root, ACDiagnosticExperiment.model_validate_json(payload))
+                yield "AC diagnostic experiment study: " + identifier
+            else:
+                identifier = args[0]
+            report = resume_experiment(root, identifier)
+        except Timeout as exc:
+            raise ValueError("AC diagnostic experiment or source study is locked") from exc
+        yield json.dumps(report, ensure_ascii=False, allow_nan=False)
     elif command in {"diagnostic-experiment", "diagnostic-experiment-resume"} and len(args) == 1:
         import json
 

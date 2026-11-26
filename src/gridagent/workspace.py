@@ -49,6 +49,13 @@ def study_summary(root: Path, identifier: str):
     lines = [f"Study {identifier}", f"Protocol: {manifest.get('protocol', 'unknown')}"]
     if report is None:
         lines.append("Unfinished · partial artifacts preserved")
+    elif report.get("phase") == "ac_diagnostic_experiment_finished":
+        lines.append(f"AC diagnostic baseline reproduced: {report['baseline_reproduced']}")
+        lines.append(f"Reserved runs: {report['reserved_solver_runs']}/{report['max_solver_runs']}")
+        for finding in report["hypothesis_updates"]:
+            probe = finding["probe"]
+            lines.append(f"{probe['kind']} {probe['device']}: {finding['status']}")
+        lines.append("Counterfactual only; root cause not confirmed and original model unchanged")
     elif report.get("phase") == "diagnostic_experiment_finished":
         lines.append(f"Diagnostic experiment: {report['conclusion']}")
         lines.append(f"Reserved calls: {report['reserved_solver_calls']}/{report['max_solver_calls']}")

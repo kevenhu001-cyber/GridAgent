@@ -30,6 +30,8 @@ def main():
     research.add_argument("--diagnose-study", metavar="ID", help="Diagnose committed study evidence without solving")
     research.add_argument("--diagnostic-experiment", metavar="JSON", help="Run explicitly authorized contingency probes")
     research.add_argument("--diagnostic-experiment-resume", metavar="ID", help="Recover diagnostic experiment evidence")
+    research.add_argument("--ac-diagnostic-experiment", metavar="JSON", help="Run authorized single-factor AC probes")
+    research.add_argument("--ac-diagnostic-experiment-resume", metavar="ID", help="Recover AC diagnostic evidence")
     research.add_argument("--research-tasks", action="store_true", help="List saved research tasks")
     research.add_argument("--research-status", metavar="ID")
     research.add_argument("--research-resume", metavar="ID")
@@ -115,6 +117,9 @@ def main():
         ("diagnose-study", [args.diagnose_study] if args.diagnose_study else None),
         ("diagnostic-experiment", [args.diagnostic_experiment] if args.diagnostic_experiment else None),
         ("diagnostic-experiment-resume", [args.diagnostic_experiment_resume] if args.diagnostic_experiment_resume else None),
+        ("ac-diagnostic-experiment", [args.ac_diagnostic_experiment] if args.ac_diagnostic_experiment else None),
+        ("ac-diagnostic-experiment-resume",
+         [args.ac_diagnostic_experiment_resume] if args.ac_diagnostic_experiment_resume else None),
         ("research-tasks", [] if args.research_tasks else None),
         ("research-status", [args.research_status] if args.research_status else None),
         ("research-resume", [args.research_resume] if args.research_resume else None),

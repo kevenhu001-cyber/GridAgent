@@ -156,3 +156,130 @@ def test_base_ac_snapshot_cannot_claim_full_generator_contingency_coverage(tmp_p
     report = resume_ac_check(tmp_path, study, solver=lambda *args, **kwargs: None)
     assert not report["full_dc_schedule_coverage"]
     assert not report["completed"]
+
+
+
+def diagnostic_input(identifier="a"*32, digest="b"*64):
+    return {"source_study_id": identifier, "source_report_sha256": digest,
+            "snapshot": {"hour": 0}, "target_scope": "ac_native",
+            "target_check": "voltage_operating_range",
+            "probes": [{"kind": "voltage_setpoint", "device": "slackA", "value_pu": 0.98}],
+            "max_solver_runs": 2}
+
+
+def test_ac_probe_preserves_locked_inputs():
+    from gridagent.ac_diagnostic_ir import ACDiagnosticExperiment, compile_probes
+
+    spec = ACDiagnosticExperiment.model_validate(diagnostic_input())
+    original = ACCheckSpec.model_validate(ac_input("a"*32))
+    cases = compile_probes(spec, original)
+    assert cases[0][1].canonical() == original.canonical()
+    job, variant = cases[1]
+    assert job["change"] == {"device": "slackA", "field": "voltage_pu", "before": 1, "after": 0.98}
+    expected = original.canonical()
+    expected["model"]["revision"] += 1
+    next(d for d in expected["model"]["devices"] if d["id"] == "slackA")["voltage_pu"] = 0.98
+    assert variant.canonical() == expected
+
+
+@pytest.mark.parametrize("fault", ["unknown", "load", "unchanged", "duplicate", "budget", "wrong_snapshot",
+                                   "target", "range", "nonstorage"])
+def test_ac_probe_rejects_unauthorized_fields(fault):
+    from gridagent.ac_diagnostic_ir import ACDiagnosticExperiment, compile_probes
+
+    raw = diagnostic_input()
+    if fault == "unknown":
+        raw["probes"][0]["device"] = "missing"
+    elif fault == "load":
+        raw["probes"][0]["device"] = "loadB"
+    elif fault == "unchanged":
+        raw["probes"][0]["value_pu"] = 1
+    elif fault == "duplicate":
+        raw["probes"].append(raw["probes"][0])
+        raw["max_solver_runs"] = 3
+    elif fault == "budget":
+        raw["probes"].append({**raw["probes"][0], "value_pu": 0.99})
+    elif fault == "wrong_snapshot":
+        raw["snapshot"]["hour"] = 1
+    elif fault == "target":
+        raw["target_check"] = "model_input_fidelity"
+    elif fault == "range":
+        raw["probes"][0]["value_pu"] = 1.4
+    else:
+        raw["probes"] = [{"kind": "storage_reactive", "device": "loadB", "value_mvar": -1,
+                          "minimum_mvar": -2, "maximum_mvar": 2}]
+    with pytest.raises(ValueError):
+        compile_probes(ACDiagnosticExperiment.model_validate(raw), ac_input("a"*32))
+
+
+def test_storage_reactive_probe_consumption_sign_and_range():
+    from gridagent.ac_diagnostic_ir import ACDiagnosticExperiment, compile_probes
+
+    original = ac_input("a"*32)
+    original["model"]["devices"].append({"kind": "storage", "id": "battery", "bus": "B",
+        "charging_mw": 0, "reactive_mvar": 0, "energy_capacity_mwh": 2, "initial_soc_percent": 50})
+    raw = diagnostic_input()
+    raw["probes"] = [{"kind": "storage_reactive", "device": "battery", "value_mvar": -1,
+                      "minimum_mvar": -2, "maximum_mvar": 2}]
+    _, variant = compile_probes(ACDiagnosticExperiment.model_validate(raw), original)[1]
+    battery = next(d for d in variant.model.devices if d.id == "battery")
+    assert battery.reactive_mvar == -1
+    assert battery.charging_mw == 0
+    assert battery.initial_soc_percent == 50
+    raw["probes"][0]["maximum_mvar"] = -0.5
+    with pytest.raises(ValueError, match="Original storage Q"):
+        compile_probes(ACDiagnosticExperiment.model_validate(raw), original)
+
+
+def test_ac_diagnostic_interpretation_abstains_on_baseline_drift_and_version():
+    from gridagent.ac_diagnostic_experiment import interpret, measure
+    from gridagent.ac_diagnostic_ir import ACDiagnosticExperiment
+    from gridagent.engineering_ir import AcceptanceIR
+
+    spec = ACDiagnosticExperiment.model_validate(diagnostic_input())
+    observation = {"native_evidence": {"status": "rejected", "solver_version": "3"},
+                   "native_verdict": {"checks": [
+                       *[{"id": k, "passed": True} for k in ("model_input_fidelity", "solver_success",
+                                                             "active_bus_coverage", "power_balance_mva")],
+                       {"id": "voltage_operating_range", "passed": False, "observed": [0.82, 1]}]},
+                   "passed": False}
+    source = measure(spec, observation, AcceptanceIR())
+    assert source["violation"] == pytest.approx(0.08)
+    rows = [{"measurement": source}, {"measurement": {**source, "violation": 0.04},
+                                      "probe": {}, "observation": {"passed": False}}]
+    comparable, updates = interpret(spec, source, rows)
+    assert comparable
+    assert updates[0]["status"] == "target_violation_reduced"
+    assert not updates[0]["all_snapshot_checks_passed"]
+    rows[1]["measurement"]["solver_version"] = "4"
+    assert interpret(spec, source, rows)[1][0]["status"] == "inconclusive"
+    rows[0]["measurement"] = {**source, "violation": 0.03}
+    assert not interpret(spec, source, rows)[0]
+    observation["native_evidence"]["status"] = "unavailable"
+    assert measure(spec, observation, AcceptanceIR()) is None
+
+
+@pytest.mark.integration
+def test_native_voltage_diagnostic_reproduces_failure_and_resolves_target(tmp_path, completed):
+    pytest.importorskip("pandapower")
+    from gridagent.ac_diagnostic_experiment import resume_experiment, start_experiment
+    from gridagent.diagnosis import diagnose_study
+
+    identifier, _ = completed
+    original = ac_input(identifier)
+    original["model"]["devices"][0]["voltage_pu"] = 0.89
+    source = start_ac_check(tmp_path, original)
+    before = resume_ac_check(tmp_path, source)
+    assert not before["completed"]
+    digest = diagnose_study(tmp_path, source)["source_report_sha256"]
+    raw = diagnostic_input(source, digest)
+    raw["probes"][0]["value_pu"] = 1
+    experiment = start_experiment(tmp_path, raw)
+    report = resume_experiment(tmp_path, experiment)
+    assert report["baseline_reproduced"], report
+    assert report["hypothesis_updates"][0]["status"] == "target_resolved_in_counterfactual"
+    assert report["hypothesis_updates"][0]["all_snapshot_checks_passed"]
+    assert report["completed"]
+    assert not report["root_cause_confirmed"]
+    assert resume_experiment(tmp_path, experiment, solver=lambda *a, **kw: pytest.fail("Repeated solve")) == report
+    assert diagnose_study(tmp_path, source)["source_report_sha256"] == digest
