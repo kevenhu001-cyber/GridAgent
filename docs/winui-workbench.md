@@ -55,3 +55,5 @@ The desktop bridge optionally emits versioned `gridagent.artifact.v1` run cards.
 
 ## Application state boundary
 ConversationState owns message lifecycle, grouping, streaming reconciliation, artifact identity and research-card updates without depending on XAML or a dispatcher. MainWindow.Conversation handles scroll/focus/commands; MainWindow.EngineEvents translates transport events into presentation state. Native controls only render that state. A cross-platform .NET contract test exercises stream finalization, interrupted previews, deduplication, malformed schema handling and research updates before WinUI compilation. This is the first state extraction, not a claim that every desktop page is MVVM yet.
+
+For cross-layer responsibilities, adopted architecture decisions and the next acceptance gates, see [GridAgent architecture](architecture.md). Windows packaging smoke now exercises the resident service using the relocated interpreter, including a real fault-run preview and a rejected mutation. The CI startup benchmark additionally measures amortized latency for five requests per resident process; it includes process startup and exit and is not GUI latency.

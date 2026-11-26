@@ -47,6 +47,24 @@ def main():
         fault = simulator.run("fault", {"case": "kundur", "bus": 5, "duration_s": 0.1, "end_s": 3.0})
         assert fault["status"] == "ok", fault
         assert (workspace / "runs" / fault["run_id"] / "voltage.csv").is_file()
+        frames = [
+            {"version": 1, "id": "a" * 32, "request": {"action": "initialize"}},
+            {"version": 1, "id": "b" * 32, "request": {"action": "artifact-preview", "run": fault["run_id"]}},
+            {"version": 1, "id": "c" * 32, "request": {"action": "ask", "prompt": "must not execute"}},
+            {"version": 1, "id": "d" * 32, "request": {"action": "refresh"}},
+        ]
+        read = subprocess.run(
+            [sys.executable, "-X", "utf8", "-m", "gridagent.desktop_read_service", str(workspace)],
+            input="".join(json.dumps(frame) + "\n" for frame in frames), text=True, encoding="utf-8",
+            capture_output=True, timeout=120, check=True,
+        )
+        read_events = [json.loads(line) for line in read.stdout.splitlines()]
+        terminals = [e for e in read_events if e["kind"] == "done"]
+        assert [e["id"] for e in terminals] == [f["id"] for f in frames]
+        assert [e["data"] for e in terminals] == [True, True, False, True]
+        preview = next(e["data"] for e in read_events if e["kind"] == "artifact_preview")
+        assert preview["schema"] == "gridagent.artifact.v1" and preview["id"] == fault["run_id"]
+        assert 0 < len(preview["x"]) == len(preview["y"]) <= 240
         eigen = simulator.run("eigen", {"case": "kundur"})
         assert eigen["status"] == "ok", eigen
         pp = run_program(workspace, {"backend": "pandapower", "base": "case14"})

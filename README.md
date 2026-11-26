@@ -157,3 +157,7 @@ Use the native **Simulation Plugins** window or `gridagent --plugins`,
 `gridagent --plugin-install pypsa`, `gridagent --plugin-remove pypsa`.
 Optional managed backends: PyPSA, OpenDSS, PyBaMM, pvlib, windpowerlib, CVXPY, Pyomo, CasADi, PYPOWER, PyPowSyBl, OSQP, scikit-rf, CoolProp and rainflow. Tools and curated prompts are
 bound on the next chat turn, without restarting the application. See [plugin design](docs/plugins.md).
+
+### Architecture
+
+See [GridAgent architectural direction](docs/architecture.md) for the native workbench, execution boundaries, evidence-backed presentation contracts, and long-term acceptance gates.
