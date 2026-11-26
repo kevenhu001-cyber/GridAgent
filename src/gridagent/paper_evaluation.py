@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import statistics
 from pathlib import Path
 
 from .paper import CANDIDATES, PIN, Ranking
@@ -48,18 +49,50 @@ def score(predictions, labels):
             "full_workflow_success": "not_scored", "mitigation": "not_scored"}
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Offline original DSR prediction evaluator")
-    parser.add_argument("study", type=Path)
-    parser.add_argument("test_memory", type=Path)
-    args = parser.parse_args()
-    manifest = json.loads((args.study / "manifest.json").read_text(encoding="utf-8"))
+def score_study(study, labels):
+    manifest = json.loads((study / "manifest.json").read_text(encoding="utf-8"))
     if (manifest["protocol"] != "poweragentbench-dsr-prediction-v1"
             or manifest["manifest"]["upstream_commit"] != PIN
             or manifest["manifest"]["candidates"] != [list(c) for c in CANDIDATES]):
         raise ValueError("Study does not use the pinned paper protocol")
-    predictions = json.loads((args.study / "predictions.json").read_text(encoding="utf-8"))
-    print(json.dumps(score(predictions, read_truth(args.test_memory)), indent=2))
+    return score(json.loads((study / "predictions.json").read_text(encoding="utf-8")), labels)
+
+
+def score_batch(batch, labels):
+    report = json.loads((batch / "report.json").read_text(encoding="utf-8"))
+    if report["task"] not in {"rank", "dsr", "mitigate"} or report["upstream_commit"] != PIN:
+        raise ValueError("Expected a DSR prediction batch")
+    rows = []
+    for trial in report["trials"]:
+        row = {"trial": trial["trial"], "outcome": trial["outcome"]}
+        try:
+            study = (batch / (trial["study"] or "")).resolve()
+            if not study.is_relative_to(batch.resolve()) or not trial["study"]:
+                raise ValueError("Missing study")
+            row["score"] = score_study(study, labels)
+        except (OSError, ValueError, KeyError, TypeError):
+            row["score"] = None
+        rows.append(row)
+    scored = [r["score"] for r in rows if r["score"] is not None]
+    return {"trials": rows, "attempted": len(rows), "scored": len(scored),
+            "prediction_metrics_conditional_on_valid_score": {
+                key: statistics.mean(s[key] for s in scored) if scored else None
+                for key in ("top3_recall", "severity_mae", "stability_accuracy")},
+            "full_workflow_success": "not_scored"}
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Offline original DSR prediction evaluator")
+    parser.add_argument("study", type=Path)
+    parser.add_argument("test_memory", type=Path)
+    parser.add_argument("--batch", action="store_true")
+    args = parser.parse_args()
+    labels = read_truth(args.test_memory)
+    if args.batch:
+        result = score_batch(args.study, labels)
+    else:
+        result = score_study(args.study, labels)
+    print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":

@@ -8,7 +8,11 @@ from .workspace import list_runs, study_summary, waveform, waveform_text
 
 def workspace_command(root, command, args):
     root = Path(root)
-    if command == "paper-kpi" and len(args) == 2:
+    if command == "paper-trials" and 2 <= len(args) <= 3:
+        from .paper_trials import configured_trials
+
+        yield from configured_trials(root, args[0], int(args[1]), args[2] if len(args) == 3 else None)
+    elif command == "paper-kpi" and len(args) == 2:
         import json
 
         from .paper import original_kpis

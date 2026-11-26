@@ -83,3 +83,18 @@ calls upstream simulation. It does not install devices, synthesize machine
 parameters or certify equivalence of project copies. Users must validate
 identical non-mitigation parameters and model provenance. Licensed testing
 remains outstanding. See examples/paper-mitigation-profile.json.
+
+## Independent repeated trials
+
+Run ten fresh prediction trials with gridagent --paper-trials rank 10.
+For licensed workflows use gridagent --paper-trials dmq 10 PROFILE.json,
+or task dsr/mitigate. TUI supports the corresponding /paper-trials command.
+The batch keeps isolated trial roots, one fresh model object per trial,
+reservation records, outcome counts and elapsed time for all attempts.
+Select a model through GRIDAGENT_MODEL for each separate batch. No provider
+credentials or held-out labels are saved in batch metadata. Failures remain
+in the denominator. The outcome definitions are local process metrics, not
+claims of original paper full-workflow success. Score DSR predictions from a
+batch separately with python -m gridagent.paper_evaluation BATCH_DIR TEST_MEMORY --batch.
+Prediction metric means are conditional on a valid score; failed/missing
+scores are shown separately. No actual ten-run model campaign is run in CI.
