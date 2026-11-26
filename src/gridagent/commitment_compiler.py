@@ -2,13 +2,17 @@
 
 from .commitment_ir import UnitCommitment
 from .commitment_network import add_network
+from .commitment_security import add_security
 from .math_program_ir import MathematicalProgram
 
 COMPILER = "single-area-commitment-milp-v1"
 NETWORK_COMPILER = "dc-network-commitment-milp-v1"
+SECURITY_COMPILER = "dc-line-security-commitment-milp-v1"
 
 
 def compiler_for(spec):
+    if spec.network is not None and spec.network.security is not None:
+        return SECURITY_COMPILER
     return NETWORK_COMPILER if spec.network is not None else COMPILER
 
 
@@ -96,6 +100,8 @@ def compile_commitment(spec):
 
     if spec.network is not None:
         add_network(spec, add_var, row, variable)
+        if spec.network.security is not None:
+            add_security(spec, add_var, row, variable)
     else:
         for t, demand in enumerate(spec.demand_mw):
             balance = {variable("g", i, t, "p"): 1 for i in range(len(spec.units))}

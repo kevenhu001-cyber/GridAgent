@@ -5,6 +5,7 @@ import math
 from .commitment_compiler import compile_commitment, compiler_for, ordered, variable
 from .commitment_ir import UnitCommitment
 from .commitment_network import network_checks
+from .commitment_security import security_checks
 from .math_program_solver import solve_program, verify_result
 
 TOL = 1e-6
@@ -84,6 +85,8 @@ def physical_checks(spec, values):
         check(f"balance:{t}", abs(error))
     if spec.network is not None:
         schedules["network"] = network_checks(spec, values, variable, check, schedules)
+        if spec.network.security is not None:
+            schedules["security"] = security_checks(spec, values, variable, check)
     return {"passed": all(row["passed"] for row in checks), "checks": checks,
             "total_cost": math.fsum(costs), "schedule": schedules,
             "power_balance_residual_mw": residual, "currency": spec.currency}
@@ -110,9 +113,11 @@ def verify_commitment(spec, result):
         verdict["primal"]["passed"] = physical["passed"]
         if not physical["passed"]:
             verdict["classification"] = "no_verified_candidate"
+    model = "single_area_no_network_constraints"
+    if spec.network is not None:
+        model = "lossless_dc_selected_line_outages" if spec.network.security is not None else "lossless_dc_base_topology"
     verdict["commitment"] = {"compiler": compiler_for(spec), "source_sha256": spec.sha256(),
                              "compiled_program_sha256": program.sha256(), "physical": physical,
-                             "network_model": ("lossless_dc_base_topology" if spec.network is not None
-                                               else "single_area_no_network_constraints"),
+                             "network_model": model,
                              "horizon_boundary": "carry_remaining_minimum_state_obligations"}
     return verdict

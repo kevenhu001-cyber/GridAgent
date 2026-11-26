@@ -67,7 +67,13 @@ def study_summary(root: Path, identifier: str):
             if "network" in schedule:
                 lines.append(f"DC network: {len(schedule['network']['buses'])} buses, "
                              f"{len(schedule['network']['lines'])} lines")
-                lines.append("System reserve checked; contingency deliverability and AC feasibility not established")
+                if "security" in schedule:
+                    security = schedule["security"]
+                    lines.append(f"Verified line outage cases: {len(security['cases'])}")
+                    lines.append(f"All network lines covered: {security['all_network_lines_covered']}")
+                    lines.append("Static DC redispatch checked; AC and dynamic security not established")
+                else:
+                    lines.append("System reserve checked; contingency deliverability and AC feasibility not established")
             else:
                 lines.append("Network flows and AC feasibility are not established")
         advanced = verification.get("advanced_analysis")

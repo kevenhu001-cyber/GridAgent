@@ -79,6 +79,19 @@ class CommitmentLine(Contract):
     max_angle_difference_rad: float = Field(gt=0, le=0.5)
 
 
+class LineSecurity(Contract):
+    """Explicit, single-line outages evaluated independently at each hour."""
+
+    schema_version: Literal[1] = 1
+    outage_lines: tuple[Identifier, ...] = Field(min_length=1, max_length=8)
+
+    @model_validator(mode="after")
+    def unique(self):
+        if len(set(self.outage_lines)) != len(self.outage_lines):
+            raise ValueError("Duplicate security outage")
+        return self
+
+
 class CommitmentNetwork(Contract):
     schema_version: Literal[1] = 1
     buses: tuple[CommitmentBus, ...] = Field(min_length=2, max_length=20)
@@ -90,6 +103,7 @@ class CommitmentNetwork(Contract):
     reserve_requirement_mw: tuple[Power, ...] = Field(min_length=1, max_length=24)
     reserve_response_minutes: float = Field(gt=0, le=60)
     unit_reserve_capability_mw: dict[Identifier, Power]
+    security: LineSecurity | None = None
 
     @model_validator(mode="after")
     def topology(self):
@@ -99,6 +113,8 @@ class CommitmentNetwork(Contract):
             raise ValueError("Duplicate network component ID")
         if self.reference_bus not in nodes:
             raise ValueError("Unknown reference bus")
+        if self.security is not None and not set(self.security.outage_lines) <= {line.id for line in self.lines}:
+            raise ValueError("Unknown security outage line")
         neighbors = {key: set() for key in nodes}
         for line in self.lines:
             if line.from_bus not in nodes or line.to_bus not in nodes or line.from_bus == line.to_bus:
@@ -158,6 +174,10 @@ class UnitCommitment(Contract):
                     raise ValueError("Bus demands must sum to the specified system demand")
             variables += hours * (len(network.buses) + len(network.lines) + len(self.units))
             rows += hours * (len(network.buses) + 2*len(network.lines) + len(self.units))
+            if network.security is not None:
+                cases = hours * len(network.security.outage_lines)
+                variables += cases * (len(network.buses) + len(network.lines) + len(self.units))
+                rows += cases * (len(network.buses) + 2*(len(network.lines)-1) + 4*len(self.units))
         if variables > 200:
             raise ValueError("Commitment exceeds the mathematical variable budget")
         if rows > 500:
@@ -173,6 +193,10 @@ class UnitCommitment(Contract):
         else:
             for group in ("buses", "lines"):
                 data["network"][group].sort(key=lambda row: row["id"])
+            if self.network.security is None:
+                data["network"].pop("security")
+            else:
+                data["network"]["security"]["outage_lines"].sort()
         return data
 
     def sha256(self):
