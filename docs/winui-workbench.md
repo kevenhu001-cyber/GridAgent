@@ -32,3 +32,5 @@ The WinUI initialization request loads only model settings and session metadata.
 Recent conversations are reachable from the native navigation pane, searchable in the history tab, and simulation run identifiers in sanitized tool summaries provide a direct result-list shortcut. Engineering list pages use a bounded Grid and virtualizing ListView; command bars move less-used actions into overflow. The portable CI job measures isolated bridge initialization and full-index latency separately, as well as package size. This is not a measured GUI cold-start or frame-rate claim.
 - https://learn.microsoft.com/en-us/windows/apps/design/controls/command-bar
 - https://learn.microsoft.com/en-us/windows/apps/get-started/line-of-business/design-for-lob
+
+Research events render in a dedicated live task card with budget usage, collapsible details and a direct task-list action. The chat scroll follows new messages only when the user is at the bottom; a jump-to-latest control is shown when reading earlier content.

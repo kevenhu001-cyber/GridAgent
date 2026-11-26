@@ -69,7 +69,10 @@ public partial class MainWindow : Window
     }
 
     private ConversationMessage? _toolGroup;
-    private void ClearMessages() { _messages.Clear(); _toolGroup = null; EmptyConversation.Visibility = Visibility.Visible; }
+    private ConversationMessage? _researchMessage;
+    private ScrollViewer? _conversationViewport;
+    private bool _followTail = true;
+    private void ClearMessages() { _messages.Clear(); _toolGroup = null; _researchMessage = null; _followTail = true; JumpToLatest.Visibility = Visibility.Collapsed; EmptyConversation.Visibility = Visibility.Visible; }
     private void Notify(string message, InfoBarSeverity severity = InfoBarSeverity.Informational)
     {
         Notice.Message = message; Notice.Severity = severity; Notice.IsOpen = true;
@@ -82,21 +85,50 @@ public partial class MainWindow : Window
         if (sender is Button button && button.Content is string text) { Prompt.Text = text; Prompt.Focus(FocusState.Programmatic); }
     }
     private bool _scrollQueued;
+    private void ConversationLoaded(object sender, RoutedEventArgs e)
+    {
+        static ScrollViewer? FindViewport(DependencyObject node)
+        {
+            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++)
+            {
+                var child = VisualTreeHelper.GetChild(node, i);
+                if (child is ScrollViewer scroll) return scroll;
+                if (FindViewport(child) is ScrollViewer found) return found;
+            }
+            return null;
+        }
+        if (_conversationViewport != null) _conversationViewport.ViewChanged -= ConversationViewChanged;
+        _conversationViewport = FindViewport(Messages);
+        if (_conversationViewport != null) _conversationViewport.ViewChanged += ConversationViewChanged;
+    }
+    private void ConversationViewChanged(object? sender, ScrollViewerViewChangedEventArgs args)
+    {
+        if (_conversationViewport == null || _scrollQueued) return;
+        _followTail = _conversationViewport.ScrollableHeight - _conversationViewport.VerticalOffset <= 80;
+        JumpToLatest.Visibility = _followTail ? Visibility.Collapsed : Visibility.Visible;
+    }
+    private void JumpToLatestClick(object sender, RoutedEventArgs e)
+    {
+        _followTail = true;
+        JumpToLatest.Visibility = Visibility.Collapsed;
+        QueueConversationScroll();
+    }
     private void QueueConversationScroll()
     {
-        if (_scrollQueued || _messages.Count == 0) return;
+        if (_scrollQueued || _messages.Count == 0 || !_followTail) return;
         // Coalesce bursts of history and tool updates into one dispatcher callback.
         _scrollQueued = true;
         DispatcherQueue.TryEnqueue(() =>
         {
             _scrollQueued = false;
-            if (_messages.Count > 0) Messages.ScrollIntoView(_messages[^1]);
+            if (_messages.Count > 0 && _followTail) Messages.ScrollIntoView(_messages[^1]);
         });
     }
     private void Append(string text, string role = "Result")
     {
         if (string.IsNullOrWhiteSpace(text)) return;
         _toolGroup = null;
+        if (role == "You") { _followTail = true; JumpToLatest.Visibility = Visibility.Collapsed; }
         EmptyConversation.Visibility = Visibility.Collapsed;
         _messages.Add(new ConversationMessage(role, text));
         QueueConversationScroll();
@@ -172,6 +204,33 @@ public partial class MainWindow : Window
         }
         else Notify("This run is no longer available in the current workspace.", InfoBarSeverity.Warning);
     }
+    private async void OpenArtifactTask(string id)
+    {
+        if (_busy) { Notify("Wait for the current operation before opening the task details.", InfoBarSeverity.Warning); return; }
+        if (WorkspaceChanged()) return;
+        if (ResearchList.ItemsSource is not IEnumerable<Entry> entries || !entries.Any(e => e.Id == id))
+            await Execute(new { action = "refresh" });
+        if (ResearchList.ItemsSource is IEnumerable<Entry> refreshed && refreshed.FirstOrDefault(e => e.Id == id) is Entry task)
+        {
+            Navigation.SelectedItem = ResearchNavigation;
+            ResearchList.SelectedItem = task;
+            ResearchList.ScrollIntoView(task);
+        }
+        else Notify("The research task is not available in this workspace.", InfoBarSeverity.Warning);
+    }
+    private void UpdateResearchCard(ResearchSnapshot snapshot)
+    {
+        EmptyConversation.Visibility = Visibility.Collapsed;
+        _toolGroup = null;
+        if (_researchMessage?.Research?.Id != snapshot.Id)
+        {
+            _researchMessage = new ConversationMessage("Research", "") { OpenTask = OpenArtifactTask };
+            _researchMessage.SetResearch(snapshot);
+            _messages.Add(_researchMessage);
+        }
+        else _researchMessage.SetResearch(snapshot);
+        QueueConversationScroll();
+    }
     private Task EnsureWorkspaceIndex()
     {
         var tag = (Navigation.SelectedItem as NavigationViewItem)?.Tag as string;
@@ -226,6 +285,7 @@ public partial class MainWindow : Window
         if (_busy) { Notify("Another operation is running.", InfoBarSeverity.Warning); return; }
         SetBusy(true);
         _operationError = false;
+        _researchMessage = null;
         StatusText.Text = "Working…";
         try
         {
@@ -300,8 +360,8 @@ public partial class MainWindow : Window
             case "research_task":
                 var researchId = data.GetProperty("id").GetString();
                 var stage = data.GetProperty("stage").GetString();
-                if (_activeResearch != researchId || stage is "passed" or "failed" or "cancelled" or "awaiting_input" or "awaiting_approval")
-                    Append(data.GetProperty("summary").GetString() ?? "");
+                UpdateResearchCard(new ResearchSnapshot(researchId ?? "", stage ?? "unknown", data.GetProperty("summary").GetString() ?? "",
+                    data.GetProperty("runs_used").GetInt32(), data.GetProperty("max_runs").GetInt32()));
                 _activeResearch = researchId;
                 CancelButton.Visibility = _busy && stage is not ("passed" or "failed" or "cancelled" or "awaiting_input" or "awaiting_approval") ? Visibility.Visible : Visibility.Collapsed;
                 StatusText.Text = $"Research · {stage} · {data.GetProperty("runs_used")}/{data.GetProperty("max_runs")} simulations";

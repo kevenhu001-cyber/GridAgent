@@ -14,6 +14,8 @@ using Microsoft.UI.Text;
 
 namespace GridAgent.Windows;
 
+internal sealed record ResearchSnapshot(string Id, string Stage, string Summary, int RunsUsed, int MaxRuns);
+
 internal sealed class ConversationMessage(string role, string body) : INotifyPropertyChanged
 {
     public string Role { get; } = role;
@@ -24,6 +26,14 @@ internal sealed class ConversationMessage(string role, string body) : INotifyPro
     public string Latest { get; private set; } = "";
     public string? LatestRun { get; private set; }
     public Action<string>? OpenRun { get; init; }
+    public Action<string>? OpenTask { get; init; }
+    public ResearchSnapshot? Research { get; private set; }
+    public void SetResearch(ResearchSnapshot snapshot)
+    {
+        if (snapshot == Research) return;
+        Research = snapshot;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Research)));
+    }
     public event PropertyChangedEventHandler? PropertyChanged;
     public void AddActivity(string summary)
     {
@@ -45,6 +55,9 @@ public sealed class ConversationMessageView : UserControl
     private Expander? _activity;
     private StackPanel? _details;
     private Button? _openRun;
+    private TextBlock? _researchStage;
+    private TextBlock? _researchSummary;
+    private ProgressBar? _researchProgress;
     public ConversationMessageView()
     {
         HorizontalContentAlignment = HorizontalAlignment.Stretch;
@@ -60,7 +73,7 @@ public sealed class ConversationMessageView : UserControl
     private void Bind(ConversationMessage? message)
     {
         if (ReferenceEquals(message, _message)) return;
-        Detach(); _activity = null; _details = null; _openRun = null; Content = null;
+        Detach(); _activity = null; _details = null; _openRun = null; _researchStage = null; _researchSummary = null; _researchProgress = null; Content = null;
         if (message == null) return;
         _message = message;
         var layout = new Grid { MaxWidth = 820, HorizontalAlignment = HorizontalAlignment.Stretch, Padding = new Thickness(8, 8, 8, 14) };
@@ -78,6 +91,26 @@ public sealed class ConversationMessageView : UserControl
             layout.Children.Add(activityLayout);
             message.PropertyChanged += MessageChanged;
             UpdateActivity();
+        }
+        else if (message.Role == "Research")
+        {
+            var taskPanel = new StackPanel { Spacing = 10 };
+            taskPanel.Children.Add(new TextBlock { Text = "Verified research task", FontWeight = FontWeights.SemiBold, FontSize = 18 });
+            _researchStage = Plain("", 14);
+            AutomationProperties.SetLiveSetting(_researchStage, AutomationLiveSetting.Polite);
+            _researchProgress = new ProgressBar { Minimum = 0, Maximum = 1 };
+            AutomationProperties.SetName(_researchProgress, "Simulation budget usage");
+            _researchSummary = Plain("", 14);
+            taskPanel.Children.Add(_researchStage);
+            taskPanel.Children.Add(_researchProgress);
+            taskPanel.Children.Add(new Expander { Header = "Task details", Content = _researchSummary, HorizontalAlignment = HorizontalAlignment.Stretch });
+            var open = new Button { Content = "Open research task", HorizontalAlignment = HorizontalAlignment.Left };
+            open.Click += (_, _) => { if (message.Research is ResearchSnapshot task) message.OpenTask?.Invoke(task.Id); };
+            taskPanel.Children.Add(open);
+            layout.Children.Add(new Border { Style = (Style)Application.Current.Resources["EngineeringCardStyle"], Padding = new Thickness(16),
+                BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12), Child = taskPanel });
+            message.PropertyChanged += MessageChanged;
+            UpdateResearch();
         }
         else if (message.Role == "You")
         {
@@ -107,7 +140,20 @@ public sealed class ConversationMessageView : UserControl
         data.SetText(value);
         global::Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(data);
     }
-    private void MessageChanged(object? sender, PropertyChangedEventArgs e) => UpdateActivity();
+
+    private void MessageChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(ConversationMessage.Research)) UpdateResearch();
+        else UpdateActivity();
+    }
+    private void UpdateResearch()
+    {
+        if (_message?.Research is not ResearchSnapshot task || _researchStage == null || _researchProgress == null || _researchSummary == null) return;
+        _researchStage.Text = $"{task.Stage.Replace('_', ' ')} · {task.RunsUsed}/{task.MaxRuns} simulations used";
+        _researchProgress.Maximum = Math.Max(1, task.MaxRuns);
+        _researchProgress.Value = Math.Clamp(task.RunsUsed, 0, Math.Max(1, task.MaxRuns));
+        _researchSummary.Text = task.Summary;
+    }
     private void UpdateActivity()
     {
         if (_activity == null || _message == null || _details == null) return;

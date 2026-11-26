@@ -7,7 +7,7 @@
   <TitleBar x:Name="AppTitleBar" Title="GridAgent" Subtitle="Engineering workspace"/>
   <NavigationView x:Name="Navigation" Grid.Row="1" PaneDisplayMode="Auto" OpenPaneLength="248" IsBackButtonVisible="Collapsed"
    IsSettingsVisible="True" SelectionChanged="Navigate" ItemInvoked="NavigationInvoked" AlwaysShowHeader="False" CompactModeThresholdWidth="720" ExpandedModeThresholdWidth="1100">
-   <NavigationView.MenuItems><NavigationViewItemHeader Content="Workspace"/><NavigationViewItem Tag="chat" Content="Assistant" Icon="Comment" x:Name="AssistantNavigation"/><NavigationViewItem x:Name="RecentConversations" Content="Recent conversations" Icon="Clock" SelectsOnInvoked="False"/><NavigationViewItem Tag="tasks" Content="Research tasks" Icon="AllApps"/><NavigationViewItem Tag="models" Content="Models" Icon="Library"/><NavigationViewItem Tag="runs" x:Name="ResultsNavigation" Content="Simulation results" Icon="View"/><NavigationViewItem Tag="studies" Content="Studies" Icon="Document"/><NavigationViewItemHeader Content="Engineering"/><NavigationViewItem Tag="tools" Content="Engineering tools" Icon="Repair"/><NavigationViewItem Tag="plugins" Content="Plugins" Icon="Manage"/><NavigationViewItem Tag="knowledge" Content="Knowledge" Icon="Book"/></NavigationView.MenuItems>
+   <NavigationView.MenuItems><NavigationViewItemHeader Content="Workspace"/><NavigationViewItem Tag="chat" Content="Assistant" Icon="Comment" x:Name="AssistantNavigation"/><NavigationViewItem x:Name="RecentConversations" Content="Recent conversations" Icon="Clock" SelectsOnInvoked="False"/><NavigationViewItem Tag="tasks" x:Name="ResearchNavigation" Content="Research tasks" Icon="AllApps"/><NavigationViewItem Tag="models" Content="Models" Icon="Library"/><NavigationViewItem Tag="runs" x:Name="ResultsNavigation" Content="Simulation results" Icon="View"/><NavigationViewItem Tag="studies" Content="Studies" Icon="Document"/><NavigationViewItemHeader Content="Engineering"/><NavigationViewItem Tag="tools" Content="Engineering tools" Icon="Repair"/><NavigationViewItem Tag="plugins" Content="Plugins" Icon="Manage"/><NavigationViewItem Tag="knowledge" Content="Knowledge" Icon="Book"/></NavigationView.MenuItems>
    <Grid Padding="0,0,12,12">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <InfoBar x:Name="Notice" IsOpen="False" IsClosable="True" Margin="12,0,12,8" AutomationProperties.Name="Operation notification"/>
@@ -26,12 +26,13 @@
        </StackPanel>
       </Grid>
       <Grid Grid.Row="1" Margin="0,8">
-       <ListView x:Name="Messages" SelectionMode="None" IsItemClickEnabled="False" IsTabStop="False" HorizontalContentAlignment="Stretch" AutomationProperties.Name="Conversation"
+       <ListView x:Name="Messages" Loaded="ConversationLoaded" SelectionMode="None" IsItemClickEnabled="False" IsTabStop="False" HorizontalContentAlignment="Stretch" AutomationProperties.Name="Conversation"
           ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollMode="Disabled">
         <ListView.ItemsPanel><ItemsPanelTemplate><ItemsStackPanel ItemsUpdatingScrollMode="KeepItemsInView"/></ItemsPanelTemplate></ListView.ItemsPanel>
         <ListView.ItemContainerStyle><Style TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Padding" Value="0"/><Setter Property="MinHeight" Value="0"/></Style></ListView.ItemContainerStyle>
         <ListView.ItemTemplate><DataTemplate><local:ConversationMessageView/></DataTemplate></ListView.ItemTemplate>
        </ListView>
+       <Button x:Name="JumpToLatest" Visibility="Collapsed" Content="Jump to latest" Click="JumpToLatestClick" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,8" AutomationProperties.Name="Jump to latest message"/>
        <StackPanel x:Name="EmptyConversation" VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="480" Spacing="12" Margin="20">
         <TextBlock Text="What are we working on?" FontSize="26" FontWeight="SemiBold" TextAlignment="Center" TextWrapping="Wrap"/>
         <TextBlock Text="Build a power network, analyze stability, or verify a simulation." TextAlignment="Center" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
