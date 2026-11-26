@@ -39,3 +39,15 @@ Kundur examples. LLM structured tool/function calling support is required.
 For repeatability use fresh, isolated workspaces containing identical history
 snapshots and record the exact installed versions and model. Live LLM behavior
 has not been verified in CI.
+
+## Fixed-snapshot holdout mode
+
+    gridagent --snapshot-memory ./history.json
+    gridagent --dsr examples/dsr-kundur.json --memory ./history.json --holdout
+    gridagent --studies
+
+Holdout mode requires an explicitly selected snapshot and filters exact target
+faults from it. Use the same snapshot across trials. Ordinary engineering mode
+permits exact historical matches, but is not an unseen-case benchmark.
+The TUI also supports /studies; start it with --memory and --holdout to apply
+the same restrictions to /dsr. Study reports are independent of chat history.

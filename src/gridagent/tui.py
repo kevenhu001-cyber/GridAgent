@@ -26,11 +26,12 @@ class GridApp(App):
     """
     BINDINGS: ClassVar = [("ctrl+q", "quit", "Quit"), ("ctrl+l", "new_session", "New session")]
 
-    def __init__(self, graph, budget, store, sid, dsr_runner=None):
+    def __init__(self, graph, budget, store, sid, dsr_runner=None, studies_root=None):
         super().__init__()
         self.graph, self.budget, self.store, self.sid = graph, budget, store, sid
         self.busy = False
         self.dsr_runner = dsr_runner
+        self.studies_root = studies_root
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="top"):
@@ -77,7 +78,7 @@ class GridApp(App):
         event.input.value = ""
         chat = self.query_one("#chat", RichLog)
         if question == "/help":
-            chat.write(Text("/new · new session | /sessions · list | /open ID · reopen | /dsr PATH · screen faults | Ctrl+Q · quit"))
+            chat.write(Text("/new · new session | /sessions · list | /open ID · reopen | /dsr PATH · screen faults | /studies · list | Ctrl+Q · quit"))
             return
         if question == "/new":
             self.action_new_session()
@@ -93,6 +94,14 @@ class GridApp(App):
                 chat.write(Text("Session not found.", style="red"))
                 return
             self._load_session()
+            return
+        if question == "/studies":
+            from .dsr import list_studies
+            rows = list_studies(self.studies_root) if self.studies_root else []
+            if not rows:
+                chat.write(Text("No saved studies.", style="dim"))
+            for row in rows:
+                chat.write(Text(f"{row['id']}  {row['status']}"))
             return
         if question.startswith("/dsr "):
             if self.dsr_runner is None:

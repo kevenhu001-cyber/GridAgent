@@ -74,3 +74,24 @@ def test_offline_evaluation(tmp_path):
     p["selected"] = ["K0", "K1", "K2"]
     with pytest.raises(ValueError):
         score_study(m, p, truth)
+
+
+def test_holdout_excludes_candidate_outcomes():
+    from gridagent.dsr import holdout_memory
+
+    m = manifest()
+    candidate = MemoryCase(run_id="target", fault=m.candidates[0].fault,
+                           score=0.1, v_min_pu=0.8, v_max_pu=1.1)
+    other = MemoryCase(run_id="history", fault=FaultRequest(bus=5, duration_s=0.09),
+                       score=0.1, v_min_pu=0.8, v_max_pu=1.1)
+    assert holdout_memory(m, [candidate, other]) == [other]
+
+
+def test_study_listing(tmp_path):
+    from gridagent.dsr import list_studies
+
+    study = Study(tmp_path)
+    study.write("manifest", {})
+    assert list_studies(tmp_path) == [{"id": study.id, "status": "unfinished"}]
+    study.write("report", {"completed": True})
+    assert list_studies(tmp_path) == [{"id": study.id, "status": "completed"}]

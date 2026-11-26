@@ -103,6 +103,41 @@ def memory_from_runs(root: Path):
     return records
 
 
+def save_memory_snapshot(root: Path, output: Path):
+    records = memory_from_runs(root)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("x", encoding="utf-8") as handle:
+        json.dump([m.model_dump(mode="json") for m in records], handle, indent=2, allow_nan=False)
+    return len(records)
+
+
+def load_memory_snapshot(path: Path):
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, list):
+        raise ValueError("Memory snapshot must be a list")
+    return [MemoryCase.model_validate(item) for item in data]
+
+
+def holdout_memory(manifest, memory):
+    """Keep all target faults out of the benchmark's historical memory."""
+    targets = {c.fault.model_dump_json() for c in manifest.candidates}
+    return [m for m in memory if m.fault.model_dump_json() not in targets]
+
+
+def list_studies(root: Path):
+    rows = []
+    for path in sorted(root.glob("*/manifest.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        report = path.parent / "report.json"
+        rows.append({"id": path.parent.name, "status": "unfinished"})
+        if report.is_file():
+            try:
+                data = json.loads(report.read_text(encoding="utf-8"))
+                rows[-1]["status"] = "completed" if data.get("completed") else "failed"
+            except (OSError, ValueError):
+                rows[-1]["status"] = "unreadable"
+    return rows
+
+
 def retrieve(fault: FaultRequest, memory: list[MemoryCase], limit=3):
     # Same packaged network/operating point and recovery horizon only.
     # Bus equality is a location feature, not electrical distance.
@@ -223,10 +258,14 @@ def llm_estimator(model):
     return estimate
 
 
-def study_updates(manifest_path, workspace, model, simulator):
+def study_updates(manifest_path, workspace, model, simulator, memory_path=None, holdout=False):
     manifest = read_manifest(manifest_path)
     workspace = Path(workspace)
-    memory = memory_from_runs(workspace / "runs")
+    if holdout and memory_path is None:
+        raise ValueError("Holdout mode requires a fixed memory snapshot")
+    memory = load_memory_snapshot(Path(memory_path)) if memory_path else memory_from_runs(workspace / "runs")
+    if holdout:
+        memory = holdout_memory(manifest, memory)
     study = Study(workspace / "studies")
     graph = build_dsr(manifest, memory, llm_estimator(model), simulator, study)
     yield "study", {"id": study.id, "path": str(study.path)}

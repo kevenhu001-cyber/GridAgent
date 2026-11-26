@@ -41,9 +41,23 @@ def main():
     parser.add_argument("--session", help="Reopen a session using its full ID")
     parser.add_argument("--sessions", action="store_true", help="List local sessions without an API key")
     parser.add_argument("--dsr", type=Path, help="Run a bounded DSR candidate manifest")
+    parser.add_argument("--memory", type=Path, help="Use a fixed DSR history snapshot")
+    parser.add_argument("--holdout", action="store_true", help="Exclude target fault outcomes from history")
+    parser.add_argument("--snapshot-memory", type=Path, help="Export historical fault records")
+    parser.add_argument("--studies", action="store_true", help="List saved DSR studies")
     args = parser.parse_args()
     store = ResearchStore(args.workspace / "research.sqlite3")
     console = Console()
+    if args.snapshot_memory:
+        from .dsr import save_memory_snapshot
+        n = save_memory_snapshot(args.workspace / "runs", args.snapshot_memory)
+        console.print(f"Saved {n} historical records.", markup=False)
+        return
+    if args.studies:
+        from .dsr import list_studies
+        for row in list_studies(args.workspace / "studies"):
+            console.print(f"{row['id']}  {row['status']}", markup=False)
+        return
     if args.sessions:
         for row in store.sessions():
             console.print(f"{row['id']}  {row['title']}  ({row['tasks']} tasks)", markup=False)
@@ -53,7 +67,7 @@ def main():
         simulator = AndesSimulator(args.workspace / "runs")
         if args.dsr:
             from .dsr import format_update, study_updates
-            for node, value in study_updates(args.dsr, args.workspace, model, simulator):
+            for node, value in study_updates(args.dsr, args.workspace, model, simulator, args.memory, args.holdout):
                 console.print(format_update(node, value), markup=False)
             return
         sid = store.require_session(args.session) if args.session else store.create_session()
@@ -73,4 +87,5 @@ def main():
     from .tui import GridApp
     from .dsr import study_updates
     GridApp(graph, args.budget, store, sid,
-            dsr_runner=lambda path: study_updates(path, args.workspace, model, simulator)).run()
+            dsr_runner=lambda path: study_updates(path, args.workspace, model, simulator, args.memory, args.holdout),
+            studies_root=args.workspace / "studies").run()
