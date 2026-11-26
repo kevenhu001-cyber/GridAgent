@@ -24,6 +24,17 @@ One-shot mode:
 
 The API key is local and must not be committed. Only OpenAI-compatible providers are supported in this milestone; native Anthropic and Gemini adapters are planned.
 
+## Local sessions
+
+    gridagent --sessions
+    gridagent --session <full-id>
+    gridagent --workspace ./research --ask "Run a baseline power flow"
+
+In the TUI, use /sessions, /open ID and /new. The local workspace contains
+research.sqlite3 and solver artifacts; keep sensitive project data private.
+Failed tasks retain their audit events but are not replayed into model context.
+A process crash may leave an unfinished task; automatic mid-task resume is not yet implemented.
+
 ## Architecture
 
 Textual TUI or CLI → LangGraph decision loop → validated tools and budget guard → isolated ANDES solver → waveform CSV and deterministic voltage metrics.
@@ -33,7 +44,7 @@ Textual TUI or CLI → LangGraph decision loop → validated tools and budget gu
 - Tool calls are executed sequentially. Attempted power flow and fault simulations consume budget.
 - Each run stores solver logs and result files under .gridagent/runs.
 - Solver non-convergence is not evidence of physical instability. The normalized voltage metric is a proxy, not the full paper evaluator.
-- TUI supports multi-turn conversation in memory; persistent sessions, API and graphical UI are planned.
+- TUI and CLI persist local sessions, tasks and audit events in SQLite. Mid-task checkpoint recovery, API and graphical UI are planned.
 
 ## Roadmap
 
@@ -50,4 +61,4 @@ Textual TUI or CLI → LangGraph decision loop → validated tools and budget gu
     pytest -m 'not integration'
     pytest -m integration
 
-The unit test simulator is a test double and must never be represented as a real simulation. See docs/architecture.md for the research boundaries.
+The unit test simulator is a test double and must never be represented as a real simulation. See docs/architecture.md and docs/benchmark-roadmap.md for the research boundaries.

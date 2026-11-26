@@ -53,7 +53,7 @@ def main():
     try:
         result = execute(sys.argv[1], json.loads(sys.argv[2]), folder)
         (folder / "result.json").write_text(json.dumps(result, allow_nan=False), encoding="utf-8")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - solver process boundary
         (folder / "result.json").write_text(json.dumps({
             "status": "failed", "backend": "andes", "reason": type(exc).__name__ + ": " + str(exc)[:400]
         }), encoding="utf-8")

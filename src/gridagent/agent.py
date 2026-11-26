@@ -93,7 +93,7 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
                         used += 1  # Charge attempted runs, including failures.
                     try:
                         result = tools[name].invoke(call["args"])
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 - isolate third-party tool failures
                         result = {"status": "failed", "reason": type(exc).__name__}
             messages.append(ToolMessage(content=json.dumps(result, allow_nan=False),
                                         tool_call_id=call["id"], name=name))

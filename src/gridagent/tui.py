@@ -1,43 +1,73 @@
+from typing import ClassVar
+
+from langchain_core.messages import HumanMessage, ToolMessage
 from rich.markdown import Markdown
 from rich.text import Text
 from textual.app import App, ComposeResult
-from textual.widgets import Footer, Header, Input, RichLog, Static
+from textual.containers import Horizontal, Vertical
+from textual.widgets import Footer, Input, RichLog, Static
 
-from .agent import stream_task
 from .cli import text_content, tool_summary
+from .store import recorded_task
 
 
 class GridApp(App):
     TITLE = "GridAgent"
     CSS = """
-    Screen { layout: vertical; }
-    #status { height: 2; padding: 0 2; color: $text-muted; }
-    RichLog { height: 1fr; padding: 1 2; }
-    Input { margin: 0 1 1 1; }
+    Screen { layout: vertical; background: $surface; }
+    #top { height: 3; padding: 1 2; background: $surface; }
+    #brand { width: 1fr; text-style: bold; color: $text; }
+    #status { width: auto; color: $text-muted; }
+    #workspace { height: 1fr; padding: 0 2; }
+    #session { height: 1; color: $text-muted; }
+    RichLog { height: 1fr; padding: 1 0; background: $surface; border: none; }
+    Input { margin: 0 0 1 0; border: round $primary; background: $surface; }
+    Footer { background: $surface; }
     """
-    BINDINGS = [("ctrl+q", "quit", "Quit"), ("ctrl+l", "clear_chat", "New session")]
+    BINDINGS: ClassVar = [("ctrl+q", "quit", "Quit"), ("ctrl+l", "new_session", "New session")]
 
-    def __init__(self, graph, budget: int):
+    def __init__(self, graph, budget, store, sid):
         super().__init__()
-        self.graph, self.budget = graph, budget
-        self.history = []
+        self.graph, self.budget, self.store, self.sid = graph, budget, store, sid
         self.busy = False
 
     def compose(self) -> ComposeResult:
-        yield Header()
-        yield Static(f"Offline research | ANDES | {self.budget} simulations per task", id="status")
-        yield RichLog(markup=False, wrap=True, id="chat")
-        yield Input(placeholder="Ask a research question or /help", id="prompt")
+        with Horizontal(id="top"):
+            yield Static("GridAgent", id="brand")
+            yield Static("Ready", id="status")
+        with Vertical(id="workspace"):
+            yield Static("", id="session", markup=False)
+            yield RichLog(markup=False, wrap=True, id="chat")
+            yield Input(placeholder="Ask an engineering question…  /help", id="prompt")
         yield Footer()
 
     def on_mount(self):
-        self.query_one("#chat", RichLog).write(Text("GridAgent — offline power-system research."))
+        self._load_session()
         self.query_one("#prompt", Input).focus()
 
-    def action_clear_chat(self):
+    def _load_session(self):
+        chat = self.query_one("#chat", RichLog)
+        chat.clear()
+        self.query_one("#session", Static).update(
+            f"Offline research · ANDES · {self.budget} simulations/task · {self.sid[:8]}")
+        history = self.store.history(self.sid)
+        if not history:
+            chat.write(Text("Start a power-system study. Try asking for a baseline power flow.", style="dim"))
+        for msg in history:
+            if isinstance(msg, HumanMessage):
+                chat.write(Text("You  " + text_content(msg), style="bold"))
+            elif isinstance(msg, ToolMessage):
+                chat.write(Text("  " + tool_summary(msg), style="dim"))
+            elif text_content(msg):
+                chat.write(Markdown(text_content(msg)))
+        for task in self.store.tasks(self.sid):
+            if task["status"] != "completed":
+                chat.write(Text(f"Previous task {task['id'][:8]}: {task['status']} (audit retained)", style="dim"))
+
+    def action_new_session(self):
         if not self.busy:
-            self.history.clear()
-            self.query_one("#chat", RichLog).clear()
+            self.sid = self.store.create_session()
+            self._load_session()
 
     def on_input_submitted(self, event: Input.Submitted):
         question = event.value.strip()
@@ -46,31 +76,47 @@ class GridApp(App):
         event.input.value = ""
         chat = self.query_one("#chat", RichLog)
         if question == "/help":
-            chat.write(Text("Enter a question. Ctrl+L starts a new session; Ctrl+Q quits."))
+            chat.write(Text("/new · new session | /sessions · list | /open ID · reopen | Ctrl+Q · quit"))
             return
-        chat.write(Text("You: " + question, style="bold"))
+        if question == "/new":
+            self.action_new_session()
+            return
+        if question == "/sessions":
+            for row in self.store.sessions():
+                chat.write(Text(f"{row['id']}  {row['title']}  ({row['tasks']} tasks)"))
+            return
+        if question.startswith("/open "):
+            try:
+                self.sid = self.store.require_session(question.split(maxsplit=1)[1])
+            except ValueError:
+                chat.write(Text("Session not found.", style="red"))
+                return
+            self._load_session()
+            return
+        chat.write(Text("You  " + question, style="bold"))
         self.busy = True
         event.input.disabled = True
-        self.query_one("#status", Static).update("Running research task...")
+        self.query_one("#status", Static).update("Working")
         self.run_worker(lambda: self._run_task(question), thread=True, exit_on_error=False)
 
     def _run_task(self, question):
-        from langchain_core.messages import HumanMessage
-        messages = [HumanMessage(content=question)]
         try:
-            for event in stream_task(self.graph, question, self.history):
+            for event in recorded_task(self.graph, self.store, self.sid, question):
                 for node, update in event.items():
+                    if "used" in update:
+                        self.call_from_thread(self._status, f"Working · {update['used']}/{self.budget} runs")
                     for msg in update.get("messages", []):
-                        messages.append(msg)
                         if node == "tools":
-                            self.call_from_thread(self._write, Text(tool_summary(msg), style="dim"))
+                            self.call_from_thread(self._write, Text("  " + tool_summary(msg), style="dim"))
                         elif text_content(msg):
                             self.call_from_thread(self._write, Markdown(text_content(msg)))
-            self.call_from_thread(self.history.extend, messages)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - client boundary, task already recorded
             self.call_from_thread(self._write, Text("Task failed: " + type(exc).__name__, style="red"))
         finally:
             self.call_from_thread(self._finish)
+
+    def _status(self, text):
+        self.query_one("#status", Static).update(text)
 
     def _write(self, value):
         self.query_one("#chat", RichLog).write(value)
@@ -80,4 +126,4 @@ class GridApp(App):
         prompt = self.query_one("#prompt", Input)
         prompt.disabled = False
         prompt.focus()
-        self.query_one("#status", Static).update(f"Ready | {self.budget} simulations per task")
+        self._status("Ready")
