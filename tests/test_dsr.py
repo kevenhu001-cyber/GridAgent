@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from gridagent.dsr import Candidate, Manifest, MemoryCase, Study, build_dsr, retrieve
 from gridagent.domain import FaultRequest
+from gridagent.dsr import Candidate, Manifest, MemoryCase, Study, build_dsr, retrieve
 from gridagent.evaluation import score_study
 
 

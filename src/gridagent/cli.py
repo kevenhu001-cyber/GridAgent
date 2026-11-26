@@ -40,11 +40,12 @@ def main():
     parser.add_argument("--workspace", type=Path, default=Path(".gridagent"))
     parser.add_argument("--session", help="Reopen a session using its full ID")
     parser.add_argument("--sessions", action="store_true", help="List local sessions without an API key")
+    parser.add_argument("--dmq", action="store_true", help="Run the open Q/V model quality study")
     parser.add_argument("--dsr", type=Path, help="Run a bounded DSR candidate manifest")
     parser.add_argument("--memory", type=Path, help="Use a fixed DSR history snapshot")
     parser.add_argument("--holdout", action="store_true", help="Exclude target fault outcomes from history")
     parser.add_argument("--snapshot-memory", type=Path, help="Export historical fault records")
-    parser.add_argument("--studies", action="store_true", help="List saved DSR studies")
+    parser.add_argument("--studies", action="store_true", help="List saved research studies")
     args = parser.parse_args()
     store = ResearchStore(args.workspace / "research.sqlite3")
     console = Console()
@@ -65,6 +66,11 @@ def main():
     try:
         model = model_from_env()
         simulator = AndesSimulator(args.workspace / "runs")
+        if args.dmq:
+            from .dmq import format_update, study_updates
+            for node, value in study_updates(args.workspace, model):
+                console.print(format_update(node, value), markup=False)
+            return
         if args.dsr:
             from .dsr import format_update, study_updates
             for node, value in study_updates(args.dsr, args.workspace, model, simulator, args.memory, args.holdout):
@@ -84,8 +90,10 @@ def main():
                     elif text_content(message):
                         console.print(Markdown(text_content(message)))
         return
-    from .tui import GridApp
+    from .dmq import study_updates as dmq_updates
     from .dsr import study_updates
+    from .tui import GridApp
     GridApp(graph, args.budget, store, sid,
             dsr_runner=lambda path: study_updates(path, args.workspace, model, simulator, args.memory, args.holdout),
-            studies_root=args.workspace / "studies").run()
+            studies_root=args.workspace / "studies",
+            dmq_runner=lambda: dmq_updates(args.workspace, model)).run()

@@ -43,6 +43,15 @@ Or type /dsr examples/dsr-kundur.json in the TUI. This ranks ten candidate
 faults, freezes estimates, and attempts only the selected three simulations.
 See [DSR protocol and offline evaluation](docs/dsr.md) for limitations.
 
+## Dynamic model quality review (open surrogate)
+
+    gridagent --dmq
+
+Or type /dmq in the TUI. Eight numerical tests on a fixed synthetic PI model,
+with four permitted gains and at most five repair proposals. Every accepted
+proposal triggers a new suite. See [DMQ protocol](docs/dmq.md). This is not
+the original WECC/DMView benchmark.
+
 ## Architecture
 
 Textual TUI or CLI → LangGraph decision loop → validated tools and budget guard → isolated ANDES solver → waveform CSV and deterministic voltage metrics.

@@ -114,7 +114,7 @@ def save_memory_snapshot(root: Path, output: Path):
 def load_memory_snapshot(path: Path):
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, list):
-        raise ValueError("Memory snapshot must be a list")
+        raise TypeError("Memory snapshot must be a list")
     return [MemoryCase.model_validate(item) for item in data]
 
 
