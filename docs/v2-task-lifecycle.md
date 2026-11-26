@@ -57,8 +57,30 @@ Two additive tables hold a head revision and immutable snapshots with matching l
 
 A reopened workspace can read historical requirements, inspect event continuity, and discover unfinished tasks. Discovery is not execution: the runtime must reconcile unknown solver operations before resuming them. No automatic replay or claim of solver verification is made here.
 
+## Research workflow integration
+
+New AC research tasks now receive a canonical task ID and revision zero in the same transaction as their existing research record. The frozen manifest hash is recorded in the planning event. Research-specific state (solver reservations, evidence, approved repair bounds, questions and clarifications) remains in the existing checkpoint payload. The canonical lifecycle is advanced atomically with each stage checkpoint:
+
+| Existing stage | Canonical state |
+| --- | --- |
+| planning | draft |
+| awaiting_input | needs_clarification |
+| ready | planned |
+| awaiting_approval | awaiting_approval |
+| running / repairing | running |
+| evaluating | verifying |
+| passed | completed, only with passed evidence for every frozen scenario |
+| failed | failed, with termination reason |
+| cancelled | cancelled, after cooperative acknowledgement |
+
+Verifying can return to running when the next scenario or authorized repair is necessary. A negative result that does not satisfy the frozen research criteria remains a failed research task in this compatibility slice; a later evidence/outcome contract will distinguish valid adverse observations from execution errors.
+
+Cancellation sets a durable request flag first, so an active worker does not appear to have stopped before it returns. Only the worker holding the existing per-task execution lock, or an idle caller acquiring that lock, can acknowledge it. Uncertain solver reservations retain the existing recovery behavior and are not automatically repeated.
+
+The repository allows direct reads of research-managed tasks, but mutations must use ResearchTasks so the solver checkpoint and canonical event cannot diverge. Older research tasks without V2 records remain readable and executable; their historical lifecycle is not fabricated. The public summary adds engineering_status and engineering_revision for new tasks.
+
 ## Scope and migration
 
-The V2 contract and repository coexist with the existing session and research task tables. Existing ResearchTasks, recorded_task, CLI/TUI flows and desktop IPC still use their original orchestration. The next integration slice is to route one existing workflow through the canonical repository and define its evidence and execution checkpoints before expanding to the other entry points. No roadmap gate is complete solely because the repository exists.
+This integrates the existing verified AC research path with the canonical lifecycle. Ordinary chat, CLI/TUI presentation and desktop IPC are not rewritten. The single-agent and multi-agent research benchmark variants still use their original planners; their deterministic execution and validation share the same lifecycle.
 
-No simulator calls, provider calls or background workers are performed by this module.
+Next: factor a common orchestration service for ordinary chat and research, introduce typed plan and evidence contracts, and migrate the default path incrementally. No roadmap gate is complete solely because this adapter exists.

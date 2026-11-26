@@ -179,3 +179,112 @@ def test_n_minus_one_requires_an_actual_contingency(tmp_path):
     assert not outage["evaluation"]["passed"]
     request = json.loads((tmp_path / "runs" / outage["run_id"] / "request.json").read_text(encoding="utf-8"))
     assert request["contingency"] == {"element": "trafo", "index": 0}
+
+
+def test_v2_lifecycle_is_persisted_with_frozen_manifest(tmp_path):
+    from gridagent.task_contracts import TaskStatus
+
+    tasks = ResearchTasks(tmp_path)
+    identifier = tasks.start("Check a transformer", manifest=manifest(max_runs=1))
+    repository = tasks.engineering_tasks()
+    head = repository.get(identifier)
+    assert head.status == TaskStatus.PLANNED
+    assert head.requirement.request == "Check a transformer"
+    assert head.plan_revision == 1
+    assert tasks.get(identifier)["engineering_revision"] == head.revision
+    assert repository.events(identifier)[0].reason.endswith(tasks.get(identifier)["state"]["manifest_sha256"])
+
+    def interrupt(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        list(tasks.resume(identifier, solver=interrupt))
+    reopened = ResearchTasks(tmp_path)
+    assert reopened.engineering_tasks().get(identifier).status == TaskStatus.RUNNING
+    assert reopened.get(identifier)["engineering_status"] == "running"
+    list(reopened.resume(identifier, solver=lambda *args, **kwargs: pytest.fail("Duplicate solver call")))
+    final = reopened.engineering_tasks().get(identifier)
+    assert final.status == TaskStatus.FAILED
+    assert final.terminal_reason == "simulation_budget_exhausted"
+    assert reopened.get(identifier)["stage"] == "failed"
+
+
+def test_v2_approval_and_cancellation_while_worker_holds_lock(tmp_path):
+    from gridagent.task_contracts import TaskStatus
+
+    tasks = ResearchTasks(tmp_path)
+    identifier = tasks.start("Check a transformer")
+    list(tasks.resume(identifier, planner=lambda *_: {"questions": ["Voltage?"]}))
+    assert tasks.engineering_tasks().get(identifier).status == TaskStatus.NEEDS_CLARIFICATION
+    list(tasks.resume(identifier, clarification="110/20 kV",
+                      planner=lambda *_: {"manifest": manifest(with_repairs=True)}))
+    assert tasks.engineering_tasks().get(identifier).status == TaskStatus.AWAITING_APPROVAL
+    with pytest.raises(ValueError, match="approved"):
+        tasks.save(identifier, tasks.get(identifier)["state"], "ready")
+
+    stream = tasks.resume(identifier, approve=True, solver=lambda *a, **k: pytest.fail("Unexpected solve"))
+    try:
+        assert next(stream)["engineering_status"] == "running"
+        other = ResearchTasks(tmp_path)
+        other.cancel(identifier)
+        assert other.get(identifier)["stage"] == "running"
+        pending = other.engineering_tasks().get(identifier)
+        assert pending.status == TaskStatus.RUNNING
+        assert pending.cancel_requested
+        assert list(stream)[-1]["engineering_status"] == "cancelled"
+    finally:
+        stream.close()
+    events = tasks.engineering_tasks().events(identifier)
+    assert events[-2].kind == "cancellation_requested"
+    assert events[-1].to_status == TaskStatus.CANCELLED
+
+
+def test_v2_atomic_checkpoint_rolls_back_when_legacy_write_fails(tmp_path):
+    import sqlite3
+
+    tasks = ResearchTasks(tmp_path)
+    identifier = tasks.start("Check a transformer")
+    with tasks.connect() as db:
+        db.execute("""
+            CREATE TRIGGER reject_research_checkpoint BEFORE UPDATE ON research_tasks
+            BEGIN SELECT RAISE(ABORT, 'checkpoint failure'); END
+        """)
+    with pytest.raises(sqlite3.IntegrityError, match="checkpoint failure"):
+        tasks.save(identifier, tasks.get(identifier)["state"], "awaiting_input")
+    assert tasks.get(identifier)["stage"] == "planning"
+    assert tasks.engineering_tasks().get(identifier).revision == 0
+    assert tasks.engineering_tasks().events(identifier) == ()
+
+
+def test_v2_rejects_completion_without_scenario_evidence(tmp_path):
+    tasks = ResearchTasks(tmp_path)
+    identifier = tasks.start("Check a transformer", manifest=manifest())
+    state = tasks.get(identifier)["state"]
+    tasks.save(identifier, state, "running")
+    with pytest.raises(ValueError, match="verified evidence"):
+        tasks.save(identifier, state, "passed")
+    assert tasks.get(identifier)["stage"] == "running"
+    assert tasks.get(identifier)["engineering_status"] == "running"
+
+
+def test_old_research_rows_remain_readable_without_fabricated_history(tmp_path):
+    tasks = ResearchTasks(tmp_path)
+    with tasks.connect() as db:
+        db.execute("INSERT INTO research_tasks VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
+                   ("a" * 32, "Legacy task", "single", "planning", "old", "old",
+                    json.dumps({"attempts": [], "clarifications": [], "repair_calls": 0})))
+    assert "engineering_status" not in tasks.get("a" * 32)
+    tasks.cancel("a" * 32)
+    assert tasks.get("a" * 32)["stage"] == "cancelled"
+    assert tasks.engineering_tasks().unfinished() == ()
+
+
+def test_v2_research_managed_tasks_cannot_bypass_checkpoint_adapter(tmp_path):
+    tasks = ResearchTasks(tmp_path)
+    identifier = tasks.start("Check voltage", manifest=manifest())
+    repository = tasks.engineering_tasks()
+    head = repository.get(identifier)
+    with pytest.raises(ValueError, match="Research-managed"):
+        repository.request_cancel(identifier, head.revision)
+    assert not tasks.cancelled(identifier)
+    assert repository.get(identifier) == head

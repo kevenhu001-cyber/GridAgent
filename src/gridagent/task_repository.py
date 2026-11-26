@@ -63,19 +63,32 @@ class EngineeringTaskRepository:
         """, (task_id,)).fetchone()
         return cls._read_snapshot(row)
 
-    def create(self, requirement: RequirementSpec) -> EngineeringTask:
+    @staticmethod
+    def _create_in(db, requirement: RequirementSpec, *, task_id=None) -> EngineeringTask:
+        """Create a task inside the caller's write transaction."""
         requirement = RequirementSpec.model_validate(requirement)
         if requirement.revision != 1:
             raise ValueError("A new engineering task must start with requirement revision 1")
-        snapshot = EngineeringTask(requirement=requirement)
+        identity = {} if task_id is None else {"task_id": task_id}
+        snapshot = EngineeringTask(requirement=requirement, **identity)
+        db.execute("INSERT INTO engineering_tasks VALUES (?, 0)", (snapshot.task_id,))
+        db.execute("""
+            INSERT INTO engineering_task_revisions(task_id, revision, snapshot)
+            VALUES (?, 0, ?)
+        """, (snapshot.task_id, snapshot.model_dump_json()))
+        return snapshot
+
+    def create(self, requirement: RequirementSpec) -> EngineeringTask:
         with self._store.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            db.execute("INSERT INTO engineering_tasks VALUES (?, 0)", (snapshot.task_id,))
-            db.execute("""
-                INSERT INTO engineering_task_revisions(task_id, revision, snapshot)
-                VALUES (?, 0, ?)
-            """, (snapshot.task_id, snapshot.model_dump_json()))
-        return snapshot
+            return self._create_in(db, requirement)
+
+    @classmethod
+    def _find_in(cls, db, task_id):
+        """Return None only for a task that has no V2 head, not for corrupt snapshots."""
+        if db.execute("SELECT 1 FROM engineering_tasks WHERE task_id = ?", (task_id,)).fetchone() is None:
+            return None
+        return cls._head(db, task_id)
 
     def get(self, task_id: str) -> EngineeringTask:
         with self._store.connect() as db:
@@ -130,32 +143,42 @@ class EngineeringTaskRepository:
         snapshots = (self._read_snapshot(row) for row in rows)
         return tuple(task for task in snapshots if task.status not in TERMINAL_STATUSES)
 
+    def _mutate_in(self, db, task_id, expected_revision, operation):
+        """Apply one mutation using the caller's active write transaction."""
+        current = self._head(db, task_id)
+        if current.revision != expected_revision:
+            raise TaskRevisionConflict(
+                f"Expected revision {expected_revision}, found {current.revision}; reload task"
+            )
+        updated, event = operation(current)
+        if (updated.task_id != task_id or event.task_id != task_id
+                or updated.revision != current.revision + 1 or event.sequence != updated.revision
+                or event.from_status != current.status or event.to_status != updated.status
+                or event.occurred_at != updated.updated_at):
+            raise ValueError("Invalid engineering task mutation")
+        db.execute("""
+            INSERT INTO engineering_task_revisions(task_id, revision, snapshot, event_id, event)
+            VALUES (?, ?, ?, ?, ?)
+        """, (task_id, updated.revision, updated.model_dump_json(), event.event_id, event.model_dump_json()))
+        result = db.execute("""
+            UPDATE engineering_tasks SET head_revision = ?
+            WHERE task_id = ? AND head_revision = ?
+        """, (updated.revision, task_id, expected_revision))
+        if result.rowcount != 1:
+            raise TaskRevisionConflict("Engineering task changed during the transaction")
+        return updated, event
+
     def _mutate(self, task_id, expected_revision, operation):
         # Serialize competing writers even when they use separate processes/connections.
         with self._store.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            current = self._head(db, task_id)
-            if current.revision != expected_revision:
-                raise TaskRevisionConflict(
-                    f"Expected revision {expected_revision}, found {current.revision}; reload task"
-                )
-            updated, event = operation(current)
-            if (updated.task_id != task_id or event.task_id != task_id
-                    or updated.revision != current.revision + 1 or event.sequence != updated.revision
-                    or event.from_status != current.status or event.to_status != updated.status
-                    or event.occurred_at != updated.updated_at):
-                raise ValueError("Invalid engineering task mutation")
-            db.execute("""
-                INSERT INTO engineering_task_revisions(task_id, revision, snapshot, event_id, event)
-                VALUES (?, ?, ?, ?, ?)
-            """, (task_id, updated.revision, updated.model_dump_json(), event.event_id, event.model_dump_json()))
-            result = db.execute("""
-                UPDATE engineering_tasks SET head_revision = ?
-                WHERE task_id = ? AND head_revision = ?
-            """, (updated.revision, task_id, expected_revision))
-            if result.rowcount != 1:
-                raise TaskRevisionConflict("Engineering task changed during the transaction")
-        return updated, event
+            research_table = db.execute("""
+                SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'research_tasks'
+            """).fetchone()
+            if research_table and db.execute(
+                    "SELECT 1 FROM research_tasks WHERE id = ?", (task_id,)).fetchone():
+                raise ValueError("Research-managed tasks must be changed through ResearchTasks")
+            return self._mutate_in(db, task_id, expected_revision, operation)
 
     def transition(self, task_id: str, expected_revision: int, target: TaskStatus, **kwargs):
         return self._mutate(

@@ -93,7 +93,7 @@ _ALLOWED_TRANSITIONS = {
         TaskStatus.VERIFYING, TaskStatus.PARTIAL, TaskStatus.FAILED, TaskStatus.CANCELLED
     },
     TaskStatus.VERIFYING: {
-        TaskStatus.COMPLETED, TaskStatus.PARTIAL, TaskStatus.FAILED, TaskStatus.CANCELLED
+        TaskStatus.RUNNING, TaskStatus.COMPLETED, TaskStatus.PARTIAL, TaskStatus.FAILED, TaskStatus.CANCELLED
     },
     TaskStatus.PARTIAL: {TaskStatus.PLANNED, TaskStatus.RUNNING, TaskStatus.CANCELLED},
     TaskStatus.COMPLETED: set(),
