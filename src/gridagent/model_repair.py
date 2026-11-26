@@ -25,14 +25,13 @@ def leaf(program, path):
     item = program[group][int(index)]
     if field not in ALLOWED or field not in item:
         raise ValueError("Unrecognized editable field")
-    if group == "steps" and item.get("op") == "edit":
-        if item.get("field") == "in_service":
-            raise ValueError("Service-state edits cannot be optimized")
+    if group == "steps" and item.get("op") == "edit" and item.get("field") == "in_service":
+        raise ValueError("Service-state edits cannot be optimized")
     if group == "steps" and item.get("op") == "create_load":
         raise ValueError("Demand is locked")
     value = item[field]
     if not isinstance(value, (int, float)) or isinstance(value, bool):
-        raise ValueError("Only existing numerical parameters can be optimized")
+        raise TypeError("Only existing numerical parameters can be optimized")
     if group == "steps" and item.get("op") == "edit" and item.get("element") == "load":
         raise ValueError("Demand edits are locked")
     return item, field
@@ -53,7 +52,7 @@ class Manifest(Strict):
         for path in self.editable_paths:
             try:
                 leaf(data, path)
-            except (IndexError, KeyError) as exc:
+            except (IndexError, KeyError, TypeError) as exc:
                 raise ValueError("Editable path does not exist") from exc
         return self
 

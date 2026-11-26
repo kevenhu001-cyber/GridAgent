@@ -204,6 +204,22 @@ public partial class MainWindow : Window
                    "). Windows Sandbox and the bundled runtime must be installed.");
         }
     }
+    private async void ModelingBenchmark(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        var choice = new Window { Title = "Modeling benchmark", Width = 400, Height = 210,
+            Owner = this, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+        var panel = new System.Windows.Controls.StackPanel { Margin = new Thickness(20) };
+        var tasks = new System.Windows.Controls.ComboBox { Margin = new Thickness(0, 10, 0, 16) };
+        tasks.Items.Add("two-bus"); tasks.Items.Add("storage-dispatch"); tasks.SelectedIndex = 0;
+        panel.Children.Add(new System.Windows.Controls.TextBlock { Text = "Generate, test and repair a model (up to six attempts)." });
+        panel.Children.Add(tasks);
+        var run = new System.Windows.Controls.Button { Content = "Run benchmark", IsDefault = true };
+        run.Click += (_, _) => choice.DialogResult = true;
+        panel.Children.Add(run); choice.Content = panel;
+        if (choice.ShowDialog() == true && tasks.SelectedItem is string task)
+            await Local("modeling-benchmark", task);
+    }
     private async void ModelRepair(object sender, RoutedEventArgs e)
     {
         if (_busy) return;
