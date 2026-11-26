@@ -6,7 +6,14 @@ import time
 from pathlib import Path
 from typing import Annotated, TypedDict
 
-from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, SystemMessage, ToolMessage, message_chunk_to_message
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+    message_chunk_to_message,
+)
 from langchain_core.tools import StructuredTool, tool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph

@@ -22,13 +22,13 @@ internal sealed record ModelParameter(string Element, int Index, string Field, s
 public partial class MainWindow
 {
     private readonly List<Window> _engineeringWindows = new();
-    private void OpenEngineeringWindow(string title, FrameworkElement content)
+    private void OpenEngineeringWindow(string title, FrameworkElement content, Action? cleanup = null)
     {
         var window = new Window { Title = title + " — GridAgent", Content = content };
         content.RequestedTheme = Root.RequestedTheme;
         window.AppWindow.Resize(new global::Windows.Graphics.SizeInt32(1000, 650));
         _engineeringWindows.Add(window);
-        window.Closed += (_, _) => _engineeringWindows.Remove(window);
+        window.Closed += (_, _) => { cleanup?.Invoke(); _engineeringWindows.Remove(window); };
         window.Activate();
     }
     private static TextBlock Text(string value, double size = 14) =>
@@ -107,91 +107,8 @@ public partial class MainWindow
     private void ShowCharts(ChartData[] charts)
     {
         if (charts.Length == 0) { Notify("No chart data available.", InfoBarSeverity.Warning); return; }
-        var root = new Grid { Padding = new Thickness(24), RowSpacing = 12 };
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        var select = new ComboBox { ItemsSource = charts.Select(c => c.Title).ToArray(), Header = "Scientific chart", HorizontalAlignment = HorizontalAlignment.Stretch };
-        var summary = Text("");
-        var legend = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
-        var readout = Text("Move the pointer over the plot to inspect a sample.", 13);
-        var plot = new Canvas { MinWidth = 300, MinHeight = 220, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
-        AutomationProperties.SetName(plot, "Scientific plot; numerical range and series are described above");
-        var zoom = new ScrollViewer { Content = plot, ZoomMode = ZoomMode.Enabled, MinZoomFactor = 1, MaxZoomFactor = 8,
-            HorizontalScrollMode = ScrollMode.Enabled, VerticalScrollMode = ScrollMode.Enabled,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-        var toolbar = new StackPanel { Spacing = 8 };
-        toolbar.Children.Add(summary);
-        toolbar.Children.Add(legend);
-        toolbar.Children.Add(readout);
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        actions.Children.Add(ActionButton("Reset zoom", (_, _) => zoom.ChangeView(0, 0, 1)));
-        actions.Children.Add(ActionButton("Copy plotted data", (_, _) =>
-        {
-            if (select.SelectedIndex < 0) return;
-            var chart = charts[select.SelectedIndex];
-            var csv = new System.Text.StringBuilder("series,x,y\n");
-            foreach (var trace in chart.Traces)
-                foreach (var (x, y) in trace.X.Zip(trace.Y))
-                    csv.Append('"').Append(trace.Name.Replace("\"", "\"\"")).Append("\",").Append(x.ToString("R", CultureInfo.InvariantCulture)).Append(',').Append(y.ToString("R", CultureInfo.InvariantCulture)).Append('\n');
-            ConversationMessageView.Copy(csv.ToString());
-        }));
-        toolbar.Children.Add(actions);
-        Grid.SetRow(toolbar, 1); Grid.SetRow(zoom, 2);
-        root.Children.Add(select); root.Children.Add(toolbar); root.Children.Add(zoom);
-        int preparedIndex = -1;
-        double xMin = 0, xMax = 1;
-        double[] cursorX = Array.Empty<double>();
-        double[] cursorY = Array.Empty<double>();
-        void Render()
-        {
-            if (select.SelectedIndex < 0 || plot.ActualWidth < 200 || plot.ActualHeight < 150) return;
-            var chart = charts[select.SelectedIndex];
-            if (preparedIndex != select.SelectedIndex)
-            {
-                preparedIndex = select.SelectedIndex;
-                var values = chart.Traces.SelectMany(t => t.X.Zip(t.Y)).Where(v => double.IsFinite(v.First) && double.IsFinite(v.Second)).ToArray();
-                if (values.Length > 0)
-                {
-                    xMin = values.Min(v => v.First); xMax = values.Max(v => v.First);
-                    if (xMin == xMax) { xMin -= 1; xMax += 1; }
-                }
-                var first = chart.Traces.FirstOrDefault();
-                var cursor = first == null ? Array.Empty<(double First, double Second)>() : first.X.Zip(first.Y).Where(v => double.IsFinite(v.First) && double.IsFinite(v.Second)).OrderBy(v => v.First).ToArray();
-                cursorX = cursor.Select(v => v.First).ToArray();
-                cursorY = cursor.Select(v => v.Second).ToArray();
-            }
-            summary.Text = DrawChart(plot, chart);
-            legend.Children.Clear();
-            for (int i = 0; i < chart.Traces.Length; i++)
-            {
-                var label = Text(chart.Traces[i].Name, 12); label.Foreground = SeriesColor(i); legend.Children.Add(label);
-            }
-        }
-        plot.PointerMoved += (_, e) =>
-        {
-            if (select.SelectedIndex < 0) return;
-            var chart = charts[select.SelectedIndex];
-            var p = e.GetCurrentPoint(plot).Position;
-            double width = plot.ActualWidth - 106;
-            if (width <= 0 || p.X < 78 || p.X > 78 + width) return;
-            if (cursorX.Length == 0 || preparedIndex != select.SelectedIndex) return;
-            var target = xMin + (xMax - xMin) * (p.X - 78) / width;
-            int best = Array.BinarySearch(cursorX, target);
-            if (best < 0)
-            {
-                int next = ~best;
-                best = next == 0 ? 0 : next == cursorX.Length ? cursorX.Length - 1 :
-                    target - cursorX[next - 1] <= cursorX[next] - target ? next - 1 : next;
-            }
-            readout.Text = $"{chart.Traces[0].Name}: {chart.XLabel} {cursorX[best]:G6} · {chart.YLabel} {cursorY[best]:G6}";
-        };
-        select.SelectionChanged += (_, _) => Render();
-        plot.SizeChanged += (_, _) => Render();
-        root.ActualThemeChanged += (_, _) => Render();
-        zoom.SizeChanged += (_, _) => { plot.Width = Math.Max(300, zoom.ActualWidth - 18); plot.Height = Math.Max(220, zoom.ActualHeight - 18); };
-        select.SelectedIndex = 0;
-        OpenEngineeringWindow("Scientific results", root);
+        var viewer = new ScientificPlotView(charts);
+        OpenEngineeringWindow("Scientific results", viewer, viewer.Release);
     }
     private static Brush Ink(FrameworkElement element) => new SolidColorBrush(element.ActualTheme == ElementTheme.Dark ? Microsoft.UI.Colors.White : Microsoft.UI.Colors.Black);
     private static Brush SeriesColor(int index)
@@ -211,59 +128,6 @@ public partial class MainWindow
         if (brush != null) text.Foreground = brush;
         Canvas.SetLeft(text, x); Canvas.SetTop(text, y); canvas.Children.Add(text);
     }
-    private static string DrawChart(Canvas canvas, ChartData chart)
-    {
-        canvas.Children.Clear();
-        var finite = chart.Traces.SelectMany(t => t.X.Zip(t.Y)).Where(v => double.IsFinite(v.First) && double.IsFinite(v.Second)).ToArray();
-        if (finite.Length == 0) return "No finite samples.";
-        double minX = finite.Min(v => v.First), maxX = finite.Max(v => v.First);
-        double minY = finite.Min(v => v.Second), maxY = finite.Max(v => v.Second);
-        if (minX == maxX) { minX -= 1; maxX += 1; }
-        if (minY == maxY) { minY -= 1; maxY += 1; }
-        double l = 78, t = 20, w = canvas.ActualWidth - 106, h = canvas.ActualHeight - 76;
-        if (w <= 0 || h <= 0) return "";
-        Point Map(double x, double y) => new(l + (x - minX) / (maxX - minX) * w, t + (maxY - y) / (maxY - minY) * h);
-        var ink = Ink(canvas);
-        var grid = new SolidColorBrush(Microsoft.UI.Colors.Gray) { Opacity = 0.30 };
-        for (int i = 0; i <= 5; i++)
-        {
-            double x = l + i * w / 5, y = t + i * h / 5;
-            LineAt(canvas, x, t, x, t + h, grid); LineAt(canvas, l, y, l + w, y, grid);
-            LabelAt(canvas, (minX + i * (maxX - minX) / 5).ToString("G4", CultureInfo.InvariantCulture), x - 12, t + h + 5);
-            LabelAt(canvas, (maxY - i * (maxY - minY) / 5).ToString("G4", CultureInfo.InvariantCulture), 2, y - 8);
-        }
-        LineAt(canvas, l, t, l, t + h, ink); LineAt(canvas, l, t + h, l + w, t + h, ink);
-        LabelAt(canvas, chart.XLabel, l + w / 2 - 30, t + h + 27);
-        LabelAt(canvas, chart.YLabel, 2, 0);
-        for (int index = 0; index < chart.Traces.Length; index++)
-        {
-            var trace = chart.Traces[index]; var color = SeriesColor(index);
-            var points = new PointCollection();
-            void Flush()
-            {
-                if (points.Count > 0)
-                {
-                    canvas.Children.Add(new Polyline { Points = points, Stroke = color, StrokeThickness = 1.6 });
-                    points = new PointCollection();
-                }
-            }
-            foreach (var (x, y) in trace.X.Zip(trace.Y))
-            {
-                if (!double.IsFinite(x) || !double.IsFinite(y)) { Flush(); continue; }
-                var pt = Map(x, y);
-                if (chart.Scatter)
-                {
-                    var dot = new Ellipse { Width = 5, Height = 5, Fill = color };
-                    Canvas.SetLeft(dot, pt.X - 2.5); Canvas.SetTop(dot, pt.Y - 2.5); canvas.Children.Add(dot);
-                }
-                else points.Add(pt);
-            }
-            Flush();
-        }
-        return $"{chart.XLabel}: {minX:G5} to {maxX:G5} · {chart.YLabel}: {minY:G5} to {maxY:G5}\n" +
-            string.Join(" · ", chart.Traces.Select((s, i) => $"{i + 1}. {s.Name} ({s.X.Length} points)"));
-    }
-
     private async Task<object?> ShowTopology(TopologyNode[] nodes, TopologyLink[] links, ModelParameter[] devices)
     {
         // Use a separate native window for inspection and a modal confirmation for revision creation.

@@ -40,3 +40,6 @@ The assistant requests optional streaming from compatible providers. The agent a
 
 ## Local mathematical typesetting
 Markdig mathematics recognizes dollar-delimited inline and display TeX; CSharpMath with pinned SkiaSharp renders supported equations offline, without HTML or WebView. The native control supplies accessible source text and a fallback when parsing or rendering fails. Rendering is deferred off the UI thread and uses a bounded 96-entry/8 MiB cache with theme-aware keys. Inputs are limited to 512 characters and bounded brace depth; unsupported constructs and long expressions remain selectable source. This is not a full LaTeX compiler. Verify formula examples, theme switching and package audit on Windows before release.
+
+## Native scientific rendering
+Scientific plot windows now use Microsoft's Win2D CanvasControl (Direct2D) instead of constructing per-sample XAML elements. Cached sorted samples support logarithmic nearest-point lookup; pointer redraw is throttled, series visibility and axis range can be updated, and displayed data can be copied as CSV. Native resources are detached on close. This is an implementation change, not a measured GPU or FPS claim. Reference: https://learn.microsoft.com/en-us/windows/apps/develop/win2d/quick-start .
