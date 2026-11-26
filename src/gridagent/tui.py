@@ -134,7 +134,7 @@ class GridApp(App):
         event.input.value = ""
         chat = self.query_one("#chat", RichLog)
         if question == "/help":
-            chat.write(Text("/new · new session | /sessions · list | /open ID · reopen | /dsr PATH · screen faults | /dmq · model review | /studies · list | /runs | /study ID | /wave ID CHANNEL | /study-wave ID PATH CHANNEL | /eigen | /sweep BUS DURATIONS | /resume-dsr ID | /optimize [BUDGET] | /paper-rank | /paper-kpi CSV CLEARING_S | /paper-edit Kqp Kqi Kvp Kvi | Ctrl+E Studies | Ctrl+Q · quit"))
+            chat.write(Text("/new · new session | /sessions · list | /open ID · reopen | /dsr PATH · screen faults | /dmq · model review | /studies · list | /runs | /study ID | /wave ID CHANNEL | /study-wave ID PATH CHANNEL | /eigen | /sweep BUS DURATIONS | /resume-dsr ID | /optimize [BUDGET] | /paper-dmq PROFILE | /paper-rank | /paper-kpi CSV CLEARING_S | /paper-edit Kqp Kqi Kvp Kvi | Ctrl+E Studies | Ctrl+Q · quit"))
             return
         if question == "/new":
             self.action_new_session()
@@ -159,7 +159,7 @@ class GridApp(App):
             for row in rows:
                 chat.write(Text(f"{row['id']}  {row['status']}"))
             return
-        if question.split()[0] in {"/runs", "/study", "/wave", "/study-wave", "/eigen", "/sweep", "/resume-dsr", "/optimize", "/paper-rank", "/paper-kpi", "/paper-edit"}:
+        if question.split()[0] in {"/runs", "/study", "/wave", "/study-wave", "/eigen", "/sweep", "/resume-dsr", "/optimize", "/paper-rank", "/paper-kpi", "/paper-edit", "/paper-dmq"}:
             try:
                 parts = shlex.split(question)
             except ValueError:

@@ -164,6 +164,12 @@ public partial class MainWindow : Window
         if (_busy || WorkspaceChanged() || StudyList.SelectedItem is not Entry row) return;
         await Local("resume-dsr", row.Id);
     }
+    private async void PaperDmq(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        var picker = new OpenFileDialog { Filter = "Dedicated DMView profile (*.json)|*.json", CheckFileExists = true };
+        if (picker.ShowDialog(this) == true) await Local("paper-dmq", picker.FileName);
+    }
     private async void PaperRank(object sender, RoutedEventArgs e) => await Local("paper-rank");
     private async void PaperKpi(object sender, RoutedEventArgs e)
     {

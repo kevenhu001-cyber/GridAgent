@@ -27,3 +27,13 @@ not invoked by the user-facing Agent yet. Separate licensed simulator profiles
 are required (PSS/E 36.2/DMView 3.4 and PowerFactory with compatible Python).
 No commercial software is distributed. Windows remains native, TUI shares the
 same commands and artifacts.
+
+## Licensed DMQ adapter
+
+`gridagent --paper-dmq PROFILE.json` invokes the original DMView runner and
+independent evaluator in a licensed PSS/E Python, using a dedicated DMView
+installation. It refuses existing RESULTs contents, makes a scratch case,
+checks locked fields and reruns the original eight tests after each validated
+LLM edit, at most five proposals. A simulator error stops the workflow.
+This adapter is not yet tested with licensed software. The ordinary Windows
+open mode still needs no external Python. See examples/paper-dmq-profile.json.

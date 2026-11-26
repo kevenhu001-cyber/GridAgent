@@ -19,6 +19,11 @@ def workspace_command(root, command, args):
 
         identifier, report = edit_original_model(root, dict(zip(("Kqp", "Kqi", "Kvp", "Kvi"), map(float, args))))
         yield f"Original WECC model edit verified · {identifier} · {report['new']} · not simulated"
+    elif command == "paper-dmq" and len(args) == 1:
+        from .agent import model_from_env
+        from .paper_dmq import model_proposer, original_dmq, profile_runner
+
+        yield from original_dmq(root, model_proposer(model_from_env()), profile_runner(args[0]))
     elif command == "paper-rank" and not args:
         from .agent import model_from_env
         from .paper import model_estimator, paper_rank
