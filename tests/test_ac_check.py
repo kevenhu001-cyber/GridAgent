@@ -144,3 +144,15 @@ def test_native_cross_check_and_reactive_rejection(tmp_path, completed):
     rejected = resume_ac_check(tmp_path, start_ac_check(tmp_path, constrained))
     assert not rejected["completed"]
     assert not rejected["snapshots"][0]["physical"]["passed"]
+
+
+
+def test_base_ac_snapshot_cannot_claim_full_generator_contingency_coverage(tmp_path):
+    raw = dc_input()
+    raw["network"]["security"] = {"outage_units": ["cheap"]}
+    identifier = start_program(tmp_path, raw)
+    assert resume_program(tmp_path, identifier)["completed"]
+    study = start_ac_check(tmp_path, ac_input(identifier))
+    report = resume_ac_check(tmp_path, study, solver=lambda *args, **kwargs: None)
+    assert not report["full_dc_schedule_coverage"]
+    assert not report["completed"]

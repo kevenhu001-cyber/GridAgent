@@ -8,11 +8,12 @@ from .math_program_ir import MathematicalProgram
 COMPILER = "single-area-commitment-milp-v1"
 NETWORK_COMPILER = "dc-network-commitment-milp-v1"
 SECURITY_COMPILER = "dc-line-security-commitment-milp-v1"
+UNIT_SECURITY_COMPILER = "dc-component-security-commitment-milp-v1"
 
 
 def compiler_for(spec):
     if spec.network is not None and spec.network.security is not None:
-        return SECURITY_COMPILER
+        return UNIT_SECURITY_COMPILER if spec.network.security.outage_units else SECURITY_COMPILER
     return NETWORK_COMPILER if spec.network is not None else COMPILER
 
 

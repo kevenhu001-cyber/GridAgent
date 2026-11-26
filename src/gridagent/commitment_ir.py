@@ -80,14 +80,18 @@ class CommitmentLine(Contract):
 
 
 class LineSecurity(Contract):
-    """Explicit, single-line outages evaluated independently at each hour."""
+    """Explicit single-component outages evaluated independently at each hour."""
 
     schema_version: Literal[1] = 1
-    outage_lines: tuple[Identifier, ...] = Field(min_length=1, max_length=8)
+    outage_lines: tuple[Identifier, ...] = Field(default=(), max_length=8)
+    outage_units: tuple[Identifier, ...] = Field(default=(), max_length=8)
 
     @model_validator(mode="after")
     def unique(self):
-        if len(set(self.outage_lines)) != len(self.outage_lines):
+        if not 1 <= len(self.outage_lines) + len(self.outage_units) <= 8:
+            raise ValueError("Specify one to eight single-component outages")
+        if (len(set(self.outage_lines)) != len(self.outage_lines)
+                or len(set(self.outage_units)) != len(self.outage_units)):
             raise ValueError("Duplicate security outage")
         return self
 
@@ -175,9 +179,14 @@ class UnitCommitment(Contract):
             variables += hours * (len(network.buses) + len(network.lines) + len(self.units))
             rows += hours * (len(network.buses) + 2*len(network.lines) + len(self.units))
             if network.security is not None:
-                cases = hours * len(network.security.outage_lines)
-                variables += cases * (len(network.buses) + len(network.lines) + len(self.units))
-                rows += cases * (len(network.buses) + 2*(len(network.lines)-1) + 4*len(self.units))
+                security = network.security
+                if not set(security.outage_units) <= unit_ids:
+                    raise ValueError("Unknown security outage unit")
+                line_cases = hours * len(security.outage_lines)
+                unit_cases = hours * len(security.outage_units)
+                variables += (line_cases + unit_cases) * (len(network.buses) + len(network.lines) + len(self.units))
+                rows += line_cases * (len(network.buses) + 2*(len(network.lines)-1) + 4*len(self.units))
+                rows += unit_cases * (len(network.buses) + 2*len(network.lines) + 4*(len(self.units)-1))
         if variables > 200:
             raise ValueError("Commitment exceeds the mathematical variable budget")
         if rows > 500:
@@ -196,7 +205,12 @@ class UnitCommitment(Contract):
             if self.network.security is None:
                 data["network"].pop("security")
             else:
-                data["network"]["security"]["outage_lines"].sort()
+                security = data["network"]["security"]
+                security["outage_lines"].sort()
+                if self.network.security.outage_units:
+                    security["outage_units"].sort()
+                else:
+                    security.pop("outage_units")
         return data
 
     def sha256(self):

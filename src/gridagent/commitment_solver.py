@@ -115,7 +115,12 @@ def verify_commitment(spec, result):
             verdict["classification"] = "no_verified_candidate"
     model = "single_area_no_network_constraints"
     if spec.network is not None:
-        model = "lossless_dc_selected_line_outages" if spec.network.security is not None else "lossless_dc_base_topology"
+        if spec.network.security is None:
+            model = "lossless_dc_base_topology"
+        elif spec.network.security.outage_units:
+            model = "lossless_dc_selected_component_outages"
+        else:
+            model = "lossless_dc_selected_line_outages"
     verdict["commitment"] = {"compiler": compiler_for(spec), "source_sha256": spec.sha256(),
                              "compiled_program_sha256": program.sha256(), "physical": physical,
                              "network_model": model,

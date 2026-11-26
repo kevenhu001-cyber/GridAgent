@@ -202,7 +202,8 @@ def resume_ac_check(root, identifier, *, solver=run_program):
         report = {"study_id": identifier, "protocol": PROTOCOL, "phase": "ac_cross_check_finished",
                   "dc_study_id": spec.commitment_study_id, "dc_report_sha256": report_sha,
                   "completed": all(row["passed"] for row in observed),
-                  "full_dc_schedule_coverage": requested == all_cases,
+                  "full_dc_schedule_coverage": requested == all_cases and not (
+                      commitment.network.security is not None and commitment.network.security.outage_units),
                   "snapshots": observed, "reserved_solver_runs": len(cases),
                   "scope": "selected_steady_state_ac_snapshots_no_dynamic_security"}
         if study.exists("report"):

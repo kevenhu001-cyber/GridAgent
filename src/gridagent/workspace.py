@@ -77,6 +77,9 @@ def study_summary(root: Path, identifier: str):
                     security = schedule["security"]
                     lines.append(f"Verified line outage cases: {len(security['cases'])}")
                     lines.append(f"All network lines covered: {security['all_network_lines_covered']}")
+                    if "unit_cases" in security:
+                        lines.append(f"Verified unit outage cases: {len(security['unit_cases'])}")
+                        lines.append(f"All thermal units covered: {security['all_thermal_units_covered']}")
                     lines.append("Static DC redispatch checked; AC and dynamic security not established")
                 else:
                     lines.append("System reserve checked; contingency deliverability and AC feasibility not established")
