@@ -115,7 +115,7 @@ public partial class MainWindow
         var summary = Text("");
         var legend = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
         var readout = Text("Move the pointer over the plot to inspect a sample.", 13);
-        var plot = new Canvas { MinWidth = 300, MinHeight = 220 };
+        var plot = new Canvas { MinWidth = 300, MinHeight = 220, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
         AutomationProperties.SetName(plot, "Scientific plot; numerical range and series are described above");
         var zoom = new ScrollViewer { Content = plot, ZoomMode = ZoomMode.Enabled, MinZoomFactor = 1, MaxZoomFactor = 8,
             HorizontalScrollMode = ScrollMode.Enabled, VerticalScrollMode = ScrollMode.Enabled,
@@ -139,10 +139,28 @@ public partial class MainWindow
         toolbar.Children.Add(actions);
         Grid.SetRow(toolbar, 1); Grid.SetRow(zoom, 2);
         root.Children.Add(select); root.Children.Add(toolbar); root.Children.Add(zoom);
+        int preparedIndex = -1;
+        double xMin = 0, xMax = 1;
+        double[] cursorX = Array.Empty<double>();
+        double[] cursorY = Array.Empty<double>();
         void Render()
         {
             if (select.SelectedIndex < 0 || plot.ActualWidth < 200 || plot.ActualHeight < 150) return;
             var chart = charts[select.SelectedIndex];
+            if (preparedIndex != select.SelectedIndex)
+            {
+                preparedIndex = select.SelectedIndex;
+                var values = chart.Traces.SelectMany(t => t.X.Zip(t.Y)).Where(v => double.IsFinite(v.First) && double.IsFinite(v.Second)).ToArray();
+                if (values.Length > 0)
+                {
+                    xMin = values.Min(v => v.First); xMax = values.Max(v => v.First);
+                    if (xMin == xMax) { xMin -= 1; xMax += 1; }
+                }
+                var first = chart.Traces.FirstOrDefault();
+                var cursor = first == null ? Array.Empty<(double First, double Second)>() : first.X.Zip(first.Y).Where(v => double.IsFinite(v.First) && double.IsFinite(v.Second)).OrderBy(v => v.First).ToArray();
+                cursorX = cursor.Select(v => v.First).ToArray();
+                cursorY = cursor.Select(v => v.Second).ToArray();
+            }
             summary.Text = DrawChart(plot, chart);
             legend.Children.Clear();
             for (int i = 0; i < chart.Traces.Length; i++)
@@ -157,22 +175,16 @@ public partial class MainWindow
             var p = e.GetCurrentPoint(plot).Position;
             double width = plot.ActualWidth - 106;
             if (width <= 0 || p.X < 78 || p.X > 78 + width) return;
-            var values = chart.Traces.SelectMany(t => t.X).Where(double.IsFinite);
-            if (!values.Any()) return;
-            var min = values.Min(); var max = values.Max();
-            var target = min + (max - min) * (p.X - 78) / width;
-            var trace = chart.Traces.FirstOrDefault();
-            if (trace == null) return;
-            var count = Math.Min(trace.X.Length, trace.Y.Length);
-            if (count == 0) return;
-            int best = -1; double distance = double.PositiveInfinity;
-            for (int i = 0; i < count; i++)
+            if (cursorX.Length == 0 || preparedIndex != select.SelectedIndex) return;
+            var target = xMin + (xMax - xMin) * (p.X - 78) / width;
+            int best = Array.BinarySearch(cursorX, target);
+            if (best < 0)
             {
-                if (!double.IsFinite(trace.X[i]) || !double.IsFinite(trace.Y[i])) continue;
-                var d = Math.Abs(trace.X[i] - target);
-                if (d < distance) { best = i; distance = d; }
+                int next = ~best;
+                best = next == 0 ? 0 : next == cursorX.Length ? cursorX.Length - 1 :
+                    target - cursorX[next - 1] <= cursorX[next] - target ? next - 1 : next;
             }
-            if (best >= 0) readout.Text = $"{trace.Name}: {chart.XLabel} {trace.X[best]:G6} · {chart.YLabel} {trace.Y[best]:G6}";
+            readout.Text = $"{chart.Traces[0].Name}: {chart.XLabel} {cursorX[best]:G6} · {chart.YLabel} {cursorY[best]:G6}";
         };
         select.SelectionChanged += (_, _) => Render();
         plot.SizeChanged += (_, _) => Render();

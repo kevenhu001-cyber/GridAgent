@@ -91,7 +91,7 @@ def test_connection_check_uses_configured_compatible_endpoint(tmp_path, monkeypa
     assert events[-1] == ("result", "Connected to fixture")
 
 
-def test_desktop_initialize_is_lightweight(tmp_path, monkeypatch):
+def test_desktop_initialize_is_lightweight(tmp_path):
     import os
     import subprocess
     import sys
@@ -111,6 +111,6 @@ assert "gridagent.simulator" not in sys.modules
 assert "gridagent.research" not in sys.modules
 assert "numpy" not in sys.modules
 """
-    result = subprocess.run([sys.executable, "-c", code, str(tmp_path)], env=env,
+    result = subprocess.run([sys.executable, "-c", code, str(tmp_path)], check=False, env=env,
                             capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr

@@ -5,7 +5,6 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
@@ -59,6 +58,8 @@ def save_settings(root, model, base_url):
 
 
 def check_connection(settings, key=None, *, factory=None):
+    from langchain_core.messages import HumanMessage
+
     from .agent import model_from_env
 
     create = factory or model_from_env

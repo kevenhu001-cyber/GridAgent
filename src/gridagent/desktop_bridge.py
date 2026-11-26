@@ -39,9 +39,9 @@ def dispatch(root, request, emit):
 
     def refresh():
         from .dsr import list_studies
-        from .workspace import list_runs
         from .model_revisions import revisions
         from .research import ResearchTasks
+        from .workspace import list_runs
 
         emit("sessions", store.sessions())
         emit("studies", list_studies(root / "studies"))
@@ -182,8 +182,8 @@ def dispatch(root, request, emit):
         refresh()
     elif action == "dsr":
         from .agent import model_from_env
-        from .simulator import AndesSimulator
         from .dsr import format_update, study_updates
+        from .simulator import AndesSimulator
 
         model = model_from_env(root)
         for node, value in study_updates(request["manifest"], root, model, AndesSimulator(root / "runs"),

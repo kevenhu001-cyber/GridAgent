@@ -20,6 +20,7 @@ public partial class MainWindow : Window
     private bool _workspaceIndexLoaded;
     private List<Entry> _sessions = new();
     private bool _initialized;
+    private bool _loadingTheme;
     private bool _busy;
     private bool _operationError;
     private EngineSettings? _activeEngine;
@@ -37,6 +38,7 @@ public partial class MainWindow : Window
         ModelName.Text = Environment.GetEnvironmentVariable("GRIDAGENT_MODEL") ?? "";
         BaseUrl.Text = Environment.GetEnvironmentVariable("GRIDAGENT_BASE_URL") ?? "";
         Messages.ItemsSource = _messages;
+        LoadTheme();
         ModelName.TextChanged += (_, _) => UpdateModelCaption();
         UpdateModelCaption();
         Title = "GridAgent";
@@ -177,10 +179,33 @@ public partial class MainWindow : Window
             ? Execute(new { action = "refresh" }) : Task.CompletedTask;
     }
     private void ShowChat() => Navigation.SelectedItem = AssistantNavigation;
+    private static string ThemePreferencePath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GridAgent", "desktop-theme.txt");
+    private void LoadTheme()
+    {
+        _loadingTheme = true;
+        try
+        {
+            if (File.Exists(ThemePreferencePath) && int.TryParse(File.ReadAllText(ThemePreferencePath), out var index) && index is >= 0 and <= 2)
+                Theme.SelectedIndex = index;
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+        finally { _loadingTheme = false; }
+    }
     private void ChangeTheme(object sender, SelectionChangedEventArgs e)
     {
-        if (Root != null && sender is ComboBox choice)
-            Root.RequestedTheme = choice.SelectedIndex == 1 ? ElementTheme.Light : choice.SelectedIndex == 2 ? ElementTheme.Dark : ElementTheme.Default;
+        if (Root == null || sender is not ComboBox choice) return;
+        Root.RequestedTheme = choice.SelectedIndex == 1 ? ElementTheme.Light : choice.SelectedIndex == 2 ? ElementTheme.Dark : ElementTheme.Default;
+        foreach (var window in _engineeringWindows)
+            if (window.Content is FrameworkElement content) content.RequestedTheme = Root.RequestedTheme;
+        if (_loadingTheme || !_initialized || choice.SelectedIndex < 0) return;
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(ThemePreferencePath)!);
+            File.WriteAllText(ThemePreferencePath, choice.SelectedIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        catch (IOException) { Notify("Appearance preference could not be saved.", InfoBarSeverity.Warning); }
+        catch (UnauthorizedAccessException) { Notify("Appearance preference could not be saved.", InfoBarSeverity.Warning); }
     }
     private void PromptKeyDown(object sender, KeyRoutedEventArgs e)
     {
