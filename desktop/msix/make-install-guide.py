@@ -33,7 +33,7 @@ def render(directory):
 @media(prefers-color-scheme:dark){{:root{{--bg:#181818;--fg:#eee;--muted:#aaa;--border:#444;--panel:#222;--button:#eee;--buttontext:#171717}}}}
 *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 "Segoe UI",system-ui,sans-serif}}
 main{{max-width:740px;margin:auto;padding:48px 24px}}header{{font-size:13px;font-weight:600;letter-spacing:.12em}}
-h1{{font-size:42px;line-height:1.15;letter-spacing:-.04em;margin:28px 0 8px}}h2{{font-size:19px;margin:0 0 8px}}
+.brand{{display:block;width:180px;height:auto;margin:20px 0;border-radius:8px}}h1{{font-size:42px;line-height:1.15;letter-spacing:-.04em;margin:28px 0 8px}}h2{{font-size:19px;margin:0 0 8px}}
 p{{margin:0 0 12px}}.muted,small{{color:var(--muted)}}.card{{border:1px solid var(--border);border-radius:14px;background:var(--panel);padding:24px;margin:26px 0}}
 .action{{display:inline-block;background:var(--button);color:var(--buttontext);padding:11px 20px;border-radius:8px;text-decoration:none;font-weight:600}}
 a{{color:inherit;text-underline-offset:3px}}a:focus-visible{{outline:2px solid #4688da;outline-offset:4px}}
@@ -41,6 +41,7 @@ aside{{border-left:3px solid #ba8620;padding:12px 16px;margin:16px 0}}ol{{paddin
 footer{{border-top:1px solid var(--border);padding-top:18px;margin-top:30px;color:var(--muted);font-size:13px}}
 </style></head><body><main>
 <header>TOPODRIVE</header>
+<img class="brand" src="GridAgent-logo.png" alt="GridAgent approved logo">
 <h1>Install GridAgent</h1><p class="muted">AI-assisted power system research, on your Windows desktop.</p>
 <section class="card"><h2>Windows x64 · MSIX</h2>
 <p class="muted">Package {version} · {size} · Windows 10 version 2004 or later</p>

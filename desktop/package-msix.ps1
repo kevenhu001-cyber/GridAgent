@@ -64,7 +64,13 @@ try {
         $manifest.Package.Applications.Application.VisualElements.DisplayName = "GridAgent"
     }
     $manifest.Save((Join-Path $stage "AppxManifest.xml"))
-    Invoke-Checked $Python @((Join-Path $PSScriptRoot "msix\make-assets.py"), (Join-Path $stage "MsixAssets"))
+    $brand = Join-Path $stage "BrandAssets"
+    $msixAssets = Join-Path $stage "MsixAssets"
+    New-Item -ItemType Directory -Force $msixAssets | Out-Null
+    foreach ($name in @("StoreLogo.png", "Square44x44Logo.png", "Square150x150Logo.png")) {
+        Copy-Item (Join-Path $brand $name) $msixAssets
+    }
+    Copy-Item (Join-Path $brand "GridAgent-logo.png") (Join-Path $out "GridAgent-logo.png")
     $suffix = if ($Development) { "-Development" } else { "" }
     $package = Join-Path $out "GridAgent-$Version-x64$suffix.msix"
     Invoke-Checked $makeappx @("pack", "/d", $stage, "/p", $package, "/o", "/h", "SHA256")

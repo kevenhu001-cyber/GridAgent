@@ -1,5 +1,7 @@
 # GridAgent
 
+<img src="desktop/branding/gridagent-logo.webp" alt="GridAgent logo" width="220">
+
 Developed by **TopoDrive**. Lead developer: **Adex Hu**.
 
 An open-source, simulation-grounded agent for power-system dynamics and engineering research, inspired by [PowerAgentBench-Dyn](https://arxiv.org/abs/2606.20401).

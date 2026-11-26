@@ -20,6 +20,9 @@ if ($LASTEXITCODE -ne 0) { throw "Build requires x64 CPython 3.11" }
 
 ## WinUI 3 is the default; legacy is a temporary explicit rollback option.
 $DesktopProject = if ($LegacyWpf) { "desktop/GridAgent.Windows" } else { "desktop/GridAgent.WinUI" }
+if (!$LegacyWpf) {
+    Invoke-Checked $Python @((Join-Path $Repo "desktop/msix/make-assets.py"), (Join-Path $Repo "desktop/GridAgent.WinUI/BrandAssets"))
+}
 Invoke-Checked dotnet @("publish", (Join-Path $Repo $DesktopProject), "-c", "Release", "-r", "win-x64", "--self-contained", "true", "-o", $Output)
 $Runtime = Join-Path $Output "runtime"
 # Copy the complete installed CPython layout, not a non-relocatable virtualenv.

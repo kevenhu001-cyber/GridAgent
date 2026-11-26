@@ -10,6 +10,17 @@ public partial class MainWindow
 {
     private bool _setupOpen;
 
+    private static Image? BrandImage()
+    {
+        if (!File.Exists(Path.Combine(AppContext.BaseDirectory, "BrandAssets", "GridAgent-logo.png"))) return null;
+        return new Image
+        {
+            Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri("ms-appx:///BrandAssets/GridAgent-logo.png")),
+            Width = 180, Height = 180, Stretch = Stretch.Uniform,
+            HorizontalAlignment = HorizontalAlignment.Left
+        };
+    }
+
     private static TextBlock SetupText(string text, double size = 14) => new()
     {
         Text = text, FontSize = size, TextWrapping = TextWrapping.Wrap
@@ -20,6 +31,7 @@ public partial class MainWindow
     {
         if (_setupOpen || _busy) return;
         var content = new StackPanel { Spacing = 10, MaxWidth = 480 };
+        if (BrandImage() is Image logo) content.Children.Add(logo);
         content.Children.Add(new TextBlock { Text = ProductInfo.Name, FontSize = 30, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         content.Children.Add(SetupText(ProductInfo.Description));
         content.Children.Add(SetupText("Version " + ProductInfo.Version + " · " + ProductInfo.Distribution));
@@ -53,6 +65,7 @@ public partial class MainWindow
                 if (step == 0)
                 {
                     title = "Welcome to GridAgent";
+                    if (BrandImage() is Image logo) panel.Children.Add(logo);
                     panel.Children.Add(SetupText("Your AI-assisted power system research workspace.", 22));
                     panel.Children.Add(SetupText("Build models, run local simulations and inspect numerical evidence. Optional solvers can be installed later."));
                     panel.Children.Add(SetupText("Developed by TopoDrive · Lead developer Adex Hu"));

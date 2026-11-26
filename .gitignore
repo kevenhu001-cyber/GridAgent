@@ -14,3 +14,6 @@ desktop-publish relocated/
 benchmark-assets/
 
 offline-evaluation/
+
+# Generated desktop artwork (source is versioned in desktop/branding).
+desktop/GridAgent.WinUI/BrandAssets/

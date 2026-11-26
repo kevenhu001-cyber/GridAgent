@@ -48,6 +48,8 @@ public partial class MainWindow : Window
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         SystemBackdrop = new MicaBackdrop();
+        var appIcon = Path.Combine(AppContext.BaseDirectory, "BrandAssets", "GridAgent.ico");
+        if (File.Exists(appIcon)) AppWindow.SetIcon(appIcon);
         AppWindow.Resize(new global::Windows.Graphics.SizeInt32(1200, 840));
         AppWindow.Closing += (_, args) => { if (_busy) { args.Cancel = true; Notify("A research operation is active. Wait for completion or cancel the research task.", InfoBarSeverity.Warning); } };
         Closed += (_, _) => _engine.Dispose();

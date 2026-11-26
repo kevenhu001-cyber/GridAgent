@@ -84,3 +84,11 @@ The publisher is derived from the certificate and production signing is timestam
 
 ## TopoDrive branding and setup experience
 GridAgent is developed by TopoDrive; lead developer Adex Hu. The product identity appears in assembly metadata, application title bar, Settings > About, Python distribution metadata and MSIX publisher display name. The signed publisher remains the actual certificate subject (development: CN=TopoDrive Development; production: the certificate holder). The MSIX output includes a branded, offline `Install GridAgent.html` landing page showing the actual package version, size, publisher and checksum. Windows App Installer owns the native installation confirmation; MSIX does not support arbitrary custom installer UI. The application provides a four-step native first-run setup guide (welcome, workspace, optional provider, summary), also accessible from Settings. Workspace selection is remembered, API keys remain session-only, and setup is bypassed for the explicitly requested development MSIX smoke activation. No dependencies are downloaded during setup.
+
+## Approved brand artwork
+The blue/green mathematical surface and GridAgent wordmark selected by the product owner replace the temporary icon. The repository includes a compact 320 px WebP derivative at `desktop/branding/gridagent-logo.webp`. The artwork is not redrawn; the icon uses a crop of its surface without the text. To generate Windows assets before a developer build, run:
+
+    python -m pip install "Pillow>=11,<13"
+    python desktop/msix/make-assets.py desktop/GridAgent.WinUI/BrandAssets
+
+Pillow is a build-time dependency only. Portable packaging generates the same assets before dotnet publish; the MSIX stage copies its validated package logos from the portable layout. The generated ICO, Windows tiles, install guide, About and welcome screens all use the approved artwork. The original high-resolution file is kept separately; it may replace the compact source at a future release without changing the pipeline.
