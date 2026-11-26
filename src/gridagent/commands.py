@@ -202,6 +202,18 @@ def workspace_command(root, command, args, *, model_factory=None):
         from .paper import model_estimator, paper_rank
 
         yield from paper_rank(root, model_estimator(create_model()))
+    elif command == "diagnose-study" and len(args) == 1:
+        import json
+
+        from filelock import Timeout
+
+        from .diagnosis import diagnose_study
+
+        try:
+            report = diagnose_study(root, args[0])
+        except Timeout as exc:
+            raise ValueError("Source study is currently locked") from exc
+        yield json.dumps(report, ensure_ascii=False, allow_nan=False)
     elif command in {"ac-check", "ac-check-resume"} and len(args) == 1:
         import json
 

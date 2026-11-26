@@ -27,6 +27,7 @@ def main():
     research.add_argument("--math-resume", metavar="ID", help="Recover a mathematical program study")
     research.add_argument("--ac-check", metavar="JSON", help="Cross-check verified DC commitment with AC snapshots")
     research.add_argument("--ac-check-resume", metavar="ID", help="Recover AC cross-check evidence")
+    research.add_argument("--diagnose-study", metavar="ID", help="Diagnose committed study evidence without solving")
     research.add_argument("--research-tasks", action="store_true", help="List saved research tasks")
     research.add_argument("--research-status", metavar="ID")
     research.add_argument("--research-resume", metavar="ID")
@@ -109,6 +110,7 @@ def main():
         ("math-resume", [args.math_resume] if args.math_resume else None),
         ("ac-check", [args.ac_check] if args.ac_check else None),
         ("ac-check-resume", [args.ac_check_resume] if args.ac_check_resume else None),
+        ("diagnose-study", [args.diagnose_study] if args.diagnose_study else None),
         ("research-tasks", [] if args.research_tasks else None),
         ("research-status", [args.research_status] if args.research_status else None),
         ("research-resume", [args.research_resume] if args.research_resume else None),
