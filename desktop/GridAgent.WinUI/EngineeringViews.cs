@@ -26,7 +26,7 @@ public partial class MainWindow
     {
         var window = new Window { Title = title + " — GridAgent", Content = content };
         content.RequestedTheme = Root.RequestedTheme;
-        window.AppWindow.Resize(new Windows.Graphics.SizeInt32(1000, 650));
+        window.AppWindow.Resize(new global::Windows.Graphics.SizeInt32(1000, 650));
         _engineeringWindows.Add(window);
         window.Closed += (_, _) => _engineeringWindows.Remove(window);
         window.Activate();
@@ -74,9 +74,10 @@ public partial class MainWindow
                     if (_busy) { Notify("Another operation is running.", InfoBarSeverity.Warning); return; }
                     if (question != null && !await Confirm(label + " " + title, question)) return;
                     await Local(command, id);
-                    var status = StatusText.Text ?? "";
-                    if (status == "Ready") Notify("Plugin operation completed. Review the refreshed catalog and conversation for results.");
+                    var failed = _operationError;
                     await Execute(new { action = "plugins" });
+                    if (failed) Notify("Plugin operation failed. See the assistant for details.", InfoBarSeverity.Error);
+                    else if (!_operationError) Notify("Plugin operation completed. Review the refreshed catalog and conversation for results.");
                 });
                 button.IsEnabled = enabled;
                 actions.Children.Add(button);
@@ -92,7 +93,7 @@ public partial class MainWindow
                 Add("Rollback", "plugin-rollback", item.GetProperty("rollback_available").GetBoolean(), "Restore the previous plugin generation?");
             }
             details.Children.Add(actions);
-            PluginRows.Children.Add(new Border { Padding = new Thickness(16), CornerRadius = new CornerRadius(8), BorderThickness = new Thickness(1), BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.Gray), Child = details });
+            PluginRows.Children.Add(new Border { Padding = new Thickness(16), CornerRadius = new CornerRadius(8), BorderThickness = new Thickness(1), Style = (Style)Application.Current.Resources["EngineeringCardStyle"], Child = details });
         }
         if (PluginRows.Children.Count == 0) PluginRows.Children.Add(Text("No matching plugins."));
     }

@@ -16,6 +16,7 @@ public partial class MainWindow : Window
     private string? _session;
     private string? _boundWorkspace;
     private bool _busy;
+    private bool _operationError;
     private EngineSettings? _activeEngine;
     private string? _activeResearch;
     private bool _cancellingResearch;
@@ -35,7 +36,7 @@ public partial class MainWindow : Window
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         SystemBackdrop = new MicaBackdrop();
-        AppWindow.Resize(new Windows.Graphics.SizeInt32(1200, 840));
+        AppWindow.Resize(new global::Windows.Graphics.SizeInt32(1200, 840));
         AppWindow.Closing += (_, args) => { if (_busy) { args.Cancel = true; Notify("A research operation is active. Wait for completion or cancel the research task.", InfoBarSeverity.Warning); } };
         Navigation.SelectedItem = Navigation.MenuItems[0];
         Root.Loaded += async (_, _) =>
@@ -73,7 +74,7 @@ public partial class MainWindow : Window
         var body = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, FontSize = 15 };
         block.Children.Add(body);
         var card = new Border { Padding = new Thickness(14), CornerRadius = new CornerRadius(10), Child = block };
-        if (role == "You") card.HorizontalAlignment = HorizontalAlignment.Right;
+        card.Style = (Style)Application.Current.Resources[role == "You" ? "UserMessageCardStyle" : "ResultMessageCardStyle"];
         Messages.Children.Add(card);
         DispatcherQueue.TryEnqueue(() => ConversationScroll.ChangeView(null, ConversationScroll.ScrollableHeight, null, true));
     }
@@ -104,7 +105,7 @@ public partial class MainWindow : Window
     }
     private void PromptKeyDown(object sender, KeyRoutedEventArgs e)
     {
-        if (e.Key == VirtualKey.Enter && Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down))
+        if (e.Key == VirtualKey.Enter && Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control).HasFlag(global::Windows.UI.Core.CoreVirtualKeyStates.Down))
         { e.Handled = true; Send(sender, new RoutedEventArgs()); }
     }
     private void SetBusy(bool busy)
@@ -120,6 +121,7 @@ public partial class MainWindow : Window
     {
         if (_busy) { Notify("Another operation is running.", InfoBarSeverity.Warning); return; }
         SetBusy(true);
+        _operationError = false;
         StatusText.Text = "Working…";
         try
         {
@@ -139,10 +141,11 @@ public partial class MainWindow : Window
             var settings = new EngineSettings(ResolvePython(), root, ModelName.Text.Trim(), BaseUrl.Text.Trim(), ApiKey.Password);
             _activeEngine = settings;
             await LocalEngine.RunAsync(settings, request, Handle);
-            StatusText.Text = "Ready";
+            StatusText.Text = _operationError ? "Operation failed" : "Ready";
         }
         catch (Exception ex)
         {
+            _operationError = true;
             // Do not display raw process diagnostics or provider payloads.
             Append("Operation could not complete (" + ex.GetType().Name + "). Check application installation, workspace and model settings.");
             StatusText.Text = "Check configuration";
@@ -233,7 +236,7 @@ public partial class MainWindow : Window
             case "tool": AddTool(data.GetString() ?? "Tool"); break;
             case "result": Append(data.GetString() ?? ""); break;
             case "status": StatusText.Text = data.GetString() ?? "Working…"; break;
-            case "error": Append(data.GetString() ?? "Operation failed.", "Error"); Notify("The operation reported an error. See the conversation for details.", InfoBarSeverity.Error); break;
+            case "error": _operationError = true; Append(data.GetString() ?? "Operation failed.", "Error"); Notify("The operation reported an error. See the conversation for details.", InfoBarSeverity.Error); break;
         }
     }
 
