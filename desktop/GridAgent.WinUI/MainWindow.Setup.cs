@@ -132,7 +132,7 @@ public partial class MainWindow
                                 throw new IOException("Install directory");
                             Directory.CreateDirectory(candidate);
                             var probe = Path.Combine(candidate, ".gridagent-setup-" + Guid.NewGuid().ToString("N"));
-                            using (File.Open(probe, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose)) { }
+                            using (new FileStream(probe, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose)) { }
                             workspace = candidate;
                         }
                         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
