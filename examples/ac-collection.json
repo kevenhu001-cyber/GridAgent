@@ -1,0 +1,22 @@
+{
+  "families": [
+    "grid-03",
+    "grid-04",
+    "grid-05",
+    "grid-06",
+    "grid-07",
+    "grid-08",
+    "grid-09",
+    "grid-10",
+    "grid-11",
+    "grid-12",
+    "grid-13",
+    "grid-14",
+    "grid-15"
+  ],
+  "levels": [
+    "nominal"
+  ],
+  "max_dc_calls": 13,
+  "max_ac_runs": 91
+}
