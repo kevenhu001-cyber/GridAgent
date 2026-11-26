@@ -132,10 +132,17 @@ def pypsa_run(program, folder):
               p_max_pu=gen.p_max_pu if gen.p_max_pu is not None else 1,
               marginal_cost=gen.marginal_cost)
     for storage in program.storage:
+        soc_options = {"cyclic_state_of_charge": storage.cyclic_soc}
+        if storage.initial_soc_mwh is not None:
+            soc_options["state_of_charge_initial"] = storage.initial_soc_mwh
+        if storage.terminal_soc_mwh is not None:
+            target = pd.Series(np.nan, index=n.snapshots)
+            target.iloc[-1] = storage.terminal_soc_mwh
+            soc_options["state_of_charge_set"] = target
         n.add("StorageUnit", storage.name, bus=storage.bus, p_nom=storage.p_nom_mw,
               max_hours=storage.max_hours, efficiency_store=storage.efficiency_store,
               efficiency_dispatch=storage.efficiency_dispatch, marginal_cost=storage.marginal_cost,
-              cyclic_state_of_charge=True)
+              **soc_options)
     for link in program.links:
         n.add("Link", link.name, bus0=link.bus0, bus1=link.bus1,
               p_nom=link.p_nom_mw, efficiency=link.efficiency, p_min_pu=0)
@@ -166,7 +173,7 @@ def pypsa_run(program, folder):
                    "hours": program.hours, "generation_mwh": float(n.generators_t.p.sum().sum()),
                    "storage_discharge_mwh": float(n.storage_units_t.p_dispatch.sum().sum()),
                    "storage_charge_mwh": float(n.storage_units_t.p_store.sum().sum())},
-                   "scope": "Fixed-capacity hourly linear dispatch, cyclic storage; not AC or transient analysis"})
+                   "scope": "Fixed-capacity hourly linear dispatch with explicit SOC boundaries; not AC or transient analysis"})
     return result
 
 

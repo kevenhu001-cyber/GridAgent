@@ -1,0 +1,9 @@
+# Fixed engineering execution plans and evidence
+
+New AC IR and dispatch IR tasks freeze a versioned ExecutionPlan with solve, verification and final aggregation nodes. The plan binds the exact model and study hashes, normalized native requests, evaluator and solver-run budget. Dependencies must form a valid acyclic graph with one verification per solve and a final aggregation depending on all verifications. Deterministic ready-node selection is exposed by the plan contract; the existing workflow still executes sequentially. The plan fingerprint is stored in both the task payload and its planned lifecycle event. Resuming a task recompiles and compares the plan before launching a solver.
+
+Each evaluated run obtains an EvidenceRecord with plan/node/request/run identity, solver version, evaluator version, verdict digest, check outcomes and SHA-256/size of the allowlisted input and result files used by verification. Missing required artifacts or mismatched identities cannot yield verified evidence. Hashes detect changes, not authenticity; they are not digital signatures. Files are streamed with a 64 MiB per-file cap. Verification checks the declared numerical criteria, not certified engineering safety or global optimality.
+
+AC fixed-IR resume rechecks previously recorded artifact hashes and verdict identity before proceeding. Dispatch has a single solve reservation and captures evidence at finalization. Older tasks created before this plan schema retain their original behavior; no historical evidence is invented. Natural-language repair workflows, arbitrary DAG operations, parallel scheduling, cross-task caching, terminal audit UI and persistent per-node scheduler states are not implemented by this slice.
+
+See docs/engineering-ir.md and docs/dispatch-ir.md for model-family semantics.

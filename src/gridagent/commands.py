@@ -18,6 +18,33 @@ def workspace_command(root, command, args, *, model_factory=None):
 
         for row in task_command(root, command, args, model_factory=create_model):
             yield format_status(row) if isinstance(row, dict) else row
+    elif command in {"dispatch-ir", "dispatch-resume", "dispatch-status", "dispatch-cancel"} and len(args) == 1:
+        import json
+
+        from filelock import Timeout
+
+        from .dispatch_ir import DispatchStudy
+        from .dispatch_tasks import DispatchTasks
+
+        tasks = DispatchTasks(root)
+        try:
+            if command == "dispatch-ir":
+                with Path(args[0]).open("rb") as handle:
+                    payload = handle.read(1024 * 1024 + 1)
+                if len(payload) > 1024 * 1024:
+                    raise ValueError("Dispatch input exceeds 1 MiB")
+                identifier = tasks.start(DispatchStudy.model_validate_json(payload))
+                yield "Dispatch task: " + identifier
+                result = tasks.resume(identifier)
+            elif command == "dispatch-resume":
+                result = tasks.resume(args[0])
+            elif command == "dispatch-cancel":
+                result = tasks.cancel(args[0])
+            else:
+                result = tasks.summary(args[0])
+        except Timeout as exc:
+            raise ValueError("Dispatch task is already running") from exc
+        yield json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False)
     elif command == "plugins" and not args:
         from .plugins import status
 

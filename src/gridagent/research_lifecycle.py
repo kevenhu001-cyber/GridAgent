@@ -19,7 +19,9 @@ class ResearchLifecycle:
         self.repository = repository
 
     def create(self, db, identifier, prompt, state, stage):
-        self.repository._create_in(db, RequirementSpec(request=prompt), task_id=identifier)
+        model_hash = state.get("engineering_ir", {}).get("model_sha256")
+        self.repository._create_in(db, RequirementSpec(request=prompt), task_id=identifier,
+                                   model_revision=model_hash)
         self.checkpoint(db, identifier, state, stage)
 
     def checkpoint(self, db, identifier, state, stage, *, approved=False):
@@ -41,8 +43,10 @@ class ResearchLifecycle:
             move(TaskStatus.NEEDS_CLARIFICATION)
         elif stage in {"ready", "awaiting_approval"}:
             if task.status == TaskStatus.DRAFT:
-                move(TaskStatus.PLANNED, plan_revision=1,
-                     reason="Frozen research manifest: " + state["manifest_sha256"])
+                reason = "Frozen research manifest: " + state["manifest_sha256"]
+                if "execution_plan_sha256" in state:
+                    reason = f"Execution plan: {state['execution_plan_sha256']}; " + reason
+                move(TaskStatus.PLANNED, plan_revision=1, reason=reason)
             if stage == "awaiting_approval":
                 move(TaskStatus.AWAITING_APPROVAL)
             elif task.status == TaskStatus.AWAITING_APPROVAL:

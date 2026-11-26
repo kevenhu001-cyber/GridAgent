@@ -57,6 +57,8 @@ def available_backends(root=None):
 
 def run_program(root, program, timeout_s=300, *, run_id=None, cancelled=None):
     program = ADAPTER.validate_python(program)
+    if cancelled is not None and cancelled():
+        return {"backend": program.backend, "status": "failed", "reason": "cancelled_before_launch"}
     request = program.model_dump(mode="json")
     parent = None
     if isinstance(program, PPProgram) and program.parent_run:

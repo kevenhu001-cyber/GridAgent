@@ -219,6 +219,20 @@ class EnergyStorage(Strict):
     efficiency_store: float = Field(default=0.95, gt=0, le=1)
     efficiency_dispatch: float = Field(default=0.95, gt=0, le=1)
     marginal_cost: float = Field(default=0, ge=0, le=1e6)
+    cyclic_soc: bool = True
+    initial_soc_mwh: float | None = Field(default=None, ge=0, le=1e14)
+    terminal_soc_mwh: float | None = Field(default=None, ge=0, le=1e14)
+
+    @model_validator(mode="after")
+    def check_soc(self):
+        if self.cyclic_soc and (self.initial_soc_mwh is not None or self.terminal_soc_mwh is not None):
+            raise ValueError("Cyclic storage cannot also specify fixed initial or terminal SOC")
+        if not self.cyclic_soc and self.initial_soc_mwh is None:
+            raise ValueError("Non-cyclic storage requires an explicit initial SOC")
+        for value in (self.initial_soc_mwh, self.terminal_soc_mwh):
+            if value is not None and value > self.p_nom_mw * self.max_hours + 1e-9:
+                raise ValueError("SOC exceeds storage energy capacity")
+        return self
 
 
 class EnergyLink(Strict):

@@ -19,6 +19,7 @@ WORKSPACE_COMMANDS = {
     "/runs", "/study", "/wave", "/study-wave", "/eigen", "/sweep", "/resume-dsr", "/optimize", "/andes-batch",
     "/paper-rank", "/paper-kpi", "/paper-edit", "/paper-dmq", "/paper-dsr", "/paper-mitigate", "/paper-trials",
     "/models", "/import-model", "/knowledge", "/import-knowledge", "/backends", "/native-program", "/native-table",
+    "/dispatch-ir", "/dispatch-resume", "/dispatch-status", "/dispatch-cancel",
     "/drafts", "/model-repair", "/modeling-benchmark", "/experience", "/plugins", "/plugin-install",
     "/plugin-remove", "/plugin-check", "/plugin-update", "/plugin-rollback", "/register-ngspice", "/ngspice-rc",
 }
@@ -265,8 +266,10 @@ class GridApp(App):
         if question == "/help":
             chat.write(Text("/model · configure the workspace model and test the connection"))
             chat.write(Text("/research QUESTION · /research-multi QUESTION · /research-manifest PATH · "
-                            "/research-tasks · /research-status ID · /research-resume ID · /research-cancel ID · "
+                            "/research-ir PATH · /research-tasks · /research-status ID · /research-resume ID · "
+                            "/research-cancel ID · "
                             "/research-approve ID · /research-clarify ID ANSWER · /research-report ID PATH"))
+            chat.write(Text("/dispatch-ir PATH · /dispatch-resume ID · /dispatch-status ID · /dispatch-cancel ID"))
             chat.write(Text("/research-python MANIFEST · /research-sandbox enable|disable|status · "
                             "/research-benchmark [TASK [MODE]] · /andes-batch PATH"))
             chat.write(Text("/new · new session | /sessions · list | /open ID · reopen | /dsr PATH · screen faults | /dmq · model review | /studies · list | /runs | /study ID | /wave ID CHANNEL | /study-wave ID PATH CHANNEL | /eigen | /sweep BUS DURATIONS | /resume-dsr ID | /optimize [BUDGET] | /paper-dmq PROFILE | /paper-dsr PROFILE | /paper-mitigate PROFILE | /paper-trials TASK COUNT [PROFILE] | /modeling-benchmark TASK | /model-repair MANIFEST | /experience | /plugins | /plugin-install ID | /plugin-remove ID | /drafts | /backends | /native-program JSON | /native-table RUN TABLE | /knowledge | /import-knowledge JSON | /models | /import-model PATH | /paper-rank | /paper-kpi CSV CLEARING_S | /paper-edit Kqp Kqi Kvp Kvi | Ctrl+E Studies | Ctrl+Q · quit"))

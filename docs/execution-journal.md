@@ -1,0 +1,9 @@
+# Durable execution node journal
+
+New fixed AC and dispatch IR tasks register a frozen execution graph and its node rows in the same SQLite transaction as canonical task creation. Solve nodes start pending, are reserved with a globally unique native run ID before execution, then become done when the matching evidence is committed. Verification and aggregation nodes use dependency checks and immutable evidence digests. A done node is a settled observation, not necessarily a successful result; outcome distinguishes verified, rejected and unavailable evidence. Aggregation cannot complete before all verifications settle.
+
+AC research checkpoints and the node journal are written together. Dispatch reservations, final evidence and lifecycle events likewise commit together. Resume compares reservations to the journal; an uncertain reserved run is never automatically relaunched. Cancellation preserves reserved identities and records unknown or not-started outcomes for unsettled nodes. The existing per-task execution locks remain authoritative. Old tasks without a registered graph retain their previous execution path; no fabricated historical node records are created.
+
+This is the common durable execution coordination layer for fixed IR studies, not yet a fully general parallel DAG worker pool. No cross-task cache or automatic retries of unknown native runs are enabled. The existing sequential workflow and family-specific verification remain. Next: worker-pool scheduling for independent AC cases, cache keys including actual backend/solver/evaluator versions and settings, evidence revalidation, and performance measurements.
+
+The prior dispatch SOC regression was caused by assigning a fractional initial SOC into a NumPy array inferred as integer from CSV. Reading SOC as float before constructing its predecessor preserves fractional energy. The existing regression test remains unchanged.

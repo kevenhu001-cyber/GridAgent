@@ -64,13 +64,13 @@ class EngineeringTaskRepository:
         return cls._read_snapshot(row)
 
     @staticmethod
-    def _create_in(db, requirement: RequirementSpec, *, task_id=None) -> EngineeringTask:
+    def _create_in(db, requirement: RequirementSpec, *, task_id=None, model_revision=None) -> EngineeringTask:
         """Create a task inside the caller's write transaction."""
         requirement = RequirementSpec.model_validate(requirement)
         if requirement.revision != 1:
             raise ValueError("A new engineering task must start with requirement revision 1")
         identity = {} if task_id is None else {"task_id": task_id}
-        snapshot = EngineeringTask(requirement=requirement, **identity)
+        snapshot = EngineeringTask(requirement=requirement, model_revision=model_revision, **identity)
         db.execute("INSERT INTO engineering_tasks VALUES (?, 0)", (snapshot.task_id,))
         db.execute("""
             INSERT INTO engineering_task_revisions(task_id, revision, snapshot)
@@ -178,6 +178,12 @@ class EngineeringTaskRepository:
             if research_table and db.execute(
                     "SELECT 1 FROM research_tasks WHERE id = ?", (task_id,)).fetchone():
                 raise ValueError("Research-managed tasks must be changed through ResearchTasks")
+            dispatch_table = db.execute("""
+                SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'dispatch_tasks'
+            """).fetchone()
+            if dispatch_table and db.execute(
+                    "SELECT 1 FROM dispatch_tasks WHERE id = ?", (task_id,)).fetchone():
+                raise ValueError("Dispatch-managed tasks must be changed through DispatchTasks")
             return self._mutate_in(db, task_id, expected_revision, operation)
 
     def transition(self, task_id: str, expected_revision: int, target: TaskStatus, **kwargs):

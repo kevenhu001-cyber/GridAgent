@@ -12,14 +12,21 @@ from pydantic import ValidationError
 from typing_extensions import TypedDict
 
 from .dsr import digest
+from .engineering_compiler import compile_study
+from .engineering_ir import EngineeringStudy
+from .evidence import capture_evidence, verify_record
+from .execution_journal import ExecutionJournal
+from .execution_plan import ExecutionPlan, ac_plan
 from .knowledge import QueryPlan, workspace_knowledge
 from .model_quality import check
 from .model_repair import Proposal, apply, leaf, model_proposer
 from .model_runtime import ScheduledModel
 from .native_backends import run_program
+from .parallel_execution import ac_workers, run_batch
 from .research_lifecycle import ResearchLifecycle
 from .research_spec import PROTOCOL, PlanDraft, ResearchManifest, evaluate, model_fidelity
 from .store import ResearchStore, now
+from .verified_cache import VerifiedCache, cache_enabled, runtime_identity
 from .workspace import artifact_folder, load_object
 
 TERMINAL = {"passed", "failed", "cancelled"}
@@ -35,6 +42,7 @@ class ResearchTasks(ResearchStore):
         self.root = Path(root).resolve()
         super().__init__(self.root / "research.sqlite3")
         self.lifecycle = ResearchLifecycle(self.engineering_tasks())
+        self.journal = ExecutionJournal(self)
         with self.connect() as db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS research_tasks (
@@ -48,6 +56,16 @@ class ResearchTasks(ResearchStore):
 
     def start(self, prompt, mode="single", manifest=None, use_repair=True, use_experience=True, benchmark=False,
               benchmark_memory=None):
+        return self._start(prompt, mode, manifest, use_repair, use_experience, benchmark, benchmark_memory)
+
+    def start_ir(self, source: EngineeringStudy):
+        """Compile a reviewed IR document and freeze it with its native execution manifest."""
+        compiled = compile_study(source)
+        return self._start(compiled.manifest.objective, "single", compiled.manifest,
+                           False, False, False, None, engineering_ir=compiled.provenance)
+
+    def _start(self, prompt, mode, manifest, use_repair, use_experience, benchmark,
+               benchmark_memory, *, engineering_ir=None):
         if not isinstance(prompt, str) or not 1 <= len(prompt.strip()) <= 12000 or mode not in MODES:
             raise ValueError("Supply a research question and select single or multi mode")
         identifier = uuid4().hex
@@ -57,6 +75,12 @@ class ResearchTasks(ResearchStore):
                  "benchmark": benchmark}
         if benchmark_memory is not None:
             state["benchmark_memory"] = benchmark_memory
+        if engineering_ir is not None:
+            state["engineering_ir"] = engineering_ir
+            plan = ac_plan(ResearchManifest.model_validate(manifest), engineering_ir)
+            state["execution_plan"] = plan.model_dump(mode="json")
+            state["execution_plan_sha256"] = plan.sha256()
+            state["execution_journal_version"] = 1
         stage = "planning"
         if manifest is not None:
             freeze(state, ResearchManifest.model_validate(manifest))
@@ -67,6 +91,8 @@ class ResearchTasks(ResearchStore):
                        (identifier, prompt.strip(), mode, stage, timestamp, timestamp,
                         json.dumps(state, allow_nan=False)))
             self.lifecycle.create(db, identifier, prompt.strip(), state, stage)
+            if engineering_ir is not None:
+                self.journal.register(db, identifier, plan)
         return identifier
 
     def get(self, identifier):
@@ -78,11 +104,16 @@ class ResearchTasks(ResearchStore):
             if row is None:
                 raise ValueError("Unknown research task")
             canonical = self.lifecycle.repository._find_in(db, identifier)
+            graph, nodes = self.journal.load(db, identifier)
         item = dict(row)
         item["state"] = json.loads(item["state"])
         if canonical is not None:
             item["engineering_status"] = canonical.status.value
             item["engineering_revision"] = canonical.revision
+            if canonical.model_revision is not None:
+                item["engineering_model_revision"] = canonical.model_revision
+        if graph is not None:
+            item["execution_nodes"] = list(nodes.values())
         return item
 
     def listing(self):
@@ -102,8 +133,10 @@ class ResearchTasks(ResearchStore):
             if row["cancel_requested"] and stage != "cancelled":
                 # Keep reserved runs and other checkpoints, but do not claim execution has stopped.
                 stage = row["stage"]
+                self.journal.sync_ac(db, identifier, state, stage)
                 self._write_checkpoint(db, identifier, state, stage)
                 return
+            self.journal.sync_ac(db, identifier, state, stage)
             self.lifecycle.checkpoint(db, identifier, state, stage, approved=approved)
             self._write_checkpoint(db, identifier, state, stage)
 
@@ -131,6 +164,7 @@ class ResearchTasks(ResearchStore):
                 return
             state = json.loads(row["state"])
             state["termination"] = "cancelled"
+            self.journal.sync_ac(db, identifier, state, "cancelled")
             self.lifecycle.checkpoint(db, identifier, state, "cancelled")
             self._write_checkpoint(db, identifier, state, "cancelled")
 
@@ -209,7 +243,71 @@ class ResearchTasks(ResearchStore):
         manifest = ResearchManifest.model_validate(state["manifest"])
         if digest(state["manifest"]) != state["manifest_sha256"]:
             raise ValueError("Frozen task manifest changed")
+        ir = state.get("engineering_ir")
+        with self.connect() as db:
+            task = self.lifecycle.repository._find_in(db, identifier)
+        bound_model = task.model_revision if task is not None else None
+        plan = None
+        if ir is not None or bound_model is not None:
+            if ir is None:
+                raise ValueError("Frozen engineering IR is missing")
+            compiled = compile_study(EngineeringStudy(model=ir["model"], study=ir["study"]))
+            if (compiled.provenance != ir or compiled.manifest != manifest
+                    or bound_model != ir["model_sha256"]):
+                raise ValueError("Frozen engineering IR or compiler provenance changed")
+            expected_plan = ac_plan(manifest, ir)
+            events = self.lifecycle.repository.events(identifier)
+            planned = next((event for event in events if event.to_status.value == "planned"), None)
+            if planned and planned.reason and planned.reason.startswith("Execution plan: "):
+                if "execution_plan" not in state:
+                    raise ValueError("Frozen execution plan is missing")
+                plan = ExecutionPlan.model_validate(state["execution_plan"])
+                if (plan != expected_plan or state.get("execution_plan_sha256") != plan.sha256()
+                        or planned.reason != f"Execution plan: {plan.sha256()}; "
+                        f"Frozen research manifest: {state['manifest_sha256']}"):
+                    raise ValueError("Frozen execution plan changed")
+            elif "execution_plan" in state or "execution_plan_sha256" in state:
+                raise ValueError("Execution plan has no matching lifecycle event")
+        with self.connect() as db:
+            db.execute("BEGIN")
+            journal_plan, journal_rows = self.journal.load(db, identifier, plan)
+        if (state.get("execution_journal_version") == 1) != (journal_plan is not None):
+            raise ValueError("Execution journal registration is inconsistent")
+        if journal_plan is not None and journal_plan != plan:
+            raise ValueError("Journal differs from frozen execution plan")
         attempts = state["attempts"]
+        if plan is not None:
+            if len(attempts) > 1:
+                raise ValueError("Fixed IR plan cannot contain repair attempts")
+            for attempt in attempts:
+                names = [run["scenario"] for run in attempt["runs"]]
+                if names != [scenario.name for scenario in manifest.scenarios][:len(names)]:
+                    raise ValueError("Recorded runs differ from frozen execution plan")
+                for run in attempt["runs"]:
+                    scenario = next(s for s in manifest.scenarios if s.name == run["scenario"])
+                    request = scenario.materialize(attempt["program"])
+                    node = plan.solve_for(scenario.name, request)
+                    if run.get("solve_node_id") != node.id or run["request_sha256"] != digest(request):
+                        raise ValueError("Recorded reservation differs from frozen execution plan")
+                    if run["status"] != "reserved":
+                        evidence = verify_record(self.root, run.get("evidence_record"), plan, scenario.name,
+                                                 run["run_id"], request, run["evaluation"])
+                        if (run.get("version") != evidence.solver_version
+                                or run["evaluation"]["passed"] != (evidence.status == "verified")):
+                            raise ValueError("Recorded evidence differs from evaluation")
+
+        if journal_plan is not None:
+            # Check that a deleted or replaced checkpoint cannot trigger another solver launch.
+            reserved = {run["solve_node_id"]: run["run_id"]
+                        for attempt in attempts for run in attempt["runs"]}
+            journal_reserved = {key: row["run_id"] for key, row in journal_rows.items()
+                                if row["run_id"] is not None}
+            if reserved != journal_reserved:
+                raise ValueError("AC checkpoints differ from committed solver reservations")
+        workers = ac_workers() if journal_plan is not None else 1
+        identity = runtime_identity() if journal_plan is not None and solver is run_program and cache_enabled() else None
+        cache = VerifiedCache(self, self.root, identity) if identity is not None else None
+        limits = manifest.limits.model_dump(mode="json")
         if not attempts:
             attempts.append(candidate(state["manifest"]["program"]))
             self.save(identifier, state, "running")
@@ -221,20 +319,59 @@ class ResearchTasks(ResearchStore):
                 self.save(identifier, state, "failed")
                 break
             if not current.get("finished"):
-                for scenario in manifest.scenarios:
+                for index, scenario in enumerate(manifest.scenarios):
                     if self.cancelled(identifier):
                         break
                     request = scenario.materialize(current["program"])
+                    if plan is not None:
+                        plan.solve_for(scenario.name, request)
                     run = next((row for row in current["runs"] if row["scenario"] == scenario.name), None)
                     if run is None:
-                        run = {"scenario": scenario.name, "run_id": uuid4().hex,
-                               "request_sha256": digest(request), "status": "reserved"}
-                        current["runs"].append(run)
+                        # The coordinator alone creates reservations and writes checkpoints.
+                        jobs = []
+                        batch_size = workers if journal_plan is not None else 1
+                        for upcoming in manifest.scenarios[index:index + batch_size]:
+                            payload = upcoming.materialize(current["program"])
+                            reservation = {"scenario": upcoming.name, "run_id": uuid4().hex,
+                                           "request_sha256": digest(payload), "status": "reserved"}
+                            if plan is not None:
+                                reservation["solve_node_id"] = plan.solve_for(upcoming.name, payload).id
+                            current["runs"].append(reservation)
+                            jobs.append((reservation, payload))
+                        run = jobs[0][0]
                         self.save(identifier, state, "running")
                         yield self.summary(identifier)
                         if self.cancelled(identifier):
                             break
-                        solver(self.root, request, run_id=run["run_id"], cancelled=lambda: self.cancelled(identifier))
+
+                        def launch(job, program=current["program"]):
+                            reserved, payload = job
+                            def cancelled():
+                                return self.cancelled(identifier)
+
+                            if cache is not None:
+                                key = cache.key(plan, payload, limits)
+                                source = cache.restore(
+                                    key, payload, reserved["run_id"], cancelled=cancelled,
+                                    recheck=lambda record: evaluate_candidate(
+                                        self.root, record, payload, manifest, program),
+                                )
+                                if source is not None:
+                                    return {"launch": "cache", "cache_origin_run_id": source, "cache_key": key}
+                            if cancelled():
+                                return {"launch": "not_started"}
+                            solver(self.root, payload, run_id=reserved["run_id"], cancelled=cancelled)
+                            return {"launch": "native"}
+
+                        if journal_plan is not None:
+                            for (reserved, _), result in zip(
+                                    jobs, run_batch(jobs, workers=workers, launch=launch,
+                                                    cancelled=lambda: self.cancelled(identifier)), strict=True):
+                                reserved.update(result)
+                        else:
+                            # Preserve the exception/restart contract of legacy and repair tasks.
+                            solver(self.root, request, run_id=run["run_id"],
+                                   cancelled=lambda: self.cancelled(identifier))
                     if run["status"] == "reserved":
                         record = recover_run(self.root, run)
                         verdict = evaluate_candidate(self.root, record, request, manifest, current["program"])
@@ -242,8 +379,23 @@ class ResearchTasks(ResearchStore):
                             version = state.setdefault("solver_version", record["version"])
                             if version != record["version"]:
                                 verdict.update(category="solver_version_changed", passed=False)
+                        if plan is not None:
+                            evidence = capture_evidence(self.root, plan, scenario.name, run["run_id"], request,
+                                                        version=record.get("version"), verdict=verdict)
+                            if verdict["passed"] and evidence.status != "verified":
+                                verdict["checks"].append(check("artifact_provenance", False))
+                                verdict.update(passed=False, category="invalid_evidence")
+                                evidence = capture_evidence(self.root, plan, scenario.name, run["run_id"], request,
+                                                            version=record.get("version"), verdict=verdict)
+                            run["evidence_record"] = evidence.model_dump(mode="json")
+                        if record.get("cache_origin_run_id") is not None:
+                            run.update(launch="cache", cache_origin_run_id=record["cache_origin_run_id"],
+                                       cache_key=record.get("cache_key"))
                         run.update(status=record["status"], version=record.get("version"), evaluation=verdict)
                         self.save(identifier, state, "evaluating")
+                        if (cache is not None and verdict["passed"] and run.get("launch") == "native"
+                                and runtime_identity() == identity):
+                            cache.publish(cache.key(plan, request, limits), run["evidence_record"], verdict)
                         yield self.summary(identifier)
                 if self.cancelled(identifier):
                     break
@@ -353,6 +505,10 @@ class ResearchTasks(ResearchStore):
                     max_repairs=manifest.get("max_repairs"), termination=state.get("termination"),
                     best_runs=best["runs"] if best else [],
                     proposed_repairs=manifest.get("editable", []) if item["stage"] == "awaiting_approval" else [])
+        if "execution_journal_version" in state:
+            runs = [run for attempt in attempts for run in attempt["runs"]]
+            item["cache_hits"] = sum(run.get("launch") == "cache" for run in runs)
+            item["native_launches_observed"] = sum(run.get("launch") == "native" for run in runs)
         if "model_client_metrics" in state:
             item["model_client_metrics"] = state["model_client_metrics"]
         if full:
@@ -631,12 +787,17 @@ def task_command(root, command, args, *, model_factory=None):
     if command in {"research", "research-multi"} and args:
         identifier = tasks.start(" ".join(args), "multi" if command == "research-multi" else "single")
         yield tasks.summary(identifier)
-    elif command == "research-manifest" and len(args) == 1:
+    elif command in {"research-manifest", "research-ir"} and len(args) == 1:
         source = Path(args[0])
-        if source.stat().st_size > 1024 * 1024:
-            raise ValueError("Research manifest exceeds 1 MiB")
-        manifest = ResearchManifest.model_validate_json(source.read_bytes())
-        identifier = tasks.start(manifest.objective, manifest=manifest)
+        with source.open("rb") as handle:
+            payload = handle.read(1024 * 1024 + 1)
+        if len(payload) > 1024 * 1024:
+            raise ValueError("Research input exceeds 1 MiB")
+        if command == "research-ir":
+            identifier = tasks.start_ir(EngineeringStudy.model_validate_json(payload))
+        else:
+            manifest = ResearchManifest.model_validate_json(payload)
+            identifier = tasks.start(manifest.objective, manifest=manifest)
         yield tasks.summary(identifier)
     elif ((command in {"research-resume", "research-approve"} and len(args) == 1)
           or (command == "research-clarify" and len(args) >= 2)):
