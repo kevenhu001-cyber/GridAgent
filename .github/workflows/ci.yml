@@ -57,6 +57,12 @@ jobs:
       - name: Build and verify portable Windows application
         shell: pwsh
         run: ./desktop/package-windows.ps1 -Output desktop-publish
+      - name: Measure isolated bridge startup latency
+        shell: pwsh
+        run: |
+          & ./desktop-publish/runtime/python.exe -X utf8 ./desktop/measure-startup.py | Tee-Object -FilePath bridge-startup.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-Content bridge-startup.json >> $env:GITHUB_STEP_SUMMARY
       - name: Report portable package sizes
         shell: pwsh
         run: |

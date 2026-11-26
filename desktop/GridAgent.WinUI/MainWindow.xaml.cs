@@ -18,6 +18,7 @@ public partial class MainWindow : Window
     private string? _boundWorkspace;
     private readonly ObservableCollection<ConversationMessage> _messages = new();
     private bool _workspaceIndexLoaded;
+    private List<Entry> _sessions = new();
     private bool _initialized;
     private bool _busy;
     private bool _operationError;
@@ -104,7 +105,7 @@ public partial class MainWindow : Window
         // Only the bridge's sanitized tool summary is accepted; no raw execution payload.
         if (_toolGroup == null)
         {
-            _toolGroup = new ConversationMessage("Activity", "");
+            _toolGroup = new ConversationMessage("Activity", "") { OpenRun = OpenArtifactRun };
             _messages.Add(_toolGroup);
         }
         _toolGroup.AddActivity(label);
@@ -112,13 +113,62 @@ public partial class MainWindow : Window
     }
     private async void Navigate(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
-        if (Pages == null) return;
+        if (Pages == null || (args.SelectedItemContainer as NavigationViewItem)?.Tag is Entry) return;
         var tag = args.IsSettingsSelected ? "settings" : (args.SelectedItemContainer as NavigationViewItem)?.Tag as string ?? "chat";
         foreach (var (page, key) in new (UIElement, string)[] { (ChatPage,"chat"),(TasksPage,"tasks"),(ModelsPage,"models"),(RunsPage,"runs"),(StudiesPage,"studies"),(ToolsPage,"tools"),(PluginsPage,"plugins"),(KnowledgePage,"knowledge"),(SettingsPage,"settings") })
             page.Visibility = tag == key ? Visibility.Visible : Visibility.Collapsed;
         if (!_initialized) return;
         if (tag == "plugins" && _pluginCatalog.ValueKind != JsonValueKind.Array && !_busy) PluginCenter(this, new RoutedEventArgs());
         else await EnsureWorkspaceIndex();
+    }
+    private async void NavigationInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)
+    {
+        if (args.InvokedItemContainer is NavigationViewItem item && item.Tag is Entry session)
+            await OpenSessionById(session.Id);
+    }
+    private void SearchSessions(object sender, TextChangedEventArgs args) => ApplySessionFilter();
+    private void ApplySessionFilter()
+    {
+        if (SessionList == null) return;
+        var query = SessionSearch?.Text.Trim() ?? "";
+        var visible = _sessions.Where(s => s.Label.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+        SessionList.ItemsSource = visible;
+        SessionList.SelectedItem = visible.FirstOrDefault(s => s.Id == _session);
+    }
+    private void SetSessions(List<Entry> sessions)
+    {
+        _sessions = sessions;
+        ApplySessionFilter();
+        RecentConversations.MenuItems.Clear();
+        foreach (var session in sessions.Take(12))
+        {
+            var item = new NavigationViewItem { Content = session.Label, Tag = session, SelectsOnInvoked = false };
+            ToolTipService.SetToolTip(item, session.Label);
+            RecentConversations.MenuItems.Add(item);
+        }
+    }
+    private async Task OpenSessionById(string id)
+    {
+        if (_busy || WorkspaceChanged()) { Notify("Wait for the current operation or open the workspace first.", InfoBarSeverity.Warning); return; }
+        _session = id;
+        ClearMessages(); ShowChat();
+        await Execute(new { action = "history", session = id });
+        Prompt.Focus(FocusState.Programmatic);
+    }
+    private async void OpenArtifactRun(string id)
+    {
+        if (_busy) { Notify("Wait for the current operation to finish before opening a run.", InfoBarSeverity.Warning); return; }
+        if (WorkspaceChanged()) return;
+        if (RunList.ItemsSource is not IEnumerable<Entry> entries || !entries.Any(e => e.Id == id))
+            await Execute(new { action = "refresh" });
+        if (RunList.ItemsSource is IEnumerable<Entry> refreshed && refreshed.FirstOrDefault(e => e.Id == id) is Entry run)
+        {
+            Navigation.SelectedItem = ResultsNavigation;
+            RunList.SelectedItems.Clear();
+            RunList.SelectedItem = run;
+            RunList.ScrollIntoView(run);
+        }
+        else Notify("This run is no longer available in the current workspace.", InfoBarSeverity.Warning);
     }
     private Task EnsureWorkspaceIndex()
     {
@@ -162,7 +212,7 @@ public partial class MainWindow : Window
                 PluginRows.Children.Clear();
                 _boundWorkspace = root;
                 _session = null;
-                SessionList.ItemsSource = null;
+                SetSessions(new List<Entry>());
                 StudyList.ItemsSource = null;
                 RunList.ItemsSource = null;
                 ResearchList.ItemsSource = null;
@@ -197,10 +247,9 @@ public partial class MainWindow : Window
                 break;
             case "session": _session = data.GetString(); break;
             case "sessions":
-                SessionList.ItemsSource = data.EnumerateArray().Select(x =>
+                SetSessions(data.EnumerateArray().Select(x =>
                     new Entry(x.GetProperty("id").GetString()!,
-                        x.GetProperty("title").GetString() + " · " + x.GetProperty("tasks").GetInt32())).ToList();
-                SessionList.SelectedItem = ((IEnumerable<Entry>)SessionList.ItemsSource).FirstOrDefault(x => x.Id == _session);
+                        x.GetProperty("title").GetString() + " · " + x.GetProperty("tasks").GetInt32())).ToList());
                 break;
             case "studies":
                 StudyList.ItemsSource = data.EnumerateArray().Select(x =>
@@ -213,7 +262,7 @@ public partial class MainWindow : Window
                 RunList.ItemsSource = data.EnumerateArray().Select(x =>
                 {
                     var id = x.GetProperty("id").GetString()!;
-                    return new Entry(id, x.GetProperty("operation").GetString() + " · " + id[..Math.Min(8, id.Length)]);
+                    return new Entry(id, $"{x.GetProperty("operation")} · {x.GetProperty("case")} · {x.GetProperty("status")} · {id[..Math.Min(8, id.Length)]}");
                 }).ToList();
                 break;
             case "research_tasks":
@@ -307,10 +356,7 @@ public partial class MainWindow : Window
 
     private async void OpenSession(object sender, RoutedEventArgs e)
     {
-        if (_busy || WorkspaceChanged() || SessionList.SelectedItem is not Entry row) return;
-        _session = row.Id;
-        ClearMessages(); ShowChat();
-        await Execute(new { action = "history", session = row.Id });
+        if (SessionList.SelectedItem is Entry row) await OpenSessionById(row.Id);
     }
 
     private async void Send(object sender, RoutedEventArgs e)

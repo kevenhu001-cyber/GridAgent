@@ -27,3 +27,8 @@ The conversation uses a bounded viewport ListView with ItemsStackPanel virtualiz
 
 ## Startup and plotting
 The WinUI initialization request loads only model settings and session metadata. The full workspace index is requested when entering an engineering list, or refreshed after mutations. Agent, simulation and research imports are deferred to the appropriate bridge actions. A subprocess regression test checks that the startup path does not import the heavy modules. Chart windows now have a series legend, nearest-sample readout and clipboard CSV of the **displayed** (possibly downsampled) samples; original data remain in the workspace. These are engineering inspection tools, not a full schematic CAD or high-rate GPU plotting engine.
+
+## Workspace navigation and measurement
+Recent conversations are reachable from the native navigation pane, searchable in the history tab, and simulation run identifiers in sanitized tool summaries provide a direct result-list shortcut. Engineering list pages use a bounded Grid and virtualizing ListView; command bars move less-used actions into overflow. The portable CI job measures isolated bridge initialization and full-index latency separately, as well as package size. This is not a measured GUI cold-start or frame-rate claim.
+- https://learn.microsoft.com/en-us/windows/apps/design/controls/command-bar
+- https://learn.microsoft.com/en-us/windows/apps/get-started/line-of-business/design-for-lob
