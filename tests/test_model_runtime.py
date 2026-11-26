@@ -125,3 +125,21 @@ def test_structured_parse_failure_is_not_retried():
         model.with_structured_output(dict).invoke([])
     assert model.metrics()["provider_attempts"] == 1
     assert model.metrics()["parse_failures"] == 1
+
+
+def test_stream_consumer_uses_scheduler_and_does_not_retry_429():
+    model = ScheduledModel(object(), ModelScheduler())
+    received = []
+
+    def consume(raw):
+        received.append("public delta")
+        raise RateLimited()
+
+    with pytest.raises(RateLimited):
+        model.consume_stream(consume)
+    assert received == ["public delta"]
+    assert model.metrics()["provider_attempts"] == 1
+    result = model.consume_stream(lambda _: SimpleNamespace(
+        usage_metadata={"input_tokens": 4, "output_tokens": 2}))
+    assert result.usage_metadata["output_tokens"] == 2
+    assert model.metrics()["input_tokens"] == 4

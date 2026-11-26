@@ -1,6 +1,6 @@
 # Run on Windows x64 with a full CPython 3.11 installation and .NET 10 SDK.
 # Produces a portable app directory. No Python installation is needed on the target PC.
-param([string]$Output = "desktop-publish", [string]$Python = "python")
+param([string]$Output = "desktop-publish", [string]$Python = "python", [switch]$LegacyWpf)
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
@@ -18,7 +18,18 @@ if ($LASTEXITCODE -ne 0) { throw "Cannot locate CPython" }
 $Version = (& $Python -c "import sys,struct; assert sys.version_info[:2] == (3,11) and struct.calcsize('P') == 8; print(sys.version.split()[0])").Trim()
 if ($LASTEXITCODE -ne 0) { throw "Build requires x64 CPython 3.11" }
 
-Invoke-Checked dotnet @("publish", (Join-Path $Repo "desktop/GridAgent.Windows"), "-c", "Release", "-r", "win-x64", "--self-contained", "true", "-o", $Output)
+## WinUI 3 is the default; legacy is a temporary explicit rollback option.
+$DesktopProject = if ($LegacyWpf) { "desktop/GridAgent.Windows" } else { "desktop/GridAgent.WinUI" }
+if (!$LegacyWpf) {
+    Invoke-Checked $Python @((Join-Path $Repo "desktop/msix/make-assets.py"), (Join-Path $Repo "desktop/GridAgent.WinUI/BrandAssets"))
+}
+Invoke-Checked dotnet @("publish", (Join-Path $Repo $DesktopProject), "-c", "Release", "-r", "win-x64", "--self-contained", "true", "-o", $Output)
+if (!$LegacyWpf) {
+    $appPri = @("resources.pri", "GridAgent.pri") | Where-Object { Test-Path (Join-Path $Output $_) -PathType Leaf } | Select-Object -First 1
+    if (!$appPri) { throw "Published WinUI application PRI missing; refusing to build an unusable package." }
+    Write-Host "Published WinUI application resources: $appPri"
+    & (Join-Path $PSScriptRoot "msix/verify-portable-pri.ps1") -Directory $Output
+}
 $Runtime = Join-Path $Output "runtime"
 # Copy the complete installed CPython layout, not a non-relocatable virtualenv.
 # Exclude build-machine site packages and console entry-point wrappers.
@@ -42,7 +53,7 @@ $Freeze | Set-Content -Encoding utf8 (Join-Path $Output "runtime-requirements.tx
     ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $Output "runtime-manifest.json")
 Copy-Item (Join-Path $Repo "LICENSE"), (Join-Path $Repo "docs/windows.md"), (Join-Path $Repo "docs/research-tasks.md"), (Join-Path $Repo "desktop/gridagent-tui.cmd") $Output
 Copy-Item (Join-Path $Repo "examples") (Join-Path $Output "examples") -Recurse
-Invoke-Checked $Python @((Join-Path $Repo "scripts/sync_benchmark.py"), (Join-Path $Output "benchmark-assets"))
+Invoke-Checked $Python @((Join-Path $Repo "scripts/sync_benchmark.py"), (Join-Path $Output "benchmark-assets"), "--cache-dir", (Join-Path $Repo "benchmark-assets"))
 # A moved install path with spaces verifies that no build-machine prefix is required.
 $Relocated = "$Output relocated"
 if (Test-Path $Relocated) { throw "Relocation test directory already exists" }

@@ -6,8 +6,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from langchain_core.messages import HumanMessage, messages_from_dict, messages_to_dict
-
 
 def now():
     return datetime.now(UTC).isoformat()
@@ -80,6 +78,8 @@ class ResearchStore:
         return tid
 
     def append(self, tid, node, update):
+        from langchain_core.messages import messages_to_dict
+
         # Record public messages and budget counters, never hidden model reasoning fields.
         safe = []
         for msg in update.get("messages", []):
@@ -118,6 +118,8 @@ class ResearchStore:
         return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
 
     def history(self, sid):
+        from langchain_core.messages import HumanMessage, messages_from_dict
+
         # Incomplete tool-call exchanges cannot be injected into the next model request.
         messages = []
         for task in self.tasks(sid):

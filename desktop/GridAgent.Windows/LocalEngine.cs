@@ -9,11 +9,13 @@ internal sealed record EngineSettings(string Python, string Workspace, string Mo
 
 internal static class LocalEngine
 {
-    public static async Task RunAsync(EngineSettings settings, object request, Action<JsonElement> receive)
+    internal static ProcessStartInfo CreateStartInfo(EngineSettings settings, bool readService = false)
     {
+        Directory.CreateDirectory(settings.Workspace);
         var start = new ProcessStartInfo
         {
             FileName = settings.Python,
+            WorkingDirectory = settings.Workspace,
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardInput = true,
@@ -23,7 +25,9 @@ internal static class LocalEngine
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8
         };
-        foreach (var arg in new[] { "-X", "utf8", "-m", "gridagent.desktop_bridge", "--workspace", settings.Workspace })
+        var arguments = readService ? new[] { "-X", "utf8", "-m", "gridagent.desktop_read_service", settings.Workspace }
+            : new[] { "-X", "utf8", "-m", "gridagent.desktop_bridge", "--workspace", settings.Workspace };
+        foreach (var arg in arguments)
             start.ArgumentList.Add(arg);
         start.Environment.Remove("PYTHONHOME");
         start.Environment.Remove("PYTHONPATH");
@@ -31,9 +35,21 @@ internal static class LocalEngine
         if (Directory.Exists(assets)) start.Environment["GRIDAGENT_BENCHMARK_ROOT"] = assets;
         start.Environment["PYTHONUTF8"] = "1";
         start.Environment["PYTHONNOUSERSITE"] = "1";
+        start.Environment["PYTHONDONTWRITEBYTECODE"] = "1";
         if (!string.IsNullOrWhiteSpace(settings.Model)) start.Environment["GRIDAGENT_MODEL"] = settings.Model;
         if (!string.IsNullOrWhiteSpace(settings.BaseUrl)) start.Environment["GRIDAGENT_BASE_URL"] = settings.BaseUrl;
-        if (!string.IsNullOrWhiteSpace(settings.ApiKey)) start.Environment["GRIDAGENT_API_KEY"] = settings.ApiKey;
+        if (readService)
+        {
+            start.Environment.Remove("GRIDAGENT_API_KEY");
+            start.Environment.Remove("OPENAI_API_KEY");
+        }
+        else if (!string.IsNullOrWhiteSpace(settings.ApiKey)) start.Environment["GRIDAGENT_API_KEY"] = settings.ApiKey;
+        return start;
+    }
+
+    public static async Task RunAsync(EngineSettings settings, object request, Action<JsonElement> receive)
+    {
+        var start = CreateStartInfo(settings);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start local engine.");
         // Drain diagnostics without exposing provider responses or secrets in the transcript.
         var drain = process.StandardError.BaseStream.CopyToAsync(Stream.Null);

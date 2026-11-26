@@ -114,7 +114,7 @@ class ModelScheduler:
             values.update(cache_reports=1, cached_input_tokens=cached)
         self._add(**values)
 
-    def invoke(self, operation, *, raw_message=lambda value: value):
+    def invoke(self, operation, *, raw_message=lambda value: value, retry_429=True):
         """Execute one logical request, measuring each locally visible attempt."""
         started = self._clock()
         deadline = started + self._queue_timeout
@@ -144,7 +144,7 @@ class ModelScheduler:
                     delay = _retry_after(error)
                     if delay is None:
                         delay = min(self._max_retry_delay, uniform(0.5, 1.0) * 2 ** attempt)
-                    if (attempt >= self._max_retries or delay > self._max_retry_delay
+                    if (not retry_429 or attempt >= self._max_retries or delay > self._max_retry_delay
                             or self._clock() + delay >= deadline):
                         raise
                 else:
@@ -197,6 +197,12 @@ class ScheduledModel:
         if self._return_raw:
             return result
         return result["parsed"]
+
+    def consume_stream(self, consumer):
+        """Hold admission for the entire stream; never retry partially delivered output."""
+        if self._structured:
+            raise ValueError("Structured responses must use invoke")
+        return self._scheduler.invoke(lambda: consumer(self._runnable), retry_429=False)
 
     def metrics(self):
         return self._scheduler.snapshot()
