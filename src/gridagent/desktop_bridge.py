@@ -105,7 +105,9 @@ def dispatch(root, request, emit):
 
         model = model_from_env(root)
         budget = int(request.get("budget", 3))
-        graph = build_agent(model, AndesSimulator(root / "runs"), budget=budget, workspace=root)
+        streaming = request.get("stream", False) is True
+        on_delta = (lambda text: emit("assistant_delta", text)) if streaming else None
+        graph = build_agent(model, AndesSimulator(root / "runs"), budget=budget, workspace=root, on_delta=on_delta)
         sid = store.require_session(request["session"]) if request.get("session") else store.create_session()
         emit("session", sid)
         prompt = request["prompt"].strip()
@@ -118,6 +120,9 @@ def dispatch(root, request, emit):
                 for msg in update.get("messages", []):
                     if node == "tools":
                         emit("tool", tool_summary(msg))
+                    elif streaming:
+                        # The complete stored message is authoritative; reconcile the preview even if empty.
+                        emit("assistant_end", text_content(msg))
                     elif text_content(msg):
                         emit("assistant", text_content(msg))
         refresh()

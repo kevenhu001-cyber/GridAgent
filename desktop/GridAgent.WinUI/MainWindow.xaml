@@ -79,7 +79,7 @@
       <TextBlock Text="Model provider" Style="{StaticResource SubtitleTextBlockStyle}"/>
       <TextBox x:Name="ModelName" Header="Model name"/><TextBox x:Name="BaseUrl" Header="Base URL"/><PasswordBox x:Name="ApiKey" Header="API key (session only)"/>
       <VariableSizedWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="3"><Button Margin="0,0,8,8" Content="Load saved" Click="LoadModelSettings"/><Button Margin="0,0,8,8" Content="Save model" Click="SaveModelSettings"/><Button Margin="0,0,8,8" Content="Test connection" Click="TestModelConnection"/><Button Margin="0,0,8,8" Content="Automatic Python…" Click="PythonSettings"/></VariableSizedWrapGrid>
-      <TextBlock Text="Appearance" Style="{StaticResource SubtitleTextBlockStyle}"/>
+      <ToggleSwitch x:Name="StreamingToggle" Header="Stream responses" IsOn="True" OnContent="On" OffContent="Off"/><TextBlock Text="Disable streaming for endpoints that do not support it." TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/><TextBlock Text="Appearance" Style="{StaticResource SubtitleTextBlockStyle}"/>
       <ComboBox x:Name="Theme" Header="App theme" SelectedIndex="0" SelectionChanged="ChangeTheme"><ComboBoxItem Content="System"/><ComboBoxItem Content="Light"/><ComboBoxItem Content="Dark"/></ComboBox>
      </StackPanel></StackPanel></ScrollViewer>
     </Grid>

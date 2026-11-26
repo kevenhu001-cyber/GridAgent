@@ -34,3 +34,6 @@ Recent conversations are reachable from the native navigation pane, searchable i
 - https://learn.microsoft.com/en-us/windows/apps/get-started/line-of-business/design-for-lob
 
 Research events render in a dedicated live task card with budget usage, collapsible details and a direct task-list action. The chat scroll follows new messages only when the user is at the bottom; a jump-to-latest control is shown when reading earlier content.
+
+## Streaming responses
+The assistant requests optional streaming from compatible providers. The agent aggregates complete model messages and tool-call chunks before running tools, preserving existing budget and persistence semantics. The desktop bridge emits only public text deltas, batched at roughly 45 ms or 512 characters, followed by an authoritative final message. Native UI renders inexpensive text during generation and renders Markdown on completion. Interrupted previews are labelled and are not treated as completed history. Settings allow streaming to be disabled for incompatible providers. Hidden reasoning and tool arguments are not forwarded. Verified research workflows still emit stage updates rather than token streams.

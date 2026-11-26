@@ -69,10 +69,11 @@ public partial class MainWindow : Window
     }
 
     private ConversationMessage? _toolGroup;
+    private ConversationMessage? _streamMessage;
     private ConversationMessage? _researchMessage;
     private ScrollViewer? _conversationViewport;
     private bool _followTail = true;
-    private void ClearMessages() { _messages.Clear(); _toolGroup = null; _researchMessage = null; _followTail = true; JumpToLatest.Visibility = Visibility.Collapsed; EmptyConversation.Visibility = Visibility.Visible; }
+    private void ClearMessages() { _messages.Clear(); _toolGroup = null; _streamMessage = null; _researchMessage = null; _followTail = true; JumpToLatest.Visibility = Visibility.Collapsed; EmptyConversation.Visibility = Visibility.Visible; }
     private void Notify(string message, InfoBarSeverity severity = InfoBarSeverity.Informational)
     {
         Notice.Message = message; Notice.Severity = severity; Notice.IsOpen = true;
@@ -132,6 +133,42 @@ public partial class MainWindow : Window
         EmptyConversation.Visibility = Visibility.Collapsed;
         _messages.Add(new ConversationMessage(role, text));
         QueueConversationScroll();
+    }
+    private void AppendDelta(string delta)
+    {
+        if (string.IsNullOrEmpty(delta)) return;
+        EmptyConversation.Visibility = Visibility.Collapsed;
+        _toolGroup = null;
+        if (_streamMessage == null)
+        {
+            _streamMessage = new ConversationMessage("Streaming", "");
+            _messages.Add(_streamMessage);
+        }
+        _streamMessage.AddDelta(delta);
+        QueueConversationScroll();
+    }
+    private void FinishStream(string finalText)
+    {
+        if (_streamMessage != null)
+        {
+            int index = _messages.IndexOf(_streamMessage);
+            if (index >= 0)
+            {
+                if (string.IsNullOrWhiteSpace(finalText)) _messages.RemoveAt(index);
+                else _messages[index] = new ConversationMessage("Assistant", finalText);
+            }
+            _streamMessage = null;
+            QueueConversationScroll();
+        }
+        else Append(finalText, "Assistant");
+    }
+    private void InterruptStream()
+    {
+        if (_streamMessage == null) return;
+        int index = _messages.IndexOf(_streamMessage);
+        if (index >= 0)
+            _messages[index] = new ConversationMessage("Interrupted response", _streamMessage.StreamText);
+        _streamMessage = null;
     }
     private void AddTool(string label)
     {
@@ -316,7 +353,7 @@ public partial class MainWindow : Window
             StatusText.Text = "Check configuration";
             Notify("Operation could not complete. Check the workspace, runtime and provider.", InfoBarSeverity.Error);
         }
-        finally { SetBusy(false); _activeEngine = null; _activeResearch = null; }
+        finally { InterruptStream(); SetBusy(false); _activeEngine = null; _activeResearch = null; }
     }
 
     private void Handle(JsonElement evt)
@@ -397,6 +434,8 @@ public partial class MainWindow : Window
                 ShowWaveforms(channels);
                 break;
             case "user": Append(data.GetString() ?? "", "You"); break;
+            case "assistant_delta": AppendDelta(data.GetString() ?? ""); break;
+            case "assistant_end": FinishStream(data.GetString() ?? ""); break;
             case "assistant": Append(data.GetString() ?? "", "Assistant"); break;
             case "tool": AddTool(data.GetString() ?? "Tool"); break;
             case "result": Append(data.ValueKind == JsonValueKind.String ? data.GetString() ?? "" : "A structured result is available in the workspace."); break;
@@ -452,7 +491,7 @@ public partial class MainWindow : Window
         string question = Prompt.Text.Trim();
         Prompt.Text = "";
         Append(question, "You");
-        await Execute(new { action = "ask", session = _session, prompt = question, budget = 3 });
+        await Execute(new { action = "ask", session = _session, prompt = question, budget = 3, stream = StreamingToggle.IsOn });
     }
 
     private Task Local(string command, params string[] args) { if (!command.StartsWith("plugin-")) ShowChat(); return Execute(new { action = "local", command, args }); }

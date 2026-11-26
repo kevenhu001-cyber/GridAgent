@@ -20,6 +20,13 @@ internal sealed class ConversationMessage(string role, string body) : INotifyPro
 {
     public string Role { get; } = role;
     public string Body { get; } = body;
+    private readonly StringBuilder _stream = new();
+    public string StreamText => _stream.ToString();
+    public void AddDelta(string delta)
+    {
+        _stream.Append(delta);
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(StreamText)));
+    }
     private readonly List<string> _activity = new();
     public IReadOnlyList<string> Activity => _activity;
     public int ActivityCount { get; private set; }
@@ -55,6 +62,7 @@ public sealed class ConversationMessageView : UserControl
     private Expander? _activity;
     private StackPanel? _details;
     private Button? _openRun;
+    private TextBlock? _streamText;
     private TextBlock? _researchStage;
     private TextBlock? _researchSummary;
     private ProgressBar? _researchProgress;
@@ -73,7 +81,7 @@ public sealed class ConversationMessageView : UserControl
     private void Bind(ConversationMessage? message)
     {
         if (ReferenceEquals(message, _message)) return;
-        Detach(); _activity = null; _details = null; _openRun = null; _researchStage = null; _researchSummary = null; _researchProgress = null; Content = null;
+        Detach(); _activity = null; _details = null; _openRun = null; _streamText = null; _researchStage = null; _researchSummary = null; _researchProgress = null; Content = null;
         if (message == null) return;
         _message = message;
         var layout = new Grid { MaxWidth = 820, HorizontalAlignment = HorizontalAlignment.Stretch, Padding = new Thickness(8, 8, 8, 14) };
@@ -91,6 +99,13 @@ public sealed class ConversationMessageView : UserControl
             layout.Children.Add(activityLayout);
             message.PropertyChanged += MessageChanged;
             UpdateActivity();
+        }
+        else if (message.Role == "Streaming")
+        {
+            // During streaming use inexpensive text; render Markdown once on finalization.
+            _streamText = Plain(message.StreamText);
+            layout.Children.Add(_streamText);
+            message.PropertyChanged += MessageChanged;
         }
         else if (message.Role == "Research")
         {
@@ -143,7 +158,9 @@ public sealed class ConversationMessageView : UserControl
 
     private void MessageChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(ConversationMessage.Research)) UpdateResearch();
+        if (e.PropertyName == nameof(ConversationMessage.StreamText) && _streamText != null && _message != null)
+            _streamText.Text = _message.StreamText;
+        else if (e.PropertyName == nameof(ConversationMessage.Research)) UpdateResearch();
         else UpdateActivity();
     }
     private void UpdateResearch()
