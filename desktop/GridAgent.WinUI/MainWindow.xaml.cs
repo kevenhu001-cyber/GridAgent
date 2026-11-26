@@ -17,6 +17,7 @@ public partial class MainWindow : Window
     private string? _session;
     private string? _boundWorkspace;
     private readonly ObservableCollection<ConversationMessage> _messages = new();
+    private readonly Dictionary<string, ConversationMessage> _artifacts = new(StringComparer.Ordinal);
     private readonly DesktopEngineClient _engine = new();
     private bool _workspaceIndexLoaded;
     private List<Entry> _sessions = new();
@@ -75,7 +76,7 @@ public partial class MainWindow : Window
     private ConversationMessage? _researchMessage;
     private ScrollViewer? _conversationViewport;
     private bool _followTail = true;
-    private void ClearMessages() { _messages.Clear(); _toolGroup = null; _streamMessage = null; _researchMessage = null; _followTail = true; JumpToLatest.Visibility = Visibility.Collapsed; EmptyConversation.Visibility = Visibility.Visible; }
+    private void ClearMessages() { _messages.Clear(); _artifacts.Clear(); _toolGroup = null; _streamMessage = null; _researchMessage = null; _followTail = true; JumpToLatest.Visibility = Visibility.Collapsed; EmptyConversation.Visibility = Visibility.Visible; }
     private void Notify(string message, InfoBarSeverity severity = InfoBarSeverity.Informational)
     {
         Notice.Message = message; Notice.Severity = severity; Notice.IsOpen = true;
@@ -172,6 +173,20 @@ public partial class MainWindow : Window
             _messages[index] = new ConversationMessage("Interrupted response", _streamMessage.StreamText);
         _streamMessage = null;
     }
+    private async void LoadArtifactPreview(string id)
+    {
+        if (_busy || WorkspaceChanged() || !_artifacts.ContainsKey(id))
+        { Notify("Wait for the current operation before loading a chart preview.", InfoBarSeverity.Warning); return; }
+        await Execute(new { action = "artifact-preview", run = id });
+    }
+    private void AddArtifact(RunArtifact artifact)
+    {
+        if (_artifacts.ContainsKey(artifact.Id)) return;
+        var message = new ConversationMessage("Artifact", "") { Artifact = artifact, OpenRun = OpenArtifactRun, RequestPreview = LoadArtifactPreview };
+        _artifacts.Add(artifact.Id, message);
+        _messages.Add(message); EmptyConversation.Visibility = Visibility.Collapsed;
+        QueueConversationScroll();
+    }
     private void AddTool(string label)
     {
         EmptyConversation.Visibility = Visibility.Collapsed;
@@ -225,7 +240,7 @@ public partial class MainWindow : Window
         if (_busy || WorkspaceChanged()) { Notify("Wait for the current operation or open the workspace first.", InfoBarSeverity.Warning); return; }
         _session = id;
         ClearMessages(); ShowChat();
-        await Execute(new { action = "history", session = id });
+        await Execute(new { action = "history", session = id, presentation = 1 });
         Prompt.Focus(FocusState.Programmatic);
     }
     private async void OpenArtifactRun(string id)
@@ -441,6 +456,8 @@ public partial class MainWindow : Window
             case "assistant_end": FinishStream(data.GetString() ?? ""); break;
             case "assistant": Append(data.GetString() ?? "", "Assistant"); break;
             case "tool": AddTool(data.GetString() ?? "Tool"); break;
+            case "artifact": if (RunArtifact.Parse(data) is RunArtifact artifact) AddArtifact(artifact); break;
+            case "artifact_preview": if (RunPreview.Parse(data) is RunPreview preview && _artifacts.TryGetValue(preview.Id, out var card)) card.SetPreview(preview); break;
             case "result": Append(data.ValueKind == JsonValueKind.String ? data.GetString() ?? "" : "A structured result is available in the workspace."); break;
             case "status": StatusText.Text = data.GetString() ?? "Working…"; break;
             case "error": _operationError = true; Append(data.GetString() ?? "Operation failed.", "Error"); Notify("The operation reported an error. See the conversation for details.", InfoBarSeverity.Error); break;
@@ -494,7 +511,7 @@ public partial class MainWindow : Window
         string question = Prompt.Text.Trim();
         Prompt.Text = "";
         Append(question, "You");
-        await Execute(new { action = "ask", session = _session, prompt = question, budget = 3, stream = StreamingToggle.IsOn });
+        await Execute(new { action = "ask", session = _session, prompt = question, budget = 3, stream = StreamingToggle.IsOn, presentation = 1 });
     }
 
     private Task Local(string command, params string[] args) { if (!command.StartsWith("plugin-")) ShowChat(); return Execute(new { action = "local", command, args }); }

@@ -37,6 +37,15 @@ def dispatch(root, request, emit):
     store = ResearchStore(root / "research.sqlite3")
     action = request["action"]
 
+    def tool_event(message, summary):
+        emit("tool", summary)
+        if request.get("presentation") == 1:
+            from .artifact_presentation import artifact_from_tool
+
+            artifact = artifact_from_tool(root, message)
+            if artifact is not None:
+                emit("artifact", artifact)
+
     def refresh():
         from .dsr import list_studies
         from .model_revisions import revisions
@@ -91,7 +100,7 @@ def dispatch(root, request, emit):
             if isinstance(msg, HumanMessage):
                 emit("user", text_content(msg))
             elif isinstance(msg, ToolMessage):
-                emit("tool", tool_summary(msg))
+                tool_event(msg, tool_summary(msg))
             elif text_content(msg):
                 emit("assistant", text_content(msg))
         for task in store.tasks(sid):
@@ -126,6 +135,10 @@ def dispatch(root, request, emit):
                     elif text_content(msg):
                         emit("assistant", text_content(msg))
         refresh()
+    elif action == "artifact-preview":
+        from .artifact_presentation import preview_run
+
+        emit("artifact_preview", preview_run(root, request["run"]))
     elif action == "waveform":
         emit("waveform", chart_series(root, request["run"]))
     elif action == "analysis-charts":

@@ -16,48 +16,6 @@ using Microsoft.UI.Text;
 
 namespace GridAgent.Windows;
 
-internal sealed record ResearchSnapshot(string Id, string Stage, string Summary, int RunsUsed, int MaxRuns);
-
-internal sealed class ConversationMessage(string role, string body) : INotifyPropertyChanged
-{
-    public string Role { get; } = role;
-    public string Body { get; } = body;
-    private readonly StringBuilder _stream = new();
-    public string StreamText => _stream.ToString();
-    public void AddDelta(string delta)
-    {
-        _stream.Append(delta);
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(StreamText)));
-    }
-    private readonly List<string> _activity = new();
-    public IReadOnlyList<string> Activity => _activity;
-    public int ActivityCount { get; private set; }
-    public string Latest { get; private set; } = "";
-    public string? LatestRun { get; private set; }
-    public Action<string>? OpenRun { get; init; }
-    public Action<string>? OpenTask { get; init; }
-    public ResearchSnapshot? Research { get; private set; }
-    public void SetResearch(ResearchSnapshot snapshot)
-    {
-        if (snapshot == Research) return;
-        Research = snapshot;
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Research)));
-    }
-    public event PropertyChangedEventHandler? PropertyChanged;
-    public void AddActivity(string summary)
-    {
-        ActivityCount++;
-        var run = System.Text.RegularExpressions.Regex.Match(summary, @"\brun ([a-f0-9]{32})\b");
-        if (run.Success) LatestRun = run.Groups[1].Value;
-        Latest = summary.Split('\n')[0];
-        if (Latest.Length > 160) Latest = Latest[..160] + "…";
-        // Bound the UI activity log; the durable task history remains in the workspace.
-        if (_activity.Count == 100) _activity.RemoveAt(0);
-        _activity.Add(summary.Length > 1200 ? summary[..1200] + "…" : summary);
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Activity)));
-    }
-}
-
 public sealed class ConversationMessageView : UserControl
 {
     private ConversationMessage? _message;
@@ -68,6 +26,7 @@ public sealed class ConversationMessageView : UserControl
     private TextBlock? _researchStage;
     private TextBlock? _researchSummary;
     private ProgressBar? _researchProgress;
+    private ContentControl? _artifactHost;
     public ConversationMessageView()
     {
         HorizontalContentAlignment = HorizontalAlignment.Stretch;
@@ -83,7 +42,7 @@ public sealed class ConversationMessageView : UserControl
     private void Bind(ConversationMessage? message)
     {
         if (ReferenceEquals(message, _message)) return;
-        Detach(); _activity = null; _details = null; _openRun = null; _streamText = null; _researchStage = null; _researchSummary = null; _researchProgress = null; Content = null;
+        Detach(); _activity = null; _details = null; _openRun = null; _streamText = null; _researchStage = null; _researchSummary = null; _researchProgress = null; _artifactHost = null; Content = null;
         if (message == null) return;
         _message = message;
         var layout = new Grid { MaxWidth = 820, HorizontalAlignment = HorizontalAlignment.Stretch, Padding = new Thickness(8, 8, 8, 14) };
@@ -101,6 +60,13 @@ public sealed class ConversationMessageView : UserControl
             layout.Children.Add(activityLayout);
             message.PropertyChanged += MessageChanged;
             UpdateActivity();
+        }
+        else if (message.Artifact != null)
+        {
+            _artifactHost = new ContentControl { HorizontalContentAlignment = HorizontalAlignment.Stretch };
+            layout.Children.Add(_artifactHost);
+            message.PropertyChanged += MessageChanged;
+            RefreshArtifact();
         }
         else if (message.Role == "Streaming")
         {
@@ -160,10 +126,15 @@ public sealed class ConversationMessageView : UserControl
 
     private void MessageChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(ConversationMessage.StreamText) && _streamText != null && _message != null)
+        if (e.PropertyName == nameof(ConversationMessage.Preview)) RefreshArtifact();
+        else if (e.PropertyName == nameof(ConversationMessage.StreamText) && _streamText != null && _message != null)
             _streamText.Text = _message.StreamText;
         else if (e.PropertyName == nameof(ConversationMessage.Research)) UpdateResearch();
         else UpdateActivity();
+    }
+    private void RefreshArtifact()
+    {
+        if (_artifactHost != null && _message?.Artifact != null) _artifactHost.Content = RunArtifactView.Create(_message);
     }
     private void UpdateResearch()
     {
