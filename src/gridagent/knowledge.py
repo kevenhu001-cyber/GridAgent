@@ -11,6 +11,12 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field
 
 ALIASES = {
+    "pypower_case_flow": "PYPOWER IEEE AC load flow 潮流 基准",
+    "powsybl_case_flow": "PowSyBl AC load flow 潮流 大电网",
+    "ramp_tracking_qp": "OSQP sparse quadratic ramp tracking 二次规划 爬坡 跟踪",
+    "transmission_line_sparameters": "scikit-rf scattering transmission line 传输线 散射参数",
+    "fluid_thermophysical_state": "CoolProp fluid thermal properties 热物性 冷却 热管理",
+    "rainflow_cycle_count": "rainflow cycle counting 雨流 循环计数 疲劳",
     "wind_power_curve": "windpowerlib wind turbine generation curve 风电 功率曲线",
     "quadratic_dispatch": "CVXPY convex quadratic economic dispatch 凸优化 经济调度",
     "unit_commitment": "Pyomo HiGHS MILP startup unit commitment 机组组合 启停",

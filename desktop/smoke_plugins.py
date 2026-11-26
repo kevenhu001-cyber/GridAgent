@@ -33,6 +33,15 @@ def main():
             ("casadi", lambda: run_extension(root, "casadi", {"ocv_v": 4, "ohmic_resistance_ohm": 0.1,
                 "polarization_resistance_ohm": 0.2, "polarization_capacitance_f": 10,
                 "current_a": 1, "duration_s": 2})),
+            ("pypower", lambda: run_extension(root, "pypower", {"case": "ieee14"})),
+            ("pypowsybl", lambda: run_extension(root, "pypowsybl", {"case": "ieee14"})),
+            ("osqp", lambda: run_extension(root, "osqp", {"target_mw": [0, 10], "lower_mw": 0,
+                "upper_mw": 10, "ramp_mw_per_hour": 2})),
+            ("scikit-rf", lambda: run_extension(root, "scikit-rf", {"frequency_hz": 1e6, "length_m": 10,
+                "characteristic_ohm": 50, "port_ohm": 50, "attenuation_np_per_m": 0.01, "velocity_m_s": 2e8})),
+            ("coolprop", lambda: run_extension(root, "coolprop", {"fluid": "Water", "temperature_k": 300,
+                "pressure_pa": 101325})),
+            ("rainflow", lambda: run_extension(root, "rainflow", {"samples": [0, 1, 0]})),
         ):
             assert not available(key), key
             print(key, install(key), flush=True)
@@ -49,6 +58,17 @@ def main():
                 assert abs(result["metrics"]["objective"] - 13) < 1e-6
             if key == "casadi":
                 assert abs(result["metrics"]["final_voltage_v"] - (3.7+0.2*__import__("math").exp(-1))) < 1e-6
+            if key in {"pypower", "pypowsybl"}:
+                assert result["metrics"]["bus_count"] == 14
+            if key == "osqp":
+                assert all(abs(a-b) < 1e-5 for a,b in zip(result["metrics"]["setpoint_mw"], [4,6]))
+            if key == "scikit-rf":
+                assert abs(result["metrics"]["s21_magnitude"] - __import__("math").exp(-0.1)) < 1e-7
+                assert result["metrics"]["s11_magnitude"] < 1e-7
+            if key == "coolprop":
+                assert 995 < result["metrics"]["density_kg_m3"] < 998
+            if key == "rainflow":
+                assert result["metrics"]["equivalent_full_cycle_count"] == 1
             size = sum(p.stat().st_size for p in (plugin_root() / key).rglob("*") if p.is_file())
             print(key, "installed bytes:", size, flush=True)
             uninstall(key)

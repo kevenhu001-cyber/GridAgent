@@ -10,6 +10,8 @@ TABLES = {"pandapower": {"bus", "line", "trafo", "load", "gen", "sgen", "storage
           "pvlib": {"solar_power"}, "control": {"control_step"},
           "windpowerlib": {"wind_power"}, "cvxpy": {"economic_dispatch"},
           "pyomo": {"commitment"}, "casadi": {"equivalent_cell"},
+          "pypower": {"pypower_bus"}, "pypowsybl": {"powsybl_bus"}, "osqp": {"tracking_qp"},
+          "scikit-rf": {"scattering"}, "coolprop": {"fluid_state"}, "rainflow": {"rainflow_cycles"},
           "pypsa": {"generation_mw", "storage_mw", "storage_soc_mwh", "link_mw", "marginal_price"}}
 
 

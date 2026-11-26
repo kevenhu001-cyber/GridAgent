@@ -86,6 +86,7 @@ def control_response(params, folder):
 
 
 def main():
+    from .advanced_workers import fluid_state, powsybl_flow, pypower_flow, rainflow_cycles, tracking, transmission_line
     from .extra_workers import commitment, dispatch, equivalent_cell, wind
 
     folder = Path.cwd()
@@ -93,7 +94,9 @@ def main():
     backend = request["backend"]
     try:
         handler = {"opendss": feeder, "pybamm": battery, "pvlib": solar, "control": control_response,
-                   "windpowerlib": wind, "cvxpy": dispatch, "pyomo": commitment, "casadi": equivalent_cell}[backend]
+                   "windpowerlib": wind, "cvxpy": dispatch, "pyomo": commitment, "casadi": equivalent_cell,
+                   "pypower": pypower_flow, "pypowsybl": powsybl_flow, "osqp": tracking,
+                   "scikit-rf": transmission_line, "coolprop": fluid_state, "rainflow": rainflow_cycles}[backend]
         result = {"backend": backend, "status": "ok", **handler(request["parameters"], folder)}
         encoded = json.dumps(result, allow_nan=False)
     except Exception as exc:  # noqa: BLE001 - native solver boundary

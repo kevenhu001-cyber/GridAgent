@@ -51,3 +51,5 @@ CVXPY (convex quadratic economic dispatch), Pyomo/HiGHS (bounded hourly single-b
 unit commitment), and CasADi (first-order Thevenin RC battery dynamics). Each has
 a typed tool, curated prompt, bounded result tables and analytic smoke-test reference.
 There is no plugin marketplace, account, or remote manifest infrastructure.
+
+Additional first-party plugins: PYPOWER (native IEEE AC cases), PyPowSyBl (IEEE14 AC flow), OSQP (ramp-limited tracking QP), scikit-rf (uniform line S parameters), CoolProp (equilibrium fluid properties), rainflow (cycle counts). Each has a typed interface, result CSV and native installation smoke test. No arbitrary model files or full native APIs exposed. These are not full independent benchmark suites.

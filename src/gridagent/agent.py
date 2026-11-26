@@ -12,6 +12,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from pydantic import Field, ValidationError
 
+from .advanced_programs import FluidState, PowerFlowCase, PowSyBlCase, RainflowSeries, TrackingQP, TransmissionLine
 from .domain import CASES, CaseName, DeviceEdit, FaultRequest, ScenarioRequest
 from .extension_program import Battery, ControlResponse, Feeder, Solar
 from .extra_programs import Commitment, EconomicDispatch, EquivalentCell, Wind
@@ -261,6 +262,12 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
             return StructuredTool.from_function(invoke, name=name, description=description, args_schema=schema)
 
         for backend, name, schema, description in (
+            ("pypower", "pypower_case_flow", PowerFlowCase, "Solve a bundled IEEE AC case using PYPOWER."),
+            ("pypowsybl", "powsybl_case_flow", PowSyBlCase, "Solve the native PowSyBl IEEE14 AC case."),
+            ("osqp", "ramp_tracking_qp", TrackingQP, "Solve a ramp-constrained least-squares tracking problem."),
+            ("scikit-rf", "transmission_line_sparameters", TransmissionLine, "Compute uniform line scattering parameters."),
+            ("coolprop", "fluid_thermophysical_state", FluidState, "Evaluate fluid properties at temperature and pressure."),
+            ("rainflow", "rainflow_cycle_count", RainflowSeries, "Count cycles from a scalar time series."),
             ("windpowerlib", "wind_power_curve", Wind, "Interpolate turbine power curve using windpowerlib."),
             ("cvxpy", "quadratic_dispatch", EconomicDispatch, "Solve convex single-period generation dispatch."),
             ("pyomo", "unit_commitment", Commitment, "Solve bounded hourly single-bus unit commitment with HiGHS."),
@@ -271,7 +278,9 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
         if importlib.util.find_spec("control") is not None:
             tool_list.append(control_step_response)
     tools = {t.name: t for t in tool_list}
-    numerical_tools = {"power_flow", "simulate_fault", "eigenanalysis", "scenario_power_flow", "pandapower_program", "pypsa_dispatch", "opendss_feeder", "battery_discharge", "solar_dc_power", "control_step_response", "wind_power_curve", "quadratic_dispatch", "unit_commitment", "equivalent_cell_response"}
+    numerical_tools = {"power_flow", "simulate_fault", "eigenanalysis", "scenario_power_flow", "pandapower_program", "pypsa_dispatch", "opendss_feeder", "battery_discharge", "solar_dc_power", "control_step_response", "wind_power_curve", "quadratic_dispatch", "unit_commitment", "equivalent_cell_response",
+                       "pypower_case_flow", "powsybl_case_flow", "ramp_tracking_qp",
+                       "transmission_line_sparameters", "fluid_thermophysical_state", "rainflow_cycle_count"}
     base_contracts = contracts(tools)
 
     def knowledge_index():

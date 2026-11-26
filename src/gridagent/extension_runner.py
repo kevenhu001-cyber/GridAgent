@@ -5,15 +5,20 @@ import sys
 from pathlib import Path
 from uuid import uuid4
 
+from .advanced_programs import FluidState, PowerFlowCase, PowSyBlCase, RainflowSeries, TrackingQP, TransmissionLine
 from .extension_program import Battery, ControlResponse, Feeder, Solar
 from .extra_programs import Commitment, EconomicDispatch, EquivalentCell, Wind
 from .plugins import clean_env, launch
 
 SCHEMAS = {"opendss": Feeder, "pybamm": Battery, "pvlib": Solar, "control": ControlResponse,
-           "windpowerlib": Wind, "cvxpy": EconomicDispatch, "pyomo": Commitment, "casadi": EquivalentCell}
+           "windpowerlib": Wind, "cvxpy": EconomicDispatch, "pyomo": Commitment, "casadi": EquivalentCell,
+           "pypower": PowerFlowCase, "pypowsybl": PowSyBlCase, "osqp": TrackingQP,
+           "scikit-rf": TransmissionLine, "coolprop": FluidState, "rainflow": RainflowSeries}
 OPERATIONS = {"opendss": "feeder", "pybamm": "discharge", "pvlib": "solar_dc", "control": "step_response",
               "windpowerlib": "power_curve", "cvxpy": "economic_dispatch",
-              "pyomo": "unit_commitment", "casadi": "equivalent_cell"}
+              "pyomo": "unit_commitment", "casadi": "equivalent_cell",
+              "pypower": "ac_flow", "pypowsybl": "ac_flow", "osqp": "tracking_qp",
+              "scikit-rf": "sparameters", "coolprop": "fluid_state", "rainflow": "cycle_count"}
 
 
 def run_extension(root, backend, parameters):
