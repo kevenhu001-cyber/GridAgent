@@ -1,21 +1,30 @@
-from typing import Literal
+from typing import Annotated
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-CaseName = Literal["kundur"]
-CASES = {"kundur": "kundur/kundur_full.xlsx"}
+CaseName = Annotated[str, Field(pattern=r"^(kundur|ieee14|ieee39|model-[a-f0-9]{64})$")]
+CASES = {"kundur": "kundur/kundur_full.xlsx", "ieee14": "ieee14/ieee14_full.xlsx",
+         "ieee39": "ieee39/ieee39_full.xlsx"}
+
+
+class CaseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    case: CaseName = "kundur"
 
 
 class FaultRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     case: CaseName = "kundur"
-    bus: int = Field(ge=1, le=10)
+    bus: int = Field(ge=1, le=1000000)
     duration_s: float = Field(ge=0.02, le=0.5)
     end_s: float = Field(default=5.0, ge=2.0, le=20.0)
 
     @model_validator(mode="after")
     def validate_window(self):
+        maximum = {"kundur": 10, "ieee14": 14, "ieee39": 39}.get(self.case)
+        if maximum is not None and self.bus > maximum:
+            raise ValueError("Bus outside packaged case range")
         if self.end_s <= 1.0 + self.duration_s:
             raise ValueError("Simulation must extend past clearing")
         return self

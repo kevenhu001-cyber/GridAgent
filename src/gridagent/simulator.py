@@ -1,12 +1,14 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
 
-from .domain import CASES, FaultRequest
+from .domain import CASES, CaseRequest, FaultRequest
+from .models import resolve_model
 
 
 class Simulator(Protocol):
@@ -19,12 +21,15 @@ class AndesSimulator:
         self.timeout_s = timeout_s
 
     def run(self, operation: str, request: dict) -> dict:
-        if operation not in {"inspect", "power_flow", "fault", "eigen"} or request.get("case") not in CASES:
-            raise ValueError("Operation or case is not allowed")
-        if operation == "fault":
-            request = FaultRequest.model_validate(request).model_dump()
+        if operation not in {"inspect", "power_flow", "fault", "eigen"}:
+            raise ValueError("Operation is not allowed")
+        request = (FaultRequest if operation == "fault" else CaseRequest).model_validate(request).model_dump()
+        source = None if request["case"] in CASES else resolve_model(self.root.parent, request["case"])
         folder = self.root / uuid4().hex
         folder.mkdir(parents=True)
+        if source is not None:
+            shutil.copyfile(source, folder / "case.xlsx")
+        (folder / "request.json").write_text(json.dumps({"operation": operation, "request": request}), encoding="utf-8")
         # Do not pass model-provider credentials to the solver.
         env = {k: v for k, v in os.environ.items() if k.upper() in {
             "PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "WINDIR", "TEMP", "TMP",

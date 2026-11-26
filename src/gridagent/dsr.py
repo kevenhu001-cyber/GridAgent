@@ -33,6 +33,8 @@ class Manifest(BaseModel):
 
     @model_validator(mode="after")
     def unique(self):
+        if any(c.fault.case != "kundur" for c in self.candidates):
+            raise ValueError("The open DSR benchmark uses the fixed Kundur case")
         if len({c.id for c in self.candidates}) != len(self.candidates):
             raise ValueError("Duplicate candidate ID")
         if len({c.fault.model_dump_json() for c in self.candidates}) != len(self.candidates):

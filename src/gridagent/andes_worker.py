@@ -5,6 +5,8 @@ from pathlib import Path
 
 from .domain import CASES, FaultRequest, voltage_metrics
 from .modal import summarize_modes
+from .models import MODEL_ID, file_digest, validate_workbook
+from .topology import topology_summary
 
 
 def execute(operation: str, request: dict, folder: Path) -> dict:
@@ -12,13 +14,21 @@ def execute(operation: str, request: dict, folder: Path) -> dict:
     import numpy as np
 
     case = request.get("case", "kundur")
-    if case not in CASES:
-        raise ValueError("Unknown packaged case")
+    if case not in CASES and not MODEL_ID.fullmatch(case):
+        raise ValueError("Unknown case")
     if operation not in {"inspect", "power_flow", "fault", "eigen"}:
         raise ValueError("Unknown operation")
     spec = FaultRequest.model_validate(request) if operation == "fault" else None
-    ss = andes.load(andes.get_case(CASES[case]), setup=False, no_output=True)
+    source = Path(andes.get_case(CASES[case])) if case in CASES else folder / "case.xlsx"
+    fingerprint = file_digest(source)
+    if case not in CASES:
+        validate_workbook(source)
+        if fingerprint != case[6:]:
+            raise ValueError("Model snapshot hash mismatch")
+    ss = andes.load(str(source), setup=False, no_output=True)
     if operation == "fault":
+        if spec.bus not in ss.Bus.idx.v:
+            raise ValueError("Fault bus is not in model")
         # Remove preconfigured disturbances to isolate the requested fault.
         for model in (ss.Toggle, ss.Fault, ss.Alter):
             for idx in model.idx.v:
@@ -26,14 +36,17 @@ def execute(operation: str, request: dict, folder: Path) -> dict:
         ss.add("Fault", bus=spec.bus, tf=1.0, tc=1.0 + spec.duration_s)
     ss.setup()
     result = {"backend": "andes", "case": case, "operation": operation,
-              "bus_ids": [str(i) for i in ss.Bus.idx.v]}
+              "bus_ids": [str(i) for i in ss.Bus.idx.v], "model_sha256": fingerprint}
     if operation == "inspect":
-        return {**result, "status": "ok"}
+        topology = topology_summary(ss)
+        (folder / "topology.json").write_text(json.dumps(topology, allow_nan=False), encoding="utf-8")
+        return {**result, "status": "ok", "topology": {k: v for k, v in topology.items() if k not in {"buses", "branches"}}}
     if not ss.PFlow.run():
         return {**result, "status": "failed", "reason": "Power flow did not converge"}
     if operation == "power_flow":
         return {**result, "status": "ok", "voltages_pu": {
-            str(i): float(v) for i, v in zip(ss.Bus.idx.v, ss.Bus.v.v)}}
+            str(i): float(v) for i, v in zip(ss.Bus.idx.v, ss.Bus.v.v)},
+            "angles_rad": {str(i): float(a) for i, a in zip(ss.Bus.idx.v, ss.Bus.a.v)}}
     if operation == "eigen":
         if not ss.EIG.run():
             return {**result, "status": "failed", "reason": "Eigenanalysis failed"}
