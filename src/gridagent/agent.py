@@ -298,7 +298,7 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
             """
             from .ac_repair_experience import search_ac_experience
 
-            return search_ac_experience(root, study_id, limit)
+            return search_ac_experience(root, study_id, limit, physical=True)
 
         @tool
         def diagnose_engineering_study(study_id: str) -> dict:

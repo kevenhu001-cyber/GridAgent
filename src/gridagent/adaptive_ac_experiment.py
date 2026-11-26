@@ -21,7 +21,7 @@ def start_adaptive(root, auth):
     cases, metric = prepare(root, auth.experiment)
     hints = []
     if auth.use_history:
-        history = search_ac_experience(root, auth.experiment.source_study_id, limit=10)
+        history = search_ac_experience(root, auth.experiment.source_study_id, limit=10, physical=True)
         hints = history_hints(auth.experiment, history["matches"], metric["solver_version"])
     study = Study(root / "studies")
     plan = {"protocol": PROTOCOL, "policy": POLICY, "spec": auth.canonical(),

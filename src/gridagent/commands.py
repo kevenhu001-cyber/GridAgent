@@ -211,7 +211,7 @@ def workspace_command(root, command, args, *, model_factory=None):
 
         try:
             report = (remember_ac_repair(root, args[0]) if command == "remember-ac-repair"
-                      else search_ac_experience(root, args[0]))
+                      else search_ac_experience(root, args[0], physical=True))
         except Timeout as exc:
             raise ValueError("Source evidence is currently locked") from exc
         yield json.dumps(report, ensure_ascii=False, allow_nan=False)

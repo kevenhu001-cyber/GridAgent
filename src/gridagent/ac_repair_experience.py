@@ -15,6 +15,7 @@ from .ac_check_ir import ACCheckSpec
 from .ac_diagnostic_ir import ACDiagnosticExperiment
 from .ac_evidence_repair import PROTOCOL as REPAIR_PROTOCOL
 from .ac_evidence_repair import no_solver, resume_repair
+from .ac_physical_features import physical_features, physical_similarity
 from .diagnosis import diagnose_study
 from .diagnosis_rules import rule_for
 from .dsr import Study
@@ -149,7 +150,25 @@ def remember_ac_repair(root, identifier):
             "outcomes": [row["outcome"] for row in records], "scope": SCOPE}
 
 
-def search_ac_experience(root, source_study_id, limit=5):
+def source_features(root, source_id, expected_digest, kind):
+    source = Study.reopen(root / "studies", source_id)
+    report = source.read("report")
+    if fingerprint(report) != expected_digest:
+        raise ValueError("Physical feature source report changed")
+    return physical_features(source.read("manifest")["spec"], report, kind)
+
+
+def historical_source_id(root, identifier):
+    repair = Study.reopen(root / "studies", identifier)
+    diagnostic = Study.reopen(root / "studies", repair.read("report")["diagnostic_study_id"])
+    manifest = diagnostic.read("manifest")
+    raw = manifest["spec"]
+    if manifest["protocol"] == "adaptive-ac-experiment-v1":
+        raw = raw["experiment"]
+    return ACDiagnosticExperiment.model_validate(raw).source_study_id
+
+
+def search_ac_experience(root, source_study_id, limit=5, *, physical=False):
     if not 1 <= limit <= 10:
         raise ValueError("Experience limit must be 1..10")
     root = Path(root).resolve()
@@ -186,6 +205,8 @@ def search_ac_experience(root, source_study_id, limit=5):
         except (ValueError, TypeError, KeyError):
             continue
     matches, skipped = [], 0
+    query_physics = {kind: source_features(root, source_study_id, diagnosis["source_report_sha256"], kind)
+                     for kind in ("base", "outage")} if physical else {}
     selected = list(grouped)[:MAX_REPLAY_STUDIES]
     for identifier in selected:
         try:
@@ -200,11 +221,26 @@ def search_ac_experience(root, source_study_id, limit=5):
                 continue
             score = similarity(query, row["features"])
             kinds = query_kinds.get(row["target_rule_id"], set())
-            matches.append({**row, "structure_similarity": round(score, 6),
-                            "snapshot_kind_matches": row["snapshot_kind"] in kinds,
-                            "same_source_report": row["source_report_sha256"] == diagnosis["source_report_sha256"]})
-    matches.sort(key=lambda row: (-int(row["snapshot_kind_matches"]), -row["structure_similarity"],
+            match = {**row, "structure_similarity": round(score, 6),
+                     "snapshot_kind_matches": row["snapshot_kind"] in kinds,
+                     "same_source_report": row["source_report_sha256"] == diagnosis["source_report_sha256"]}
+            if physical:
+                try:
+                    kind = row["snapshot_kind"]
+                    historical = source_features(root, historical_source_id(root, identifier),
+                                                 row["source_report_sha256"], kind)
+                    comparison = physical_similarity(query_physics[kind], historical)
+                except (OSError, ValueError, KeyError, TypeError, IndexError):
+                    continue
+                match["physical_similarity"] = comparison
+                # Missing measurement coverage does not count as agreement.
+                physical_score = comparison["score"]
+                match["retrieval_score"] = round((score+physical_score)/2 if physical_score is not None else score/2, 6)
+            matches.append(match)
+    matches.sort(key=lambda row: (-int(row["snapshot_kind_matches"]),
+                                  -row.get("retrieval_score", row["structure_similarity"]),
                                   row["repair_study_id"], row["candidate_index"]))
     return {**empty, "matches": matches[:limit], "replayed_studies": len(selected)-skipped,
             "skipped_studies": skipped, "scan_truncated": len(grouped) > len(selected),
-            "method": "exact diagnosis rule, snapshot kind, coarse count similarity; not a probability"}
+            "method": ("exact diagnosis rule, snapshot kind, coarse and derived electrical similarity; not a probability"
+                       if physical else "exact diagnosis rule, snapshot kind, coarse count similarity; not a probability")}

@@ -283,6 +283,13 @@ def test_native_voltage_diagnostic_reproduces_failure_and_resolves_target(tmp_pa
     assert not report["root_cause_confirmed"]
     assert resume_experiment(tmp_path, experiment, solver=lambda *a, **kw: pytest.fail("Repeated solve")) == report
     assert diagnose_study(tmp_path, source)["source_report_sha256"] == digest
+    from gridagent.ac_policy_benchmark import benchmark_studies
+
+    comparison = benchmark_studies(tmp_path, [experiment], 2)
+    assert comparison["solver_calls"] == 0
+    assert comparison["totals"]["fixed_first_fit"]["successful_cases"] == 1
+    assert comparison["totals"]["adaptive"]["successful_cases"] == 1
+    assert comparison["cases"][0]["recorded_native_observations"] == 2
 
 
 
@@ -437,6 +444,9 @@ def test_native_evidence_repair_revalidates_full_original_scope(tmp_path):
     assert match["structure_similarity"] == 1
     assert "change" not in match and "proposed_ac_spec" not in match
     assert found["solver_calls"] == 0
+    physical = search_ac_experience(tmp_path, source, physical=True)
+    assert physical["matches"][0]["retrieval_score"] == 1
+    assert physical["matches"][0]["physical_similarity"]["compared_features"] >= 5
 
 
 

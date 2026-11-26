@@ -30,8 +30,11 @@ def history_hints(spec, matches, version):
                 or row["snapshot_kind"] != kind or row["solver_version"] != version
                 or row["outcome"] not in {"verified_original_scope", "rejected_observed_violation"}):
             continue
-        hints.append({key: row[key] for key in ("repair_study_id", "repair_report_sha256",
-                      "candidate_index", "intervention", "direction", "outcome", "structure_similarity")})
+        hint = {key: row[key] for key in ("repair_study_id", "repair_report_sha256",
+                "candidate_index", "intervention", "direction", "outcome", "structure_similarity")}
+        # Preserve the v1 frozen hint format; the weight is a retrieval score, not a probability.
+        hint["structure_similarity"] = row.get("retrieval_score", row["structure_similarity"])
+        hints.append(hint)
     return hints
 
 
