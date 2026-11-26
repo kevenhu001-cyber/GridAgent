@@ -12,3 +12,5 @@ desktop/**/obj/
 desktop-publish/
 desktop-publish relocated/
 benchmark-assets/
+
+offline-evaluation/

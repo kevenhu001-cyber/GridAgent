@@ -135,7 +135,13 @@ def list_studies(root: Path):
         if report.is_file():
             try:
                 data = json.loads(report.read_text(encoding="utf-8"))
-                rows[-1]["status"] = "completed" if data.get("completed") else "failed"
+                phase = data.get("phase")
+                if phase in {"predictions_frozen", "screening_attempted", "model_edit_verified"}:
+                    rows[-1]["status"] = {"predictions_frozen": "predicted",
+                                          "screening_attempted": "screened_partial",
+                                          "model_edit_verified": "edit_verified"}[phase]
+                else:
+                    rows[-1]["status"] = "completed" if data.get("completed") else "failed"
             except (OSError, ValueError):
                 rows[-1]["status"] = "unreadable"
     return rows
