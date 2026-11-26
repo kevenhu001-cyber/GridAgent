@@ -35,6 +35,14 @@ research.sqlite3 and solver artifacts; keep sensitive project data private.
 Failed tasks retain their audit events but are not replayed into model context.
 A process crash may leave an unfinished task; automatic mid-task resume is not yet implemented.
 
+## Dynamic risk screening (open baseline)
+
+    gridagent --dsr examples/dsr-kundur.json
+
+Or type /dsr examples/dsr-kundur.json in the TUI. This ranks ten candidate
+faults, freezes estimates, and attempts only the selected three simulations.
+See [DSR protocol and offline evaluation](docs/dsr.md) for limitations.
+
 ## Architecture
 
 Textual TUI or CLI → LangGraph decision loop → validated tools and budget guard → isolated ANDES solver → waveform CSV and deterministic voltage metrics.

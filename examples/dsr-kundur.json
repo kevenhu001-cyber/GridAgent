@@ -1,0 +1,95 @@
+{
+  "budget": 3,
+  "candidates": [
+    {
+      "id": "K01",
+      "fault": {
+        "case": "kundur",
+        "bus": 5,
+        "duration_s": 0.08,
+        "end_s": 5
+      }
+    },
+    {
+      "id": "K02",
+      "fault": {
+        "case": "kundur",
+        "bus": 6,
+        "duration_s": 0.08,
+        "end_s": 5
+      }
+    },
+    {
+      "id": "K03",
+      "fault": {
+        "case": "kundur",
+        "bus": 7,
+        "duration_s": 0.08,
+        "end_s": 5
+      }
+    },
+    {
+      "id": "K04",
+      "fault": {
+        "case": "kundur",
+        "bus": 8,
+        "duration_s": 0.08,
+        "end_s": 5
+      }
+    },
+    {
+      "id": "K05",
+      "fault": {
+        "case": "kundur",
+        "bus": 9,
+        "duration_s": 0.08,
+        "end_s": 5
+      }
+    },
+    {
+      "id": "K06",
+      "fault": {
+        "case": "kundur",
+        "bus": 5,
+        "duration_s": 0.16,
+        "end_s": 5
+      }
+    },
+    {
+      "id": "K07",
+      "fault": {
+        "case": "kundur",
+        "bus": 6,
+        "duration_s": 0.16,
+        "end_s": 5
+      }
+    },
+    {
+      "id": "K08",
+      "fault": {
+        "case": "kundur",
+        "bus": 7,
+        "duration_s": 0.16,
+        "end_s": 5
+      }
+    },
+    {
+      "id": "K09",
+      "fault": {
+        "case": "kundur",
+        "bus": 8,
+        "duration_s": 0.16,
+        "end_s": 5
+      }
+    },
+    {
+      "id": "K10",
+      "fault": {
+        "case": "kundur",
+        "bus": 9,
+        "duration_s": 0.16,
+        "end_s": 5
+      }
+    }
+  ]
+}

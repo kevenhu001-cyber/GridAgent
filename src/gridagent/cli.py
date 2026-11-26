@@ -40,6 +40,7 @@ def main():
     parser.add_argument("--workspace", type=Path, default=Path(".gridagent"))
     parser.add_argument("--session", help="Reopen a session using its full ID")
     parser.add_argument("--sessions", action="store_true", help="List local sessions without an API key")
+    parser.add_argument("--dsr", type=Path, help="Run a bounded DSR candidate manifest")
     args = parser.parse_args()
     store = ResearchStore(args.workspace / "research.sqlite3")
     console = Console()
@@ -48,8 +49,15 @@ def main():
             console.print(f"{row['id']}  {row['title']}  ({row['tasks']} tasks)", markup=False)
         return
     try:
+        model = model_from_env()
+        simulator = AndesSimulator(args.workspace / "runs")
+        if args.dsr:
+            from .dsr import format_update, study_updates
+            for node, value in study_updates(args.dsr, args.workspace, model, simulator):
+                console.print(format_update(node, value), markup=False)
+            return
         sid = store.require_session(args.session) if args.session else store.create_session()
-        graph = build_agent(model_from_env(), AndesSimulator(args.workspace / "runs"), budget=args.budget)
+        graph = build_agent(model, simulator, budget=args.budget)
     except ValueError as exc:
         parser.error(str(exc))
     if args.ask:
@@ -63,4 +71,6 @@ def main():
                         console.print(Markdown(text_content(message)))
         return
     from .tui import GridApp
-    GridApp(graph, args.budget, store, sid).run()
+    from .dsr import study_updates
+    GridApp(graph, args.budget, store, sid,
+            dsr_runner=lambda path: study_updates(path, args.workspace, model, simulator)).run()

@@ -139,7 +139,7 @@ def recorded_task(graph, store, sid, prompt):
     except KeyboardInterrupt:
         store.finish(tid, "interrupted")
         raise
-    except Exception as exc:  # noqa: BLE001 - persist error before propagating to client
+    except Exception as exc:
         store.finish(tid, "failed", type(exc).__name__)
         raise
     else:

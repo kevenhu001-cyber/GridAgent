@@ -26,10 +26,11 @@ class GridApp(App):
     """
     BINDINGS: ClassVar = [("ctrl+q", "quit", "Quit"), ("ctrl+l", "new_session", "New session")]
 
-    def __init__(self, graph, budget, store, sid):
+    def __init__(self, graph, budget, store, sid, dsr_runner=None):
         super().__init__()
         self.graph, self.budget, self.store, self.sid = graph, budget, store, sid
         self.busy = False
+        self.dsr_runner = dsr_runner
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="top"):
@@ -76,7 +77,7 @@ class GridApp(App):
         event.input.value = ""
         chat = self.query_one("#chat", RichLog)
         if question == "/help":
-            chat.write(Text("/new · new session | /sessions · list | /open ID · reopen | Ctrl+Q · quit"))
+            chat.write(Text("/new · new session | /sessions · list | /open ID · reopen | /dsr PATH · screen faults | Ctrl+Q · quit"))
             return
         if question == "/new":
             self.action_new_session()
@@ -92,6 +93,16 @@ class GridApp(App):
                 chat.write(Text("Session not found.", style="red"))
                 return
             self._load_session()
+            return
+        if question.startswith("/dsr "):
+            if self.dsr_runner is None:
+                chat.write(Text("DSR unavailable.", style="dim"))
+                return
+            self.busy = True
+            event.input.disabled = True
+            self._status("DSR · running")
+            path = question.split(maxsplit=1)[1]
+            self.run_worker(lambda: self._run_dsr(path), thread=True, exit_on_error=False)
             return
         chat.write(Text("You  " + question, style="bold"))
         self.busy = True
@@ -112,6 +123,16 @@ class GridApp(App):
                             self.call_from_thread(self._write, Markdown(text_content(msg)))
         except Exception as exc:  # noqa: BLE001 - client boundary, task already recorded
             self.call_from_thread(self._write, Text("Task failed: " + type(exc).__name__, style="red"))
+        finally:
+            self.call_from_thread(self._finish)
+
+    def _run_dsr(self, path):
+        from .dsr import format_update
+        try:
+            for node, value in self.dsr_runner(path):
+                self.call_from_thread(self._write, Text(format_update(node, value)))
+        except Exception as exc:  # noqa: BLE001 - UI boundary
+            self.call_from_thread(self._write, Text("DSR failed: " + type(exc).__name__, style="red"))
         finally:
             self.call_from_thread(self._finish)
 
