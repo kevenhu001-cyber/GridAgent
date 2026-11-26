@@ -92,7 +92,7 @@ def contracts(tools):
 
 
 def search_text(row):
-    return " ".join([row["id"], row["function"], row["description"],
+    return " ".join([row["id"], row["function"], row["description"], row.get("option") or "",
                      ALIASES.get(row["function"], ""), json.dumps(row.get("schema", {}), ensure_ascii=False)])
 
 
@@ -106,7 +106,7 @@ class KnowledgeIndex:
         if not candidates:
             return []
         exact = [row for row in candidates if query.casefold() in {
-            row["id"].casefold(), row.get("option", "").casefold()}]
+            row["id"].casefold(), (row.get("option") or "").casefold()}]
         words = tokens(query)
         if not words:
             return exact[:limit]
@@ -127,11 +127,15 @@ class KnowledgeIndex:
 
     def retrieve(self, plan):
         plan = QueryPlan.model_validate(plan)
-        functions, options = {}, {}
+        functions, options, references = {}, {}, {}
         for query in plan.functions:
+            for ref in self.search(query, "reference"):
+                references[ref["id"]] = ref
             for row in self.search(query, "function"):
                 functions[row["id"]] = row
         for query in plan.options:
+            for ref in self.search(query.description, "reference", query.function):
+                references[ref["id"]] = ref
             for row in self.search(query.description, "option", query.function):
                 options[row["id"]] = {**row, "requested_value": query.value}
                 parent = self.rows.get(row["function"])
@@ -144,12 +148,12 @@ class KnowledgeIndex:
                 if name in self.rows:
                     dependencies[name] = self.rows[name]["description"]
         return {"functions": list(functions.values())[:12], "options": list(options.values())[:18],
-                "dependencies": dependencies, "method": "separate function/option lexical retrieval",
+                "dependencies": dependencies, "references": list(references.values())[:6], "method": "separate function/option lexical retrieval",
                 "note": "Contracts are authoritative for syntax; requested values are not validated by retrieval."}
 
     def feedback(self, name, fields):
-        rows = [row for row in self.rows.values() if row["function"] == name]
+        rows = [row for row in self.rows.values() if row["function"] == name and row["kind"] != "reference"]
         selected = [row for row in rows if row["kind"] == "function" or not fields
                     or row.get("option") in {field.split(".")[0] for field in fields}]
         # Limit returned schema size; never search arbitrary error text or file paths.
-        return {"function": name, "contracts": selected[:12], "hint": "Correct the parameters or choose another method."}
+        return {"function": name, "contracts": selected[:12], "references": self.search(" ".join(fields) or name, "reference", name), "hint": "Correct the parameters or choose another method."}

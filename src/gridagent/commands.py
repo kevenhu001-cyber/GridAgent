@@ -8,7 +8,17 @@ from .workspace import list_runs, study_summary, waveform, waveform_text
 
 def workspace_command(root, command, args):
     root = Path(root)
-    if command == "models" and not args:
+    if command == "import-knowledge" and len(args) == 1:
+        from .knowledge_store import import_pack
+
+        identifier, count = import_pack(root, args[0])
+        yield f"Registered reference pack {identifier} ({count} entries)"
+    elif command == "knowledge" and not args:
+        from .knowledge_store import list_packs
+
+        for row in list_packs(root):
+            yield f"{row['title']} · {row['entries']} entries · {row['id']}"
+    elif command == "models" and not args:
         from .models import list_models
 
         for row in list_models(root):

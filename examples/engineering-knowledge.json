@@ -1,0 +1,28 @@
+{
+  "title": "GridAgent engineering notes",
+  "entries": [
+    {
+      "kind": "option",
+      "function": "scenario_power_flow",
+      "option": "load_scale",
+      "description": "Use load_scale to multiply existing in-service PQ loads. Explicit edits override scaled inputs. Compare against a baseline solved with the same model snapshot.",
+      "source": "GridAgent docs/general-agent.md",
+      "version": "0.1"
+    },
+    {
+      "kind": "troubleshooting",
+      "function": "simulate_fault",
+      "option": "bus",
+      "description": "Inspect the model first and use a numeric bus ID present in its catalog. A failed solver is not evidence of physical instability.",
+      "source": "GridAgent docs/general-agent.md",
+      "version": "0.1"
+    },
+    {
+      "kind": "concept",
+      "function": "network_path",
+      "description": "Branch-hop distance counts edges of the in-service network; it is not an impedance or electrical distance.",
+      "source": "GridAgent docs/general-agent.md",
+      "version": "0.1"
+    }
+  ]
+}

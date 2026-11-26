@@ -58,7 +58,7 @@ The main LLM uses a structured query-planning tool, with separate function and
 option queries. SQLite FTS5 BM25 (in-memory) provides lexical ranking, exact
 identifier priority and a token-overlap fallback. Automatic failure feedback
 returns the offending function's schema and relevant option triples. No vector
-embeddings, separate retrieval LLM, document ingestion or measured retrieval
+embeddings, separate retrieval LLM, raw PDF ingestion or measured retrieval
 quality yet; this is an initial implementation, not reproduction of the paper.
 The tool schema and policy remain the source of truth. Raw upstream manuals
 and benchmark solutions are not indexed.
@@ -71,3 +71,15 @@ Uniform load scaling is applied first, then explicit absolute overrides.
 Only in-service existing devices can be changed; before/after values are
 recorded. No workbook mutation, dynamic controller edits, equipment creation,
 or general code execution is supported.
+
+
+### Local reference packs
+
+Use gridagent --import-knowledge examples/engineering-knowledge.json and
+gridagent --knowledge (also TUI /import-knowledge and /knowledge or Windows
+file picker). Curated JSON entries contain a type, function, optional option,
+description, source, and version. SQLite stores deduplicated packs locally.
+Retrieved references are separately labeled, never replace live tool contracts
+or expand the action space. Only import material you may use and trust; matched
+reference text is shared with the configured LLM. No external vector API is
+required. This is structured pack import, not automatic PDF extraction.

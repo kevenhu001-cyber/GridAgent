@@ -177,6 +177,13 @@ public partial class MainWindow : Window
         if (picker.ShowDialog(this) == true) await Local("import-model", picker.FileName);
     }
     private async void Models(object sender, RoutedEventArgs e) => await Local("models");
+    private async void ImportKnowledge(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        var picker = new OpenFileDialog { Filter = "Engineering reference pack (*.json)|*.json", CheckFileExists = true };
+        if (picker.ShowDialog(this) == true) await Local("import-knowledge", picker.FileName);
+    }
+    private async void Knowledge(object sender, RoutedEventArgs e) => await Local("knowledge");
     private async void PaperMitigation(object sender, RoutedEventArgs e)
     {
         if (_busy) return;

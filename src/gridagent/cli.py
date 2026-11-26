@@ -60,6 +60,8 @@ def main():
     parser.add_argument("--wave", nargs="+", metavar="ID_OR_CHANNEL", help="View a saved run waveform")
     parser.add_argument("--study-wave", nargs="+", metavar="ID_PATH_CHANNEL", help="View a study waveform")
     parser.add_argument("--paper-dmq", metavar="PROFILE", help="Run original licensed DMQ")
+    parser.add_argument("--import-knowledge", type=Path, metavar="JSON")
+    parser.add_argument("--knowledge", action="store_true")
     parser.add_argument("--import-model", type=Path, metavar="XLSX")
     parser.add_argument("--models", action="store_true")
     parser.add_argument("--paper-trials", nargs="+", metavar="TASK_COUNT_PROFILE", help="Independent paper trials")
@@ -72,6 +74,8 @@ def main():
     store = ResearchStore(args.workspace / "research.sqlite3")
     console = Console()
     local_commands = [
+        ("import-knowledge", [str(args.import_knowledge)] if args.import_knowledge else None),
+        ("knowledge", [] if args.knowledge else None),
         ("import-model", [str(args.import_model)] if args.import_model else None),
         ("models", [] if args.models else None),
         ("paper-trials", args.paper_trials),
