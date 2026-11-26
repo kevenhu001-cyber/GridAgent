@@ -5,7 +5,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from uuid import uuid4
 
-from filelock import FileLock
+from filelock import FileLock, Timeout
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from pydantic import ValidationError
@@ -15,7 +15,9 @@ from .dsr import digest
 from .knowledge import QueryPlan, workspace_knowledge
 from .model_quality import check
 from .model_repair import Proposal, apply, leaf, model_proposer
+from .model_runtime import ScheduledModel
 from .native_backends import run_program
+from .research_lifecycle import ResearchLifecycle
 from .research_spec import PROTOCOL, PlanDraft, ResearchManifest, evaluate, model_fidelity
 from .store import ResearchStore, now
 from .workspace import artifact_folder, load_object
@@ -32,6 +34,7 @@ class ResearchTasks(ResearchStore):
     def __init__(self, root):
         self.root = Path(root).resolve()
         super().__init__(self.root / "research.sqlite3")
+        self.lifecycle = ResearchLifecycle(self.engineering_tasks())
         with self.connect() as db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS research_tasks (
@@ -59,20 +62,27 @@ class ResearchTasks(ResearchStore):
             freeze(state, ResearchManifest.model_validate(manifest))
             stage = "ready"
         with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             db.execute("INSERT INTO research_tasks VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
                        (identifier, prompt.strip(), mode, stage, timestamp, timestamp,
                         json.dumps(state, allow_nan=False)))
+            self.lifecycle.create(db, identifier, prompt.strip(), state, stage)
         return identifier
 
     def get(self, identifier):
         if not re.fullmatch(r"[0-9a-f]{32}", identifier):
             raise ValueError("Use a full research task ID")
         with self.connect() as db:
+            db.execute("BEGIN")
             row = db.execute("SELECT * FROM research_tasks WHERE id=?", (identifier,)).fetchone()
-        if row is None:
-            raise ValueError("Unknown research task")
+            if row is None:
+                raise ValueError("Unknown research task")
+            canonical = self.lifecycle.repository._find_in(db, identifier)
         item = dict(row)
         item["state"] = json.loads(item["state"])
+        if canonical is not None:
+            item["engineering_status"] = canonical.status.value
+            item["engineering_revision"] = canonical.revision
         return item
 
     def listing(self):
@@ -80,64 +90,120 @@ class ResearchTasks(ResearchStore):
             return [dict(row) for row in db.execute(
                 "SELECT id, prompt, mode, stage, updated_at FROM research_tasks ORDER BY updated_at DESC, id")]
 
-    def save(self, identifier, state, stage):
+    def save(self, identifier, state, stage, *, approved=False):
         with self.connect() as db:
-            db.execute("""UPDATE research_tasks SET state=?, updated_at=?,
-                          stage=CASE WHEN cancel_requested THEN 'cancelled' ELSE ? END WHERE id=?""",
-                       (json.dumps(state, ensure_ascii=False, allow_nan=False), now(), stage, identifier))
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT stage, cancel_requested FROM research_tasks WHERE id=?",
+                             (identifier,)).fetchone()
+            if row is None:
+                raise ValueError("Unknown research task")
+            if row["stage"] in TERMINAL:
+                return
+            if row["cancel_requested"] and stage != "cancelled":
+                # Keep reserved runs and other checkpoints, but do not claim execution has stopped.
+                stage = row["stage"]
+                self._write_checkpoint(db, identifier, state, stage)
+                return
+            self.lifecycle.checkpoint(db, identifier, state, stage, approved=approved)
+            self._write_checkpoint(db, identifier, state, stage)
+
+    @staticmethod
+    def _write_checkpoint(db, identifier, state, stage):
+        db.execute("UPDATE research_tasks SET state=?, updated_at=?, stage=? WHERE id=?",
+                   (json.dumps(state, ensure_ascii=False, allow_nan=False), now(), stage, identifier))
 
     def cancelled(self, identifier):
         with self.connect() as db:
             return bool(db.execute("SELECT cancel_requested FROM research_tasks WHERE id=?", (identifier,))
                         .fetchone()[0])
 
+    def _task_lock(self, identifier):
+        locks = self.root / "research-locks"
+        locks.mkdir(exist_ok=True)
+        return FileLock(str(locks / (identifier + ".lock")), timeout=0)
+
+    def _acknowledge_cancel(self, identifier):
+        # Called only while holding the task lock: no other worker can still be running.
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM research_tasks WHERE id=?", (identifier,)).fetchone()
+            if row["stage"] in TERMINAL or not row["cancel_requested"]:
+                return
+            state = json.loads(row["state"])
+            state["termination"] = "cancelled"
+            self.lifecycle.checkpoint(db, identifier, state, "cancelled")
+            self._write_checkpoint(db, identifier, state, "cancelled")
+
     def cancel(self, identifier):
         self.get(identifier)
         with self.connect() as db:
-            db.execute("""UPDATE research_tasks SET cancel_requested=1, stage='cancelled', updated_at=?
-                          WHERE id=? AND stage NOT IN ('passed', 'failed', 'cancelled')""", (now(), identifier))
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT stage, cancel_requested FROM research_tasks WHERE id=?",
+                             (identifier,)).fetchone()
+            if row["stage"] in TERMINAL:
+                return
+            if not row["cancel_requested"]:
+                self.lifecycle.request_cancel(db, identifier)
+                db.execute("UPDATE research_tasks SET cancel_requested=1, updated_at=? WHERE id=?",
+                           (now(), identifier))
+        try:
+            with self._task_lock(identifier):
+                self._acknowledge_cancel(identifier)
+        except Timeout:
+            # The active worker will acknowledge after its current operation has returned.
+            pass
 
     def resume(self, identifier, *, planner=None, proposer=None, clarification=None, approve=False,
                solver=run_program):
         self.get(identifier)
-        locks = self.root / "research-locks"
-        locks.mkdir(exist_ok=True)
-        with FileLock(str(locks / (identifier + ".lock")), timeout=0):
-            task = self.get(identifier)
-            state = task["state"]
-            if task["stage"] in TERMINAL:
+        with self._task_lock(identifier):
+            try:
+                if self.cancelled(identifier):
+                    self._acknowledge_cancel(identifier)
+                    yield self.summary(identifier)
+                    return
+                yield from self._resume_locked(identifier, planner, proposer, clarification, approve, solver)
+            finally:
+                if self.cancelled(identifier):
+                    self._acknowledge_cancel(identifier)
+
+    def _resume_locked(self, identifier, planner, proposer, clarification, approve, solver):
+        task = self.get(identifier)
+        state = task["state"]
+        if task["stage"] in TERMINAL:
+            yield self.summary(identifier)
+            return
+        if task["stage"] == "awaiting_approval" and not approve:
+            yield self.summary(identifier)
+            return
+        if task["stage"] in {"planning", "awaiting_input"}:
+            if task["stage"] == "awaiting_input" and not clarification:
                 yield self.summary(identifier)
                 return
-            if task["stage"] == "awaiting_approval" and not approve:
+            if clarification:
+                if not 1 <= len(clarification.strip()) <= 12000 or len(state["clarifications"]) >= 8:
+                    raise ValueError("Clarification is empty or exceeds the task input limit")
+                state["clarifications"].append(clarification.strip())
+            self.save(identifier, state, "planning")
+            if planner is None:
+                raise ValueError("Configure a model to create the research plan")
+            draft = PlanDraft.model_validate(planner(task["prompt"], state["clarifications"], task["mode"]))
+            record_model_metrics(state, planner)
+            if draft.questions:
+                state["questions"] = draft.questions
+                self.save(identifier, state, "awaiting_input")
                 yield self.summary(identifier)
                 return
-            if task["stage"] in {"planning", "awaiting_input"}:
-                if task["stage"] == "awaiting_input" and not clarification:
-                    yield self.summary(identifier)
-                    return
-                if clarification:
-                    if not 1 <= len(clarification.strip()) <= 12000 or len(state["clarifications"]) >= 8:
-                        raise ValueError("Clarification is empty or exceeds the task input limit")
-                    state["clarifications"].append(clarification.strip())
-                self.save(identifier, state, "planning")
-                if planner is None:
-                    raise ValueError("Configure a model to create the research plan")
-                draft = PlanDraft.model_validate(planner(task["prompt"], state["clarifications"], task["mode"]))
-                if draft.questions:
-                    state["questions"] = draft.questions
-                    self.save(identifier, state, "awaiting_input")
-                    yield self.summary(identifier)
-                    return
-                freeze(state, draft.manifest)
-                state.pop("questions", None)
-                if draft.manifest.editable and state["use_repair"]:
-                    self.save(identifier, state, "awaiting_approval")
-                    yield self.summary(identifier)
-                    return
-                self.save(identifier, state, "ready")
-            elif task["stage"] == "awaiting_approval":
-                self.save(identifier, state, "ready")
-            yield from self._execute(identifier, state, proposer, solver)
+            freeze(state, draft.manifest)
+            state.pop("questions", None)
+            if draft.manifest.editable and state["use_repair"]:
+                self.save(identifier, state, "awaiting_approval")
+                yield self.summary(identifier)
+                return
+            self.save(identifier, state, "ready")
+        elif task["stage"] == "awaiting_approval":
+            self.save(identifier, state, "ready", approved=approve)
+        yield from self._execute(identifier, state, proposer, solver)
 
     def _execute(self, identifier, state, proposer, solver):
         manifest = ResearchManifest.model_validate(state["manifest"])
@@ -219,6 +285,7 @@ class ResearchTasks(ResearchStore):
             self.save(identifier, state, "repairing")
             try:
                 proposal = Proposal.model_validate(proposer(observation))
+                record_model_metrics(state, proposer)
                 program = apply_repair(manifest, best["program"], proposal)
                 if any(item["program_sha256"] == digest(program) for item in attempts):
                     raise ValueError("Repeated candidate")
@@ -229,6 +296,7 @@ class ResearchTasks(ResearchStore):
                 self.save(identifier, state, "repairing")
                 raise
             except (ValidationError, ValueError, TypeError, KeyError, IndexError) as exc:
+                record_model_metrics(state, proposer)
                 state["rejected_repairs"].append(str(exc).splitlines()[0][:240])
                 if use is not None:
                     use["status"] = "rejected"
@@ -285,6 +353,8 @@ class ResearchTasks(ResearchStore):
                     max_repairs=manifest.get("max_repairs"), termination=state.get("termination"),
                     best_runs=best["runs"] if best else [],
                     proposed_repairs=manifest.get("editable", []) if item["stage"] == "awaiting_approval" else [])
+        if "model_client_metrics" in state:
+            item["model_client_metrics"] = state["model_client_metrics"]
         if full:
             item["record"] = state
         return item
@@ -417,6 +487,15 @@ def research_planner(root, model):
         {"prompt": prompt, "clarifications": clarifications, "mode": mode, "references": []})["draft"]
 
 
+def record_model_metrics(state, adapter):
+    """Record a cumulative client snapshot, not an inferred per-task token total."""
+    getter = getattr(adapter, "model_metrics", None)
+    if getter is not None:
+        metrics = getter()
+        if metrics is not None:
+            state["model_client_metrics"] = metrics
+
+
 def configured_adapters(root, model_factory=None):
     from .agent import model_from_env
 
@@ -445,6 +524,11 @@ def configured_adapters(root, model_factory=None):
             proposer = model_proposer(get_model())
         return proposer(observation)
 
+    def metrics():
+        return model.metrics() if isinstance(model, ScheduledModel) else None
+
+    plan.model_metrics = metrics
+    propose.model_metrics = metrics
     return {"planner": plan, "proposer": propose}
 
 

@@ -4,7 +4,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Annotated, TypedDict
+from typing import Annotated, NotRequired, TypedDict
 
 from langchain_core.messages import (
     AIMessage,
@@ -32,6 +32,7 @@ from .domain import CASES, CaseName, DeviceEdit, FaultRequest, GovernorEigenRequ
 from .extension_program import Battery, ControlResponse, Feeder, Solar
 from .extra_programs import Commitment, EconomicDispatch, EquivalentCell, Wind
 from .knowledge import QueryPlan, contracts, workspace_knowledge
+from .model_runtime import ModelScheduler, ScheduledModel
 from .native_program import DispatchProgram, PPProgram
 from .plugins import available, guidance
 from .simulator import Simulator
@@ -55,7 +56,7 @@ historical data source, never a new simulation. Licensed paper studies require e
 Never claim solver failure proves
 physical instability. Voltage severity is a proxy, not the paper's full stability
 criterion. Distinguish estimated, measured and unavailable data. Cite run IDs.
-Respect the remaining simulation budget. Explain conclusions and limitations.
+Respect the remaining simulation budget. Runtime budget notices are appended as the final context message;\nuse them only for current execution limits. Explain conclusions and limitations.
 Format mathematical expressions with Markdown $...$ inline or $ on separate lines for display equations.
 Never request secrets, access arbitrary files, or perform live grid control."""
 
@@ -65,6 +66,7 @@ class State(TypedDict):
     used: int
     calls: int
     rounds: int
+    model_metrics: NotRequired[dict]
 
 
 def model_from_env(workspace=None, *, settings=None, api_key=None):
@@ -77,15 +79,21 @@ def model_from_env(workspace=None, *, settings=None, api_key=None):
         key = "gridagent-local"
     if not name or not key:
         raise ValueError("Configure the model and a session API key before starting.")
-    return ChatOpenAI(model=name, api_key=key,
-                      base_url=settings.base_url or None,
-                      timeout=60, max_retries=1)
+    scheduler = ModelScheduler(
+        concurrency=int(os.getenv("GRIDAGENT_MODEL_CONCURRENCY", "1")),
+        requests_per_minute=int(os.getenv("GRIDAGENT_MODEL_RPM", "0")),
+    )
+    model = ChatOpenAI(model=name, api_key=key, base_url=settings.base_url or None,
+                       timeout=60, max_retries=0)
+    return ScheduledModel(model, scheduler)
 
 
 def invoke_public_stream(model, messages, on_delta=None):
     """Stream public text only; aggregate complete tool-call chunks before execution."""
     if on_delta is None:
         return model.invoke(messages)
+    if isinstance(model, ScheduledModel):
+        return model.consume_stream(lambda raw: invoke_public_stream(raw, messages, on_delta))
     from .message_format import text_content
 
     accumulated = None
@@ -361,13 +369,19 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
         return knowledge_index().retrieve({"functions": functions or [], "options": options or []})
 
     tools[retrieve_engineering_knowledge.name] = retrieve_engineering_knowledge
-    bound = model.bind_tools(list(tools.values()))
+    # Stable order: a plugin capability snapshot stays fixed for this graph.
+    bound = model.bind_tools([tools[name] for name in sorted(tools)])
     system = SYSTEM + ("\nEnabled simulation plugin guidance:\n" + guidance() if workspace is not None else "")
 
     def decide(state: State):
-        policy = f"Remaining numerical simulation budget: {budget - state['used']}; "                  f"remaining tool calls: {max_calls - state['calls']}."
-        msg = invoke_public_stream(bound, [SystemMessage(content=system + "\n" + policy), *state["messages"]], on_delta)
-        return {"messages": [msg], "rounds": state["rounds"] + 1}
+        policy = (f"Remaining numerical simulation budget: {budget - state['used']}; "
+                  f"remaining tool calls: {max_calls - state['calls']}.")
+        msg = invoke_public_stream(bound, [SystemMessage(content=system), *state["messages"],
+                            HumanMessage(content="GridAgent runtime budget notice: " + policy)], on_delta)
+        update = {"messages": [msg], "rounds": state["rounds"] + 1}
+        if isinstance(model, ScheduledModel):
+            update["model_metrics"] = model.metrics()
+        return update
 
     def route(state: State):
         last = state["messages"][-1]
@@ -415,13 +429,16 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
 
     def stop(state: State):
         # One final synthesis call without bound tools; it cannot spend more solver budget.
-        msg = invoke_public_stream(model, [SystemMessage(content=system +
-                            "\nTool-call limit reached. Summarize available evidence, failures and remaining "
-                            "uncertainty. Do not call tools or claim unfinished work is complete."),
-                            *state["messages"]], on_delta)
+        msg = invoke_public_stream(model, [SystemMessage(content=system), *state["messages"],
+                            HumanMessage(content="GridAgent runtime notice: tool-call limit reached. "
+                                         "Summarize available evidence, failures and remaining uncertainty. "
+                                         "Do not call tools or claim unfinished work is complete.")], on_delta)
         if getattr(msg, "tool_calls", []):
             msg = AIMessage(content="Tool-call limit reached; no further simulation executed. Review saved results.")
-        return {"messages": [msg]}
+        update = {"messages": [msg]}
+        if isinstance(model, ScheduledModel):
+            update["model_metrics"] = model.metrics()
+        return update
 
     graph = StateGraph(State)
     graph.add_node("agent", decide)
