@@ -18,6 +18,8 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="CSharpMath.SkiaSharp" Version="0.5.1" />
+    <PackageReference Include="SkiaSharp" Version="2.88.9" />
     <PackageReference Include="Markdig" Version="0.41.3" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260710003" />
     <Compile Include="../GridAgent.Windows/LocalEngine.cs" Link="LocalEngine.cs" />

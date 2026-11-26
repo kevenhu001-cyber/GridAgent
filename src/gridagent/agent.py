@@ -49,6 +49,7 @@ Never claim solver failure proves
 physical instability. Voltage severity is a proxy, not the paper's full stability
 criterion. Distinguish estimated, measured and unavailable data. Cite run IDs.
 Respect the remaining simulation budget. Explain conclusions and limitations.
+Format mathematical expressions with Markdown $...$ inline or $ on separate lines for display equations.
 Never request secrets, access arbitrary files, or perform live grid control."""
 
 

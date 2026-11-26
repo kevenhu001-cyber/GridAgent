@@ -5,6 +5,7 @@ using Markdig.Syntax;
 using Block = Markdig.Syntax.Block;
 using Markdig.Syntax.Inlines;
 using Markdig.Extensions.Tables;
+using Markdig.Extensions.Mathematics;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Documents;
@@ -188,7 +189,7 @@ public sealed class ConversationMessageView : UserControl
 
 internal static class NativeMarkdown
 {
-    private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder().UsePipeTables().DisableHtml().Build();
+    private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder().UsePipeTables().UseMathematics().DisableHtml().Build();
     public static FrameworkElement Render(string source)
     {
         if (source.Length > 100_000) return ConversationMessageView.Plain(source);
@@ -206,6 +207,8 @@ internal static class NativeMarkdown
                 title.FontWeight = FontWeights.SemiBold; panel.Children.Add(title); break;
             case ParagraphBlock paragraph:
                 panel.Children.Add(InlineText(paragraph.Inline)); break;
+            case MathBlock math:
+                panel.Children.Add(NativeMath.Create(math.Lines.ToString(), true)); break;
             case CodeBlock code:
                 var value = code.Lines.ToString();
                 var text = ConversationMessageView.Plain(value, 13);
@@ -231,7 +234,7 @@ internal static class NativeMarkdown
                         if (rows[i][j] is TableCell c)
                             foreach (var child in c) AddBlock(cell, child, source, depth + 1);
                         if (rows[i].IsHeader)
-                            foreach (var t in cell.Children.OfType<TextBlock>()) t.FontWeight = FontWeights.SemiBold;
+                            foreach (var t in cell.Children.OfType<RichTextBlock>()) t.FontWeight = FontWeights.SemiBold;
                         Grid.SetRow(cell, i); Grid.SetColumn(cell, j); grid.Children.Add(cell);
                     }
                 }
@@ -265,10 +268,12 @@ internal static class NativeMarkdown
         return source[start..end];
     }
     private static Border Card(UIElement child) => new() { Child = child, Padding = new Thickness(12), CornerRadius = new CornerRadius(8), BorderThickness = new Thickness(1), Style = (Style)Application.Current.Resources["EngineeringCardStyle"] };
-    private static TextBlock InlineText(ContainerInline? inline)
+    private static RichTextBlock InlineText(ContainerInline? inline)
     {
-        var text = ConversationMessageView.Plain("");
-        if (inline != null) AddInline(text.Inlines, inline, false, false);
+        var text = new RichTextBlock { FontSize = 15, IsTextSelectionEnabled = true, TextWrapping = TextWrapping.Wrap, LineHeight = 22 };
+        var paragraph = new Microsoft.UI.Xaml.Documents.Paragraph();
+        if (inline != null) AddInline(paragraph.Inlines, inline, false, false);
+        text.Blocks.Add(paragraph);
         return text;
     }
     private static void AddInline(InlineCollection target, ContainerInline container, bool bold, bool italic)
@@ -278,6 +283,8 @@ internal static class NativeMarkdown
             switch (item)
             {
                 case LiteralInline literal: AddRun(literal.Content.ToString()); break;
+                case MathInline math:
+                    target.Add(new InlineUIContainer { Child = NativeMath.Create(math.Content.ToString(), false) }); break;
                 case CodeInline code: AddRun(code.Content, true); break;
                 case LineBreakInline: target.Add(new Microsoft.UI.Xaml.Documents.LineBreak()); break;
                 case EmphasisInline emphasis: AddInline(target, emphasis, bold || emphasis.DelimiterCount >= 2, italic || emphasis.DelimiterCount == 1); break;
