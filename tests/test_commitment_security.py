@@ -21,6 +21,7 @@ def unit(identifier, cost):
 
 def problem():
     return {
+        "family": "unit_commitment",
         "description": "Corrective single-line outage schedule",
         "currency": "CNY", "demand_mw": [6],
         "units": [unit("cheap", 10), unit("local", 50)],

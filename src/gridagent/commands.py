@@ -202,6 +202,28 @@ def workspace_command(root, command, args, *, model_factory=None):
         from .paper import model_estimator, paper_rank
 
         yield from paper_rank(root, model_estimator(create_model()))
+    elif command in {"ac-check", "ac-check-resume"} and len(args) == 1:
+        import json
+
+        from filelock import Timeout
+
+        from .ac_check import resume_ac_check, start_ac_check
+        from .ac_check_ir import ACCheckSpec
+
+        try:
+            if command == "ac-check":
+                with Path(args[0]).open("rb") as handle:
+                    payload = handle.read(1024 * 1024 + 1)
+                if len(payload) > 1024 * 1024:
+                    raise ValueError("AC cross-check input exceeds 1 MiB")
+                identifier = start_ac_check(root, ACCheckSpec.model_validate_json(payload))
+                yield "AC cross-check study: " + identifier
+            else:
+                identifier = args[0]
+            report = resume_ac_check(root, identifier)
+        except Timeout as exc:
+            raise ValueError("AC cross-check or source study is already running") from exc
+        yield json.dumps(report, ensure_ascii=False, allow_nan=False)
     elif command in {"math-program", "math-resume"} and len(args) == 1:
         import json
 

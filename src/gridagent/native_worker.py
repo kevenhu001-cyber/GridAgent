@@ -94,6 +94,8 @@ def pandapower_run(program, folder):
         net.res_bus.to_csv(folder / "res_bus.csv")
         net.res_line.to_csv(folder / "res_line.csv")
         net.res_trafo.to_csv(folder / "res_trafo.csv")
+        for name in ("res_ext_grid", "res_gen", "res_load", "res_storage"):
+            net[name].to_csv(folder / (name + ".csv"))
         voltage = net.res_bus.vm_pu.dropna()
         if voltage.empty or not np.isfinite(voltage).all():
             raise ValueError("No finite solved voltages")

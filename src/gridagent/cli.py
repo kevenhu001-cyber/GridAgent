@@ -25,6 +25,8 @@ def main():
     research.add_argument("--optimize-resume", metavar="ID", help="Resume an AC optimization study")
     research.add_argument("--math-program", metavar="JSON", help="Solve typed LP, MILP, polynomial NLP or unit commitment")
     research.add_argument("--math-resume", metavar="ID", help="Recover a mathematical program study")
+    research.add_argument("--ac-check", metavar="JSON", help="Cross-check verified DC commitment with AC snapshots")
+    research.add_argument("--ac-check-resume", metavar="ID", help="Recover AC cross-check evidence")
     research.add_argument("--research-tasks", action="store_true", help="List saved research tasks")
     research.add_argument("--research-status", metavar="ID")
     research.add_argument("--research-resume", metavar="ID")
@@ -105,6 +107,8 @@ def main():
         ("optimize-resume", [args.optimize_resume] if args.optimize_resume else None),
         ("math-program", [args.math_program] if args.math_program else None),
         ("math-resume", [args.math_resume] if args.math_resume else None),
+        ("ac-check", [args.ac_check] if args.ac_check else None),
+        ("ac-check-resume", [args.ac_check_resume] if args.ac_check_resume else None),
         ("research-tasks", [] if args.research_tasks else None),
         ("research-status", [args.research_status] if args.research_status else None),
         ("research-resume", [args.research_resume] if args.research_resume else None),

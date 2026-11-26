@@ -49,6 +49,12 @@ def study_summary(root: Path, identifier: str):
     lines = [f"Study {identifier}", f"Protocol: {manifest.get('protocol', 'unknown')}"]
     if report is None:
         lines.append("Unfinished · partial artifacts preserved")
+    elif report.get("phase") == "ac_cross_check_finished":
+        snapshots = report["snapshots"]
+        passed = sum(row["passed"] for row in snapshots)
+        lines.append(f"AC cross-check: {passed}/{len(snapshots)} snapshots verified")
+        lines.append(f"Full selected DC schedule coverage: {report['full_dc_schedule_coverage']}")
+        lines.append("AC steady-state only; dynamic security not established")
     elif report.get("phase") == "mathematical_program_finished":
         verification = report["verification"]
         lines.append(f"Mathematical program · {verification['classification']}")

@@ -16,7 +16,8 @@ AC_FILES = ("request.json", "result.json", "bus.csv", "line.csv", "trafo.csv",
 DISPATCH_FILES = ("request.json", "result.json", "generation_mw.csv", "load_mw.csv",
                   "storage_soc_mwh.csv", "storage_charge_mw.csv", "storage_discharge_mw.csv",
                   "link_mw.csv", "link_destination_mw.csv")
-ALLOWED = frozenset((*AC_FILES, *DISPATCH_FILES, "line_mw.csv", "line_destination_mw.csv"))
+ALLOWED = frozenset((*AC_FILES, *DISPATCH_FILES, "line_mw.csv", "line_destination_mw.csv",
+                     "res_ext_grid.csv", "res_gen.csv", "res_load.csv", "res_storage.csv"))
 MAX_FILE_BYTES = 64 * 1024 * 1024
 
 
