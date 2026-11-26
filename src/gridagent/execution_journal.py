@@ -171,9 +171,7 @@ class ExecutionJournal:
             self.reserve(db, task_id, key, run["run_id"])
             if run["status"] != "reserved":
                 self.finish(db, task_id, run["evidence_record"])
-        if stage == "cancelled":
-            self.cancel(db, task_id)
-        elif stage == "failed" and state.get("termination") == "model_input_fidelity_failed":
+        if stage == "cancelled" or (stage == "failed" and state.get("termination") == "model_input_fidelity_failed"):
             self.cancel(db, task_id)
         elif stage in {"passed", "failed"}:
             outcome = self.aggregate(db, task_id)

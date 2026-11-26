@@ -71,11 +71,10 @@ def test_wrong_run_identity_cannot_finish(tmp_path):
 
 def test_reservation_rolls_back_with_checkpoint(tmp_path):
     store, journal, task_id, plan = setup_graph(tmp_path)
-    with pytest.raises(sqlite3.IntegrityError):
-        with store.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            journal.reserve(db, task_id, "solve-001", "1" * 32)
-            db.execute("INSERT INTO execution_graphs SELECT * FROM execution_graphs WHERE task_id=?", (task_id,))
+    with pytest.raises(sqlite3.IntegrityError), store.connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        journal.reserve(db, task_id, "solve-001", "1" * 32)
+        db.execute("INSERT INTO execution_graphs SELECT * FROM execution_graphs WHERE task_id=?", (task_id,))
     with store.connect() as db:
         _, rows = journal.load(db, task_id, plan)
         assert rows["solve-001"]["status"] == "pending"

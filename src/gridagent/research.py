@@ -22,9 +22,11 @@ from .model_quality import check
 from .model_repair import Proposal, apply, leaf, model_proposer
 from .model_runtime import ScheduledModel
 from .native_backends import run_program
+from .parallel_execution import ac_workers, run_batch
 from .research_lifecycle import ResearchLifecycle
 from .research_spec import PROTOCOL, PlanDraft, ResearchManifest, evaluate, model_fidelity
 from .store import ResearchStore, now
+from .verified_cache import VerifiedCache, cache_enabled, runtime_identity
 from .workspace import artifact_folder, load_object
 
 TERMINAL = {"passed", "failed", "cancelled"}
@@ -302,6 +304,10 @@ class ResearchTasks(ResearchStore):
                                 if row["run_id"] is not None}
             if reserved != journal_reserved:
                 raise ValueError("AC checkpoints differ from committed solver reservations")
+        workers = ac_workers() if journal_plan is not None else 1
+        identity = runtime_identity() if journal_plan is not None and solver is run_program and cache_enabled() else None
+        cache = VerifiedCache(self, self.root, identity) if identity is not None else None
+        limits = manifest.limits.model_dump(mode="json")
         if not attempts:
             attempts.append(candidate(state["manifest"]["program"]))
             self.save(identifier, state, "running")
@@ -313,23 +319,59 @@ class ResearchTasks(ResearchStore):
                 self.save(identifier, state, "failed")
                 break
             if not current.get("finished"):
-                for scenario in manifest.scenarios:
+                for index, scenario in enumerate(manifest.scenarios):
                     if self.cancelled(identifier):
                         break
                     request = scenario.materialize(current["program"])
-                    node = plan.solve_for(scenario.name, request) if plan is not None else None
+                    if plan is not None:
+                        plan.solve_for(scenario.name, request)
                     run = next((row for row in current["runs"] if row["scenario"] == scenario.name), None)
                     if run is None:
-                        run = {"scenario": scenario.name, "run_id": uuid4().hex,
-                               "request_sha256": digest(request), "status": "reserved"}
-                        if node is not None:
-                            run["solve_node_id"] = node.id
-                        current["runs"].append(run)
+                        # The coordinator alone creates reservations and writes checkpoints.
+                        jobs = []
+                        batch_size = workers if journal_plan is not None else 1
+                        for upcoming in manifest.scenarios[index:index + batch_size]:
+                            payload = upcoming.materialize(current["program"])
+                            reservation = {"scenario": upcoming.name, "run_id": uuid4().hex,
+                                           "request_sha256": digest(payload), "status": "reserved"}
+                            if plan is not None:
+                                reservation["solve_node_id"] = plan.solve_for(upcoming.name, payload).id
+                            current["runs"].append(reservation)
+                            jobs.append((reservation, payload))
+                        run = jobs[0][0]
                         self.save(identifier, state, "running")
                         yield self.summary(identifier)
                         if self.cancelled(identifier):
                             break
-                        solver(self.root, request, run_id=run["run_id"], cancelled=lambda: self.cancelled(identifier))
+
+                        def launch(job, program=current["program"]):
+                            reserved, payload = job
+                            def cancelled():
+                                return self.cancelled(identifier)
+
+                            if cache is not None:
+                                key = cache.key(plan, payload, limits)
+                                source = cache.restore(
+                                    key, payload, reserved["run_id"], cancelled=cancelled,
+                                    recheck=lambda record: evaluate_candidate(
+                                        self.root, record, payload, manifest, program),
+                                )
+                                if source is not None:
+                                    return {"launch": "cache", "cache_origin_run_id": source, "cache_key": key}
+                            if cancelled():
+                                return {"launch": "not_started"}
+                            solver(self.root, payload, run_id=reserved["run_id"], cancelled=cancelled)
+                            return {"launch": "native"}
+
+                        if journal_plan is not None:
+                            for (reserved, _), result in zip(
+                                    jobs, run_batch(jobs, workers=workers, launch=launch,
+                                                    cancelled=lambda: self.cancelled(identifier)), strict=True):
+                                reserved.update(result)
+                        else:
+                            # Preserve the exception/restart contract of legacy and repair tasks.
+                            solver(self.root, request, run_id=run["run_id"],
+                                   cancelled=lambda: self.cancelled(identifier))
                     if run["status"] == "reserved":
                         record = recover_run(self.root, run)
                         verdict = evaluate_candidate(self.root, record, request, manifest, current["program"])
@@ -346,8 +388,14 @@ class ResearchTasks(ResearchStore):
                                 evidence = capture_evidence(self.root, plan, scenario.name, run["run_id"], request,
                                                             version=record.get("version"), verdict=verdict)
                             run["evidence_record"] = evidence.model_dump(mode="json")
+                        if record.get("cache_origin_run_id") is not None:
+                            run.update(launch="cache", cache_origin_run_id=record["cache_origin_run_id"],
+                                       cache_key=record.get("cache_key"))
                         run.update(status=record["status"], version=record.get("version"), evaluation=verdict)
                         self.save(identifier, state, "evaluating")
+                        if (cache is not None and verdict["passed"] and run.get("launch") == "native"
+                                and runtime_identity() == identity):
+                            cache.publish(cache.key(plan, request, limits), run["evidence_record"], verdict)
                         yield self.summary(identifier)
                 if self.cancelled(identifier):
                     break
@@ -457,6 +505,10 @@ class ResearchTasks(ResearchStore):
                     max_repairs=manifest.get("max_repairs"), termination=state.get("termination"),
                     best_runs=best["runs"] if best else [],
                     proposed_repairs=manifest.get("editable", []) if item["stage"] == "awaiting_approval" else [])
+        if "execution_journal_version" in state:
+            runs = [run for attempt in attempts for run in attempt["runs"]]
+            item["cache_hits"] = sum(run.get("launch") == "cache" for run in runs)
+            item["native_launches_observed"] = sum(run.get("launch") == "native" for run in runs)
         if "model_client_metrics" in state:
             item["model_client_metrics"] = state["model_client_metrics"]
         if full:

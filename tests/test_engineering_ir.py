@@ -166,3 +166,26 @@ def test_resume_rejects_changed_ir_provenance_before_solver(tmp_path):
     tasks.save(identifier, state, "ready")
     with pytest.raises(ValueError, match="provenance changed"):
         list(tasks.resume(identifier, solver=lambda *a, **k: pytest.fail("Unexpected solve")))
+
+
+@pytest.mark.integration
+def test_parallel_ir_and_verified_cache_reuse(tmp_path, monkeypatch):
+    pytest.importorskip("pandapower")
+    from gridagent.research import ResearchTasks
+
+    monkeypatch.setenv("GRIDAGENT_AC_WORKERS", "2")
+    monkeypatch.setenv("GRIDAGENT_VERIFIED_CACHE", "1")
+    tasks = ResearchTasks(tmp_path)
+    first = list(tasks.resume(tasks.start_ir(study_input())))[-1]
+    assert first["stage"] == "passed", first
+    assert first["native_launches_observed"] == 2
+    assert first["cache_hits"] == 0
+    second = list(tasks.resume(tasks.start_ir(study_input())))[-1]
+    assert second["stage"] == "passed", second
+    assert second["cache_hits"] == 2
+    assert second["native_launches_observed"] == 0
+    assert second["runs_used"] == 2
+    assert [r["cache_origin_run_id"] for r in second["best_runs"]] == [
+        r["run_id"] for r in first["best_runs"]]
+    assert {r["run_id"] for r in second["best_runs"]}.isdisjoint(
+        {r["run_id"] for r in first["best_runs"]})
