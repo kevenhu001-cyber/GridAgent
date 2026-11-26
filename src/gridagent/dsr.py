@@ -136,9 +136,10 @@ def list_studies(root: Path):
             try:
                 data = json.loads(report.read_text(encoding="utf-8"))
                 phase = data.get("phase")
-                if phase in {"predictions_frozen", "screening_attempted", "model_edit_verified"}:
+                if phase in {"predictions_frozen", "screening_attempted", "model_edit_verified", "mitigation_attempted"}:
                     rows[-1]["status"] = {"predictions_frozen": "predicted",
                                           "screening_attempted": "screened_partial",
+                                          "mitigation_attempted": "mitigation_tested",
                                           "model_edit_verified": "edit_verified"}[phase]
                 else:
                     rows[-1]["status"] = "completed" if data.get("completed") else "failed"

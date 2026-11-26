@@ -57,6 +57,13 @@ def study_summary(root: Path, identifier: str):
             lines.append(f"Attempts: {report['attempts']} · applied edits: {report['accepted_edits']}")
         for key, value in report["final_gains"].items():
             lines.append(f"{key}: {report['initial_gains'][key]:g} → {value:g}")
+    elif report.get("phase") == "mitigation_attempted":
+        mitigation = report["mitigation"]
+        lines.append(f"Fresh mitigation attempts: {mitigation['attempted']}/{mitigation['budget']}")
+        best = mitigation["recommended"]
+        lines.append(f"Best measured plan: {best['plan'] if best else 'none'}")
+        for row in mitigation["results"]:
+            lines.append(f"{row.get('plan', '-')} · {row['status']} · {row.get('measurement')}")
     elif report.get("phase") == "screening_attempted":
         lines.append(f"Original PowerFactory screening attempts: {report['attempted']} · mitigation not run")
         for row in report["observations"]:

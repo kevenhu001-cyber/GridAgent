@@ -136,7 +136,9 @@ class Ranking(BaseModel):
     predictions: list[Prediction] = Field(min_length=10, max_length=10)
 
 
-def paper_rank(root, estimator, simulator=None):
+def paper_rank(root, estimator, simulator=None, mitigation_proposer=None, mitigation_budget=6):
+    if mitigation_proposer is not None and simulator is None:
+        raise ValueError("Mitigation requires fresh screening simulations")
     evidence, total, usable = training_evidence()
     study = Study(Path(root) / "studies")
     with study.lock():
@@ -176,14 +178,34 @@ def paper_rank(root, estimator, simulator=None):
                 study.write(f"result-{index}", row)
                 observed.append(row)
                 yield f"Original PowerFactory run {index}/3 · {item.id} · {row['status']}"
+        mitigation = "not_run"
+        if mitigation_proposer is not None:
+            from .paper_mitigation import run_mitigation, valid_kpi
+
+            measured = [row for row in observed if valid_kpi(row["result"]) is not None]
+            if len(measured) == 3:
+                target = min(measured, key=lambda row: (
+                    valid_kpi(row["result"])["stable"], -valid_kpi(row["result"])["severity"], row["id"]))
+                target_case = {k: evidence[target["id"]][k] for k in ("location", "duration_ms")}
+                for row in run_mitigation(study, target_case, target["result"],
+                                          mitigation_proposer, simulator, mitigation_budget):
+                    yield f"Mitigation {row['attempt']}/{mitigation_budget} · {row.get('plan', '-')} · {row['status']}"
+                mitigation = study.read("mitigation-report")
+            else:
+                mitigation = "blocked_incomplete_screening"
         study.write("report", {"study_id": study.id, "protocol": "poweragentbench-dsr-prediction-v1",
                                "completed": False,
-                               "phase": "screening_attempted" if simulator else "predictions_frozen",
+                               "phase": "mitigation_attempted" if isinstance(mitigation, dict) else
+                               "screening_attempted" if simulator else "predictions_frozen",
                                "selected": selected, "attempted": len(observed),
                                "observations": observed,
                                "simulation": "attempted" if simulator else "not_run",
-                               "mitigation": "not_run"})
-        yield "Mitigation not run; full paper workflow success is not claimed."
+                               "mitigation": mitigation})
+        if isinstance(mitigation, dict):
+            best = mitigation["recommended"]
+            yield f"Mitigation · measured recommendation: {best['plan'] if best else 'none'}"
+        else:
+            yield f"Mitigation: {mitigation}. Full paper workflow success is not claimed."
 
 
 def model_estimator(model):
