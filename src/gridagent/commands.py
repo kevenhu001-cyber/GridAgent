@@ -202,6 +202,28 @@ def workspace_command(root, command, args, *, model_factory=None):
         from .paper import model_estimator, paper_rank
 
         yield from paper_rank(root, model_estimator(create_model()))
+    elif command in {"optimize-ir", "optimize-resume"} and len(args) == 1:
+        import json
+
+        from filelock import Timeout
+
+        from .engineering_optimization import resume_optimization, start_optimization
+        from .optimization_ir import ACOptimizationSpec
+
+        if command == "optimize-ir":
+            with Path(args[0]).open("rb") as handle:
+                payload = handle.read(1024 * 1024 + 1)
+            if len(payload) > 1024 * 1024:
+                raise ValueError("Optimization input exceeds 1 MiB")
+            identifier = start_optimization(root, ACOptimizationSpec.model_validate_json(payload))
+            yield "Optimization study: " + identifier
+        else:
+            identifier = args[0]
+        try:
+            for row in resume_optimization(root, identifier):
+                yield json.dumps(row, ensure_ascii=False, allow_nan=False)
+        except Timeout as exc:
+            raise ValueError("Optimization study or child is already running") from exc
     elif command == "optimize" and len(args) <= 1:
         from .optimization import format_update as format_optimization
         from .optimization import optimize_updates
