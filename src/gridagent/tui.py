@@ -134,7 +134,7 @@ class GridApp(App):
         event.input.value = ""
         chat = self.query_one("#chat", RichLog)
         if question == "/help":
-            chat.write(Text("/new · new session | /sessions · list | /open ID · reopen | /dsr PATH · screen faults | /dmq · model review | /studies · list | /runs | /study ID | /wave ID CHANNEL | /study-wave ID PATH CHANNEL | /eigen | /sweep BUS DURATIONS | /resume-dsr ID | /optimize [BUDGET] | /paper-dmq PROFILE | /paper-dsr PROFILE | /paper-mitigate PROFILE | /paper-trials TASK COUNT [PROFILE] | /modeling-benchmark TASK | /model-repair MANIFEST | /experience | /drafts | /backends | /native-program JSON | /native-table RUN TABLE | /knowledge | /import-knowledge JSON | /models | /import-model PATH | /paper-rank | /paper-kpi CSV CLEARING_S | /paper-edit Kqp Kqi Kvp Kvi | Ctrl+E Studies | Ctrl+Q · quit"))
+            chat.write(Text("/new · new session | /sessions · list | /open ID · reopen | /dsr PATH · screen faults | /dmq · model review | /studies · list | /runs | /study ID | /wave ID CHANNEL | /study-wave ID PATH CHANNEL | /eigen | /sweep BUS DURATIONS | /resume-dsr ID | /optimize [BUDGET] | /paper-dmq PROFILE | /paper-dsr PROFILE | /paper-mitigate PROFILE | /paper-trials TASK COUNT [PROFILE] | /modeling-benchmark TASK | /model-repair MANIFEST | /experience | /plugins | /plugin-install ID | /plugin-remove ID | /drafts | /backends | /native-program JSON | /native-table RUN TABLE | /knowledge | /import-knowledge JSON | /models | /import-model PATH | /paper-rank | /paper-kpi CSV CLEARING_S | /paper-edit Kqp Kqi Kvp Kvi | Ctrl+E Studies | Ctrl+Q · quit"))
             return
         if question == "/new":
             self.action_new_session()
@@ -159,7 +159,7 @@ class GridApp(App):
             for row in rows:
                 chat.write(Text(f"{row['id']}  {row['status']}"))
             return
-        if question.split()[0] in {"/runs", "/study", "/wave", "/study-wave", "/eigen", "/sweep", "/resume-dsr", "/optimize", "/paper-rank", "/paper-kpi", "/paper-edit", "/paper-dmq", "/paper-dsr", "/paper-mitigate", "/paper-trials", "/models", "/import-model", "/knowledge", "/import-knowledge", "/backends", "/native-program", "/native-table", "/drafts", "/model-repair", "/modeling-benchmark", "/experience"}:
+        if question.split()[0] in {"/runs", "/study", "/wave", "/study-wave", "/eigen", "/sweep", "/resume-dsr", "/optimize", "/paper-rank", "/paper-kpi", "/paper-edit", "/paper-dmq", "/paper-dsr", "/paper-mitigate", "/paper-trials", "/models", "/import-model", "/knowledge", "/import-knowledge", "/backends", "/native-program", "/native-table", "/drafts", "/model-repair", "/modeling-benchmark", "/experience", "/plugins", "/plugin-install", "/plugin-remove"}:
             try:
                 parts = shlex.split(question)
             except ValueError:
@@ -200,7 +200,12 @@ class GridApp(App):
 
     def _run_task(self, question):
         try:
-            for event in recorded_task(self.graph, self.store, self.sid, question):
+            from .agent import build_agent, model_from_env
+            from .simulator import AndesSimulator
+
+            graph = build_agent(model_from_env(), AndesSimulator(self.workspace / "runs"),
+                                budget=self.budget, workspace=self.workspace)
+            for event in recorded_task(graph, self.store, self.sid, question):
                 for node, update in event.items():
                     if "used" in update:
                         self.call_from_thread(self._status, f"Working · {update['used']}/{self.budget} runs")

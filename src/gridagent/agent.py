@@ -12,12 +12,15 @@ from langgraph.graph.message import add_messages
 from pydantic import Field, ValidationError
 
 from .domain import CASES, CaseName, DeviceEdit, FaultRequest, ScenarioRequest
+from .extension_program import Battery, Feeder
 from .knowledge import KnowledgeIndex, QueryPlan, contracts
 from .native_program import DispatchProgram, PPProgram
+from .plugins import available, guidance
 from .simulator import Simulator
 
 SYSTEM = """You are GridAgent, an offline power-system research assistant.
-Use tools for numerical claims. Choose ANDES for dynamic studies, pandapower for AC network modeling,\nsteady-state and IEC short-circuit analysis, and PyPSA for fixed-capacity hourly dispatch.\nNever claim the backends share identical model semantics or automatically convert models.
+Use tools for numerical claims. Choose ANDES for dynamic studies, pandapower for AC network modeling,\nsteady-state and IEC short-circuit analysis. Optional backends are usable only when registered in this turn.
+Use list_simulation_backends to discover missing backends; ask the user to install them in Simulation Plugins. Never install packages yourself.\nNever claim the backends share identical model semantics or automatically convert models.
 Every native run returns independent quality checks. Solver success does not mean benchmark pass.
 On failed checks, use the numerical feedback to correct the model or method and rerun within the remaining budget.
 Never change user-specified demand, topology, capacity, rating, or test thresholds merely to pass.
@@ -152,6 +155,20 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
             """
             return run_program(root, {"backend": "pypsa", **kwargs})
 
+        @tool(args_schema=Feeder)
+        def opendss_feeder(**kwargs) -> dict:
+            """Solve a balanced three-phase two-bus distribution feeder using native OpenDSS."""
+            from .extension_runner import run_extension
+
+            return run_extension(root, "opendss", kwargs)
+
+        @tool(args_schema=Battery)
+        def battery_discharge(**kwargs) -> dict:
+            """Simulate a reference lithium-ion cell under constant-current discharge using PyBaMM."""
+            from .extension_runner import run_extension
+
+            return run_extension(root, "pybamm", kwargs)
+
         @tool
         def draft_simulation_script(title: Annotated[str, Field(min_length=1, max_length=160)],
                                     source: Annotated[str, Field(min_length=1, max_length=65536)]) -> dict:
@@ -215,9 +232,12 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
 
         tool_list.extend([list_research_runs, read_research_run, network_path,
                           list_network_branches, list_model_devices, analyze_voltage_waveform, compare_fault_runs, compare_flow_runs,
-                          list_simulation_backends, pandapower_program, pypsa_dispatch, read_native_table, draft_simulation_script])
+                          list_simulation_backends, pandapower_program, read_native_table, draft_simulation_script])
+        for plugin, plugin_tool in (("pypsa", pypsa_dispatch), ("opendss", opendss_feeder), ("pybamm", battery_discharge)):
+            if available(plugin):
+                tool_list.append(plugin_tool)
     tools = {t.name: t for t in tool_list}
-    numerical_tools = {"power_flow", "simulate_fault", "eigenanalysis", "scenario_power_flow", "pandapower_program", "pypsa_dispatch"}
+    numerical_tools = {"power_flow", "simulate_fault", "eigenanalysis", "scenario_power_flow", "pandapower_program", "pypsa_dispatch", "opendss_feeder", "battery_discharge"}
     base_contracts = contracts(tools)
 
     def knowledge_index():
@@ -234,10 +254,11 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
 
     tools[retrieve_engineering_knowledge.name] = retrieve_engineering_knowledge
     bound = model.bind_tools(list(tools.values()))
+    system = SYSTEM + ("\nEnabled simulation plugin guidance:\n" + guidance() if workspace is not None else "")
 
     def decide(state: State):
         policy = f"Remaining numerical simulation budget: {budget - state['used']}; "                  f"remaining tool calls: {max_calls - state['calls']}."
-        msg = bound.invoke([SystemMessage(content=SYSTEM + "\n" + policy), *state["messages"]])
+        msg = bound.invoke([SystemMessage(content=system + "\n" + policy), *state["messages"]])
         return {"messages": [msg], "rounds": state["rounds"] + 1}
 
     def route(state: State):
@@ -286,7 +307,7 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
 
     def stop(state: State):
         # One final synthesis call without bound tools; it cannot spend more solver budget.
-        msg = model.invoke([SystemMessage(content=SYSTEM +
+        msg = model.invoke([SystemMessage(content=system +
                             "\nTool-call limit reached. Summarize available evidence, failures and remaining "
                             "uncertainty. Do not call tools or claim unfinished work is complete."),
                             *state["messages"]])

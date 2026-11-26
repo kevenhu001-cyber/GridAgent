@@ -67,6 +67,9 @@ def main():
     parser.add_argument("--experience", action="store_true", help="List verified local repair experiences")
     parser.add_argument("--model-repair", type=Path, metavar="MANIFEST")
     parser.add_argument("--drafts", action="store_true", help="List Python drafts awaiting review")
+    parser.add_argument("--plugins", action="store_true")
+    parser.add_argument("--plugin-install", metavar="ID")
+    parser.add_argument("--plugin-remove", metavar="ID")
     parser.add_argument("--backends", action="store_true")
     parser.add_argument("--native-program", type=Path, metavar="JSON")
     parser.add_argument("--native-table", nargs="+", metavar="RUN_TABLE_PAGE")
@@ -84,6 +87,9 @@ def main():
     store = ResearchStore(args.workspace / "research.sqlite3")
     console = Console()
     local_commands = [
+        ("plugins", [] if args.plugins else None),
+        ("plugin-install", [args.plugin_install] if args.plugin_install else None),
+        ("plugin-remove", [args.plugin_remove] if args.plugin_remove else None),
         ("experience", [] if args.experience else None),
         ("modeling-benchmark", [args.modeling_benchmark] if args.modeling_benchmark else None),
         ("model-repair", [str(args.model_repair)] if args.model_repair else None),

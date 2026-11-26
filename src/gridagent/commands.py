@@ -8,7 +8,17 @@ from .workspace import list_runs, study_summary, waveform, waveform_text
 
 def workspace_command(root, command, args):
     root = Path(root)
-    if command == "experience" and not args:
+    if command == "plugins" and not args:
+        from .plugins import status
+
+        for row in status():
+            yield f"{row['id']} · {row['title']} · {'installed' if row['installed'] else 'not installed'}"
+    elif command in {"plugin-install", "plugin-remove"} and len(args) == 1:
+        from .plugins import install, uninstall
+
+        yield f"{command} · {args[0]} · started"
+        yield (install if command == "plugin-install" else uninstall)(args[0])
+    elif command == "experience" and not args:
         from .experience import list_experience
 
         rows = list_experience(root)

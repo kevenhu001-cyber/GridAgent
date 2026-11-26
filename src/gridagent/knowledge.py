@@ -11,6 +11,8 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field
 
 ALIASES = {
+    "opendss_feeder": "OpenDSS distribution feeder 配电网 三相 电压",
+    "battery_discharge": "PyBaMM SPM DFN lithium battery discharge 电池 电化学 放电",
     "pandapower_program": "pandapower create_bus create_line runpp calc_sc AC power flow short circuit 建模 潮流 短路 线路 变压器",
     "pypsa_dispatch": "PyPSA Network add optimize HiGHS energy storage dispatch battery renewable 储能 调度 优化 新能源 电池",
     "read_native_table": "result CSV table dispatch voltage SOC 结果 表格 电压 荷电状态",
