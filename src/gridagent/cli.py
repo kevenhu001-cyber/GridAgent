@@ -64,6 +64,7 @@ def main():
     parser.add_argument("--study-wave", nargs="+", metavar="ID_PATH_CHANNEL", help="View a study waveform")
     parser.add_argument("--paper-dmq", metavar="PROFILE", help="Run original licensed DMQ")
     parser.add_argument("--modeling-benchmark", choices=["two-bus", "storage-dispatch", "source-short-circuit", "lossy-storage", "lossy-link"])
+    parser.add_argument("--experience", action="store_true", help="List verified local repair experiences")
     parser.add_argument("--model-repair", type=Path, metavar="MANIFEST")
     parser.add_argument("--drafts", action="store_true", help="List Python drafts awaiting review")
     parser.add_argument("--backends", action="store_true")
@@ -83,6 +84,7 @@ def main():
     store = ResearchStore(args.workspace / "research.sqlite3")
     console = Console()
     local_commands = [
+        ("experience", [] if args.experience else None),
         ("modeling-benchmark", [args.modeling_benchmark] if args.modeling_benchmark else None),
         ("model-repair", [str(args.model_repair)] if args.model_repair else None),
         ("drafts", [] if args.drafts else None),

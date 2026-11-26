@@ -8,7 +8,16 @@ from .workspace import list_runs, study_summary, waveform, waveform_text
 
 def workspace_command(root, command, args):
     root = Path(root)
-    if command == "modeling-benchmark" and len(args) == 1:
+    if command == "experience" and not args:
+        from .experience import list_experience
+
+        rows = list_experience(root)
+        if not rows:
+            yield "No independently rechecked repair experiences yet."
+        for row in rows:
+            changes = ", ".join(f"{c['component']}.{c['parameter']} {c['direction']}" for c in row["changes"])
+            yield f"{row['backend']} · {row['study_id']} · {', '.join(row['failed_checks'])} · {changes}"
+    elif command == "modeling-benchmark" and len(args) == 1:
         from .agent import model_from_env
         from .modeling_benchmark import benchmark_updates, model_candidate
 

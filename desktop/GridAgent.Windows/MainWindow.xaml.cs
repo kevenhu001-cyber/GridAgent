@@ -204,6 +204,7 @@ public partial class MainWindow : Window
                    "). Windows Sandbox and the bundled runtime must be installed.");
         }
     }
+    private async void Experience(object sender, RoutedEventArgs e) => await Local("experience");
     private async void ModelingBenchmark(object sender, RoutedEventArgs e)
     {
         if (_busy) return;

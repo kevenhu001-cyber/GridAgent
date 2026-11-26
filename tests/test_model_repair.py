@@ -30,6 +30,7 @@ def test_repair_rejects_locked_changes_and_stops_on_pass(tmp_path):
     assert rows[1]["status"] == "denied"
     assert len(requests) == 2
     assert rows[-1]["passed"] and rows[-1]["repair_attempts"] == 2
+    assert not rows[-1]["experience_recorded"]
 
 
 def test_demand_cannot_be_authorized():
@@ -64,3 +65,12 @@ def test_real_native_repair(tmp_path):
     assert not rows[0]["result"]["quality"]["passed"], rows[0]
     assert rows[-1]["passed"], rows[-1]
     assert rows[-1]["solver_calls"] == 2
+    assert rows[-1]["experience_recorded"]
+    from gridagent.experience import list_experience, remember_repair, search_experience
+
+    experiences = search_experience(tmp_path, "pandapower", ["voltage_operating_range"])
+    assert len(experiences) == 1
+    assert experiences[0]["changes"] == [{"component": "create_ext_grid", "parameter": "vm_pu", "direction": "increase"}]
+    assert not search_experience(tmp_path, "pypsa", ["voltage_operating_range"])
+    assert remember_repair(tmp_path, rows[-1]["study_id"])
+    assert len(list_experience(tmp_path)) == 1

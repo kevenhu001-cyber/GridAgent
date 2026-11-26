@@ -94,3 +94,17 @@ lossy-storage (80% charging efficiency), and lossy-link (directional 80% efficie
 transfer with renewable availability and backup generation). All use fixed inputs and
 independent analytic reference checks, never supplied as answer values to the model.
 These do not constitute an unseen-task test set.
+
+### Verified engineering experience
+
+Successful authorized native repairs are indexed in local experience.sqlite3 only
+if the baseline and best run both converged, the original model failed a quality
+check, the final model passed, model hashes and locked fields match, and both
+saved numeric evidence sets reproduce the original evaluator verdict. The index
+stores check IDs, change direction, backend/version and provenance IDs, not raw
+model parameters or rationale. It is not tamper-proof. Fixed modeling benchmarks
+and paper protocols are excluded. Subsequent failures receive up to five matching
+historical records, which are hypotheses, not permission to alter the model or
+proof of success. New runs must pass the independent evaluator again.
+View entries via --experience, /experience or Windows Engineering experience.
+This is retrieval-based experience learning, not weight training.

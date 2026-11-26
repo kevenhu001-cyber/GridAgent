@@ -20,6 +20,7 @@
      <Button Content="Simulation backends" Click="Backends"/>
      <Button Content="Run simulation program…" Click="NativeProgram"/>
      <Button Content="Benchmark and repair…" Click="ModelRepair"/>
+     <Button Content="Engineering experience" Click="Experience"/>
      <Button Content="Modeling benchmark…" Click="ModelingBenchmark"/>
      <Button Content="Review Python draft…" Click="ReviewScript"/>
      <Button Content="Import engineering references…" Click="ImportKnowledge"/>

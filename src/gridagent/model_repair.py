@@ -1,6 +1,7 @@
 """Explicitly authorized, bounded native benchmark repair loop."""
 import copy
 import json
+import sqlite3
 from pathlib import Path
 from typing import Annotated
 
@@ -8,6 +9,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import Field, TypeAdapter, model_validator
 
 from .dsr import Study, digest
+from .experience import failure_experience, remember_repair
 from .native_backends import run_program
 from .native_program import PPProgram, Program, Strict
 
@@ -120,7 +122,9 @@ def repair_updates(root, manifest, propose, solver=run_program):
                 try:
                     observation = {"best_program": current, "editable_paths": manifest.editable_paths,
                                    "best_feedback": best["result"]["quality"], "history": history,
-                                   "remaining_repairs": manifest.max_repairs-index+1}
+                                   "remaining_repairs": manifest.max_repairs-index+1,
+                                   "historical_experience": failure_experience(root, current["backend"],
+                                                                               best["result"]["quality"])}
                     proposal = Proposal.model_validate(propose(observation))
                     candidate = apply(current, proposal, manifest.editable_paths)
                     if digest(candidate) in seen:
@@ -164,13 +168,19 @@ def repair_updates(root, manifest, propose, solver=run_program):
                   "termination": "passed" if passed else "repair_budget_exhausted"}
         study.write("best-program", current)
         study.write("report", report)
-        yield report
+        try:
+            learned = remember_repair(root, study.id) if passed and best["iteration"] > 0 else False
+        except (OSError, sqlite3.Error, ValueError, KeyError, TypeError):
+            learned = False
+        study.write("experience-status", {"recorded": learned})
+        yield {**report, "experience_recorded": learned}
 
 
 def format_update(row):
     if "study_id" in row:
         return (f"Benchmark {row['study_id']} · {row['termination']} · "
-                f"best run {row['best_run_id']} · {row['solver_calls']} solver calls")
+                f"best run {row['best_run_id']} · {row['solver_calls']} solver calls · "
+                f"experience {'recorded' if row.get('experience_recorded') else 'not recorded'}")
     if row["status"] == "denied":
         return f"Repair {row['iteration']} · denied · {row['reason']}"
     quality = row["result"]["quality"]

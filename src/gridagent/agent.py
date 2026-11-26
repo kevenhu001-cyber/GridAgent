@@ -272,6 +272,11 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
             if isinstance(result, dict) and (result.get("status") == "failed" or
                     result.get("quality", {}).get("passed") is False):
                 result = {**result, "repair_knowledge": knowledge_index().feedback(name, result.get("fields", []))}
+                if workspace is not None and result.get("quality"):
+                    from .experience import failure_experience
+
+                    result["historical_experience"] = failure_experience(workspace, result.get("backend"),
+                                                                        result["quality"])
             messages.append(ToolMessage(content=json.dumps(result, allow_nan=False),
                                         tool_call_id=call["id"], name=name))
         return {"messages": messages, "used": used, "calls": calls}
