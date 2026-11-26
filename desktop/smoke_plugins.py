@@ -22,6 +22,8 @@ def main():
             ("opendss", lambda: run_extension(root, "opendss", {"kv": 11, "length_km": 1,
                 "r_ohm_km": 0.1, "x_ohm_km": 0.2, "load_kw": 100, "load_kvar": 25})),
             ("pybamm", lambda: run_extension(root, "pybamm", {"current_a": 1, "duration_s": 60, "initial_soc": 0.9})),
+            ("pvlib", lambda: run_extension(root, "pvlib", {"effective_irradiance_w_m2": 1000,
+                "cell_temperature_c": 25, "rated_dc_w": 500, "gamma_pdc_per_c": -0.004})),
         ):
             assert not available(key), key
             print(key, install(key), flush=True)

@@ -1,17 +1,19 @@
 """First-party opt-in solver extensions. No executable third-party manifests."""
 import importlib.util
-from importlib.metadata import distributions
 import json
 import os
 import shutil
 import subprocess
 import sys
+from importlib.metadata import distributions
 from pathlib import Path
 from uuid import uuid4
 
 from filelock import FileLock
 
 CATALOG = {
+    "pvlib": {"title": "pvlib", "packages": ["pvlib>=0.13,<0.17"], "modules": ["pvlib"],
+              "tools": ["solar_dc_power"], "prompt": "Use solar_dc_power for PVWatts DC power from effective irradiance W/m2, cell temperature C and rated W. Not AC output or weather prediction."},
     "pypsa": {"title": "PyPSA + HiGHS", "packages": ["pypsa>=1.0,<1.3", "highspy>=1.7,<2"],
               "modules": ["pypsa", "highspy"], "tools": ["pypsa_dispatch"],
               "prompt": "Use pypsa_dispatch for hourly fixed-capacity dispatch, cyclic SOC and directional links. MW/MWh; not AC voltage."},
@@ -80,7 +82,7 @@ def available(plugin):
 
 def status():
     return [{"id": key, "title": row["title"], "requirements": row["packages"],
-             "installed": available(key), "managed": installed_target(key) is not None,
+             "installed": available(key), "managed": (plugin_root() / key).is_dir() and not (plugin_root() / key).is_symlink(),
              "tools": row["tools"]} for key, row in CATALOG.items()]
 
 

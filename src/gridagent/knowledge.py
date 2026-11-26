@@ -11,6 +11,8 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field
 
 ALIASES = {
+    "solar_dc_power": "pvlib PVWatts solar photovoltaic DC power 光伏 辐照度 温度 功率",
+    "control_step_response": "control transfer function step response poles 控制 传递函数 阶跃 极点",
     "opendss_feeder": "OpenDSS distribution feeder 配电网 三相 电压",
     "battery_discharge": "PyBaMM SPM DFN lithium battery discharge 电池 电化学 放电",
     "pandapower_program": "pandapower create_bus create_line runpp calc_sc AC power flow short circuit 建模 潮流 短路 线路 变压器",

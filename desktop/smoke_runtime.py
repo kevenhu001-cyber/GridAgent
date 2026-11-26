@@ -15,6 +15,7 @@ import networkx
 import highspy
 import scipy
 
+from gridagent.extension_runner import run_extension
 from gridagent.native_backends import run_program
 from gridagent.paper import asset, training_evidence
 from gridagent.simulator import AndesSimulator
@@ -48,6 +49,9 @@ def main():
         assert eigen["status"] == "ok", eigen
         pp = run_program(workspace, {"backend": "pandapower", "base": "case14"})
         assert pp["status"] == "ok", pp
+        response = run_extension(workspace, "control", {"numerator": [1], "denominator": [1, 1], "duration_s": 5})
+        assert response["status"] == "ok", response
+        assert abs(response["metrics"]["final_sample"] - (1-__import__("math").exp(-5))) < 1e-6
         import importlib.util
         assert importlib.util.find_spec("pypsa") is None, "PyPSA must not ship in Core"
         assert importlib.util.find_spec("pip") is not None

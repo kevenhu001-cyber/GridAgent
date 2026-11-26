@@ -21,9 +21,9 @@ ADAPTER = TypeAdapter(Program)
 
 
 def available_backends():
-    return [{"name": name, "installed": available(name) if name in {"pypsa", "opendss", "pybamm"}
+    return [{"name": name, "installed": available(name) if name in {"pypsa", "opendss", "pybamm", "pvlib"}
              else importlib.util.find_spec(name) is not None}
-            for name in ("andes", "pandapower", "highspy", "control", "pypsa", "opendss", "pybamm")]
+            for name in ("andes", "pandapower", "highspy", "control", "pypsa", "opendss", "pybamm", "pvlib")]
 
 
 def run_program(root, program, timeout_s=300):

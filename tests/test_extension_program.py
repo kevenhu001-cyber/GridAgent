@@ -30,3 +30,25 @@ def test_pybamm_extension(tmp_path):
     result = run_extension(tmp_path, "pybamm", {"current_a": 1, "duration_s": 60, "initial_soc": 0.9})
     assert result["status"] == "ok", result
     assert result["metrics"]["capacity_ah"] == pytest.approx(1/60)
+
+
+@pytest.mark.integration
+def test_solar_reference(tmp_path):
+    pytest.importorskip("pvlib")
+    from gridagent.extension_runner import run_extension
+
+    result = run_extension(tmp_path, "pvlib", {"effective_irradiance_w_m2": 1000,
+        "cell_temperature_c": 25, "rated_dc_w": 500, "gamma_pdc_per_c": -0.004})
+    assert result["status"] == "ok", result
+    assert result["metrics"]["dc_power_w"] == pytest.approx(500)
+
+
+@pytest.mark.integration
+def test_control_reference(tmp_path):
+    pytest.importorskip("control")
+    from gridagent.extension_runner import run_extension
+
+    result = run_extension(tmp_path, "control", {"numerator": [1], "denominator": [1, 1], "duration_s": 5})
+    assert result["status"] == "ok", result
+    assert result["metrics"]["all_poles_left_half_plane"]
+    assert result["metrics"]["final_sample"] == pytest.approx(0.993262053, abs=1e-7)

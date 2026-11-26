@@ -133,5 +133,5 @@ also runs them offline. See [native backends](docs/native-backends.md).
 
 Use the native **Simulation Plugins** window or `gridagent --plugins`,
 `gridagent --plugin-install pypsa`, `gridagent --plugin-remove pypsa`.
-Optional managed backends: PyPSA, OpenDSS, PyBaMM. Tools and curated prompts are
+Optional managed backends: PyPSA, OpenDSS, PyBaMM, pvlib. Tools and curated prompts are
 bound on the next chat turn, without restarting the application. See [plugin design](docs/plugins.md).

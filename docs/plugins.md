@@ -11,6 +11,7 @@ then approve the package names and source. The explicit CLI and TUI commands are
     gridagent --plugin-install pypsa
     gridagent --plugin-install opendss
     gridagent --plugin-install pybamm
+    gridagent --plugin-install pvlib
     gridagent --plugin-remove pypsa
 
 The Agent never installs packages itself. A missing backend is shown by
@@ -36,8 +37,9 @@ OpenDSS exposes a balanced two-bus feeder snapshot, not the entire DSS language.
 PyBaMM exposes Chen2020 reference-cell SPM/DFN constant-current discharge, not a
 calibrated model of every chemistry. The latter two save numeric CSV output
 and check solver success/finite results; independent physical benchmark suites
-are future work. Installed Python Control is available to approved free-form
-scripts; a dedicated typed Agent tool is future work.
+are future work. pvlib exposes PVWatts DC power with explicit irradiance and cell temperature.
+Core Python Control exposes typed SISO step response and poles. These tools
+have analytic reference regression tests but not full modeling benchmarks.
 
 Other open-source or commercial platforms require their own reviewed adapter,
 manifest, prompts and evaluation. No arbitrary remote MCP servers, package names,

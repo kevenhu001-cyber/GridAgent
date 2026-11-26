@@ -7,6 +7,7 @@ from .workspace import artifact_folder, load_object
 TABLES = {"pandapower": {"bus", "line", "trafo", "load", "gen", "sgen", "storage", "ext_grid",
                          "res_bus", "res_line", "res_trafo", "res_bus_sc"},
           "opendss": {"node_voltage"}, "pybamm": {"battery_voltage"},
+          "pvlib": {"solar_power"}, "control": {"control_step"},
           "pypsa": {"generation_mw", "storage_mw", "storage_soc_mwh", "link_mw", "marginal_price"}}
 
 

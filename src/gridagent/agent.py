@@ -1,4 +1,5 @@
 """LangGraph decision loop with deterministic, sequential tool enforcement."""
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -12,7 +13,7 @@ from langgraph.graph.message import add_messages
 from pydantic import Field, ValidationError
 
 from .domain import CASES, CaseName, DeviceEdit, FaultRequest, ScenarioRequest
-from .extension_program import Battery, Feeder
+from .extension_program import Battery, ControlResponse, Feeder, Solar
 from .knowledge import KnowledgeIndex, QueryPlan, contracts
 from .native_program import DispatchProgram, PPProgram
 from .plugins import available, guidance
@@ -169,6 +170,20 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
 
             return run_extension(root, "pybamm", kwargs)
 
+        @tool(args_schema=Solar)
+        def solar_dc_power(**kwargs) -> dict:
+            """Calculate PVWatts DC power from effective irradiance, cell temperature and rating."""
+            from .extension_runner import run_extension
+
+            return run_extension(root, "pvlib", kwargs)
+
+        @tool(args_schema=ControlResponse)
+        def control_step_response(**kwargs) -> dict:
+            """Compute continuous SISO unit step response and poles from descending polynomial coefficients."""
+            from .extension_runner import run_extension
+
+            return run_extension(root, "control", kwargs)
+
         @tool
         def draft_simulation_script(title: Annotated[str, Field(min_length=1, max_length=160)],
                                     source: Annotated[str, Field(min_length=1, max_length=65536)]) -> dict:
@@ -233,11 +248,13 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
         tool_list.extend([list_research_runs, read_research_run, network_path,
                           list_network_branches, list_model_devices, analyze_voltage_waveform, compare_fault_runs, compare_flow_runs,
                           list_simulation_backends, pandapower_program, read_native_table, draft_simulation_script])
-        for plugin, plugin_tool in (("pypsa", pypsa_dispatch), ("opendss", opendss_feeder), ("pybamm", battery_discharge)):
+        for plugin, plugin_tool in (("pypsa", pypsa_dispatch), ("opendss", opendss_feeder), ("pybamm", battery_discharge), ("pvlib", solar_dc_power)):
             if available(plugin):
                 tool_list.append(plugin_tool)
+        if importlib.util.find_spec("control") is not None:
+            tool_list.append(control_step_response)
     tools = {t.name: t for t in tool_list}
-    numerical_tools = {"power_flow", "simulate_fault", "eigenanalysis", "scenario_power_flow", "pandapower_program", "pypsa_dispatch", "opendss_feeder", "battery_discharge"}
+    numerical_tools = {"power_flow", "simulate_fault", "eigenanalysis", "scenario_power_flow", "pandapower_program", "pypsa_dispatch", "opendss_feeder", "battery_discharge", "solar_dc_power", "control_step_response"}
     base_contracts = contracts(tools)
 
     def knowledge_index():

@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .extension_program import Battery, Feeder
+from .extension_program import Battery, ControlResponse, Feeder, Solar
 
 
 def feeder(params, folder):
@@ -15,8 +15,8 @@ def feeder(params, folder):
     dss.Basic.ClearAll()
     commands = [
         f"new circuit.gridagent basekv={p.kv} pu=1 phases=3 bus1=source mvasc3={p.source_mvasc}",
-        f"new line.feeder bus1=source bus2=loadbus phases=3 length={p.length_km} units=km "
-        f"r1={p.r_ohm_km} x1={p.x_ohm_km} r0={p.r_ohm_km} x0={p.x_ohm_km} c1=0 c0=0",
+        (f"new line.feeder bus1=source bus2=loadbus phases=3 length={p.length_km} units=km "
+         f"r1={p.r_ohm_km} x1={p.x_ohm_km} r0={p.r_ohm_km} x0={p.x_ohm_km} c1=0 c0=0"),
         f"new load.demand bus1=loadbus phases=3 conn=wye kv={p.kv} kw={p.load_kw} kvar={p.load_kvar} model=1",
         f"set voltagebases=[{p.kv}]", "calcvoltagebases", "solve",
     ]
@@ -54,12 +54,43 @@ def battery(params, folder):
         "scope": "Chen2020 reference-cell simulation; not a calibrated battery or lifetime prediction"}
 
 
+def solar(params, folder):
+    import pvlib
+
+    p = Solar.model_validate(params)
+    watts = float(pvlib.pvsystem.pvwatts_dc(p.effective_irradiance_w_m2, p.cell_temperature_c,
+                                           p.rated_dc_w, p.gamma_pdc_per_c))
+    if not np.isfinite(watts) or watts < 0:
+        raise ValueError("Invalid PVWatts DC result")
+    pd.DataFrame([{**p.model_dump(), "dc_power_w": watts}]).to_csv(folder / "solar_power.csv", index=False)
+    return {"version": pvlib.__version__, "metrics": {"dc_power_w": watts},
+            "scope": "PVWatts DC snapshot with user-supplied effective irradiance and cell temperature"}
+
+
+def control_response(params, folder):
+    import control
+
+    p = ControlResponse.model_validate(params)
+    system = control.tf(p.numerator, p.denominator)
+    poles = control.poles(system)
+    t, y = control.step_response(system, np.linspace(0, p.duration_s, p.samples))
+    t, y = np.asarray(t), np.asarray(y).reshape(-1)
+    if len(t) != len(y) or not np.isfinite(y).all() or not np.isfinite(poles).all():
+        raise ValueError("Non-finite response or poles")
+    pd.DataFrame({"time_s": t, "response": y}).to_csv(folder / "control_step.csv", index=False)
+    return {"version": control.__version__, "metrics": {
+        "poles": [{"real": float(z.real), "imag": float(z.imag)} for z in poles],
+        "all_poles_left_half_plane": bool(np.all(poles.real < 0)),
+        "final_sample": float(y[-1]), "peak_absolute_response": float(np.max(np.abs(y)))},
+        "scope": "Continuous SISO transfer function unit step; not a complete internal stability certificate"}
+
+
 def main():
     folder = Path.cwd()
     request = json.loads((folder / "request.json").read_text(encoding="utf-8"))
     backend = request["backend"]
     try:
-        handler = {"opendss": feeder, "pybamm": battery}[backend]
+        handler = {"opendss": feeder, "pybamm": battery, "pvlib": solar, "control": control_response}[backend]
         result = {"backend": backend, "status": "ok", **handler(request["parameters"], folder)}
         encoded = json.dumps(result, allow_nan=False)
     except Exception as exc:  # noqa: BLE001 - native solver boundary
