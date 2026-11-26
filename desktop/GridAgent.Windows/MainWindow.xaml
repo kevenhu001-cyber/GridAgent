@@ -74,9 +74,11 @@
              Padding="4" FontSize="15" VerticalScrollBarVisibility="Auto" AutomationProperties.Name="Research transcript"/>
    </Border>
    <WrapPanel Grid.Row="3" Margin="0,14,0,3">
-    <Button Content="DMQ" Click="Dmq"/>
+    <Button Content="Open DMQ" Click="Dmq"/>
+    <Button Content="Paper DSR ranking" Click="PaperRank"/>
+    <Button Content="Paper KPI CSV…" Click="PaperKpi"/>
     <Button Content="DMQ reference" Click="DmqReference"/>
-    <Button Content="DSR…" Click="Dsr"/>
+    <Button Content="Open DSR…" Click="Dsr"/>
     <Button Content="Eigenanalysis" Click="Eigen"/>
     <Button Content="Optimize" Click="Optimize"/>
     <Button Content="Runs" Click="Runs"/>

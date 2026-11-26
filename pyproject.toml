@@ -17,6 +17,7 @@ dependencies = [
   "numpy>=1.26,<3",
   "filelock>=3,<4",
   "scipy>=1.11,<2",
+  "pandas>=2,<4",
 ]
 [project.optional-dependencies]
 andes = ["andes>=2,<3"]

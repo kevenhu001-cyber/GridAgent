@@ -27,6 +27,8 @@ internal static class LocalEngine
             start.ArgumentList.Add(arg);
         start.Environment.Remove("PYTHONHOME");
         start.Environment.Remove("PYTHONPATH");
+        var assets = Path.Combine(AppContext.BaseDirectory, "benchmark-assets");
+        if (Directory.Exists(assets)) start.Environment["GRIDAGENT_BENCHMARK_ROOT"] = assets;
         start.Environment["PYTHONUTF8"] = "1";
         start.Environment["PYTHONNOUSERSITE"] = "1";
         if (!string.IsNullOrWhiteSpace(settings.Model)) start.Environment["GRIDAGENT_MODEL"] = settings.Model;

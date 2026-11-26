@@ -98,3 +98,13 @@ Native Windows WPF / Textual TUI / CLI → LangGraph decision loop → validated
     pytest -m integration
 
 The unit test simulator is a test double and must never be represented as a real simulation. See docs/architecture.md and docs/benchmark-roadmap.md for the research boundaries.
+
+## Original paper assets
+
+`python scripts/sync_benchmark.py benchmark-assets` stages the pinned MIT-licensed
+PowerAgentBench source, case files and training memory (not test memory).
+`gridagent --paper-rank` freezes estimates for the ten original cases;
+`gridagent --paper-kpi CSV CLEARING_S` calls the original KPI implementation;
+`gridagent --paper-edit Kqp Kqi Kvp Kvi` creates an isolated, verified Solar model edit.
+Paper ranking is prediction-only until the licensed PowerFactory backend is integrated.
+The original DMQ edit is not a completed DMView test. Windows bundles these assets.

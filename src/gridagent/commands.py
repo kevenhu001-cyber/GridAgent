@@ -8,7 +8,23 @@ from .workspace import list_runs, study_summary, waveform, waveform_text
 
 def workspace_command(root, command, args):
     root = Path(root)
-    if command == "optimize" and len(args) <= 1:
+    if command == "paper-kpi" and len(args) == 2:
+        import json
+
+        from .paper import original_kpis
+
+        yield json.dumps(original_kpis(args[0], float(args[1])), indent=2, ensure_ascii=False)
+    elif command == "paper-edit" and len(args) == 4:
+        from .paper import edit_original_model
+
+        identifier, report = edit_original_model(root, dict(zip(("Kqp", "Kqi", "Kvp", "Kvi"), map(float, args))))
+        yield f"Original WECC model edit verified · {identifier} · {report['new']} · not simulated"
+    elif command == "paper-rank" and not args:
+        from .agent import model_from_env
+        from .paper import model_estimator, paper_rank
+
+        yield from paper_rank(root, model_estimator(model_from_env()))
+    elif command == "optimize" and len(args) <= 1:
         from .optimization import format_update as format_optimization
         from .optimization import optimize_updates
 

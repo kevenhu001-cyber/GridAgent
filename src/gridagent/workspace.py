@@ -57,6 +57,12 @@ def study_summary(root: Path, identifier: str):
             lines.append(f"Attempts: {report['attempts']} · applied edits: {report['accepted_edits']}")
         for key, value in report["final_gains"].items():
             lines.append(f"{key}: {report['initial_gains'][key]:g} → {value:g}")
+    elif report.get("phase") == "predictions_frozen":
+        lines.append("Original paper predictions frozen; no fresh simulations")
+        lines.append("Selected: " + ", ".join(report["selected"]))
+    elif report.get("phase") == "model_edit_verified":
+        lines.append("Original Solar model edited; locked fields verified; not simulated")
+        lines.append(str(report["new"]))
     elif "observed" in report:
         lines.append(f"Screening attempts: {report['attempted']}")
         for row in report["observed"]:

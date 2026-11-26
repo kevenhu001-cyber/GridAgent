@@ -164,6 +164,16 @@ public partial class MainWindow : Window
         if (_busy || WorkspaceChanged() || StudyList.SelectedItem is not Entry row) return;
         await Local("resume-dsr", row.Id);
     }
+    private async void PaperRank(object sender, RoutedEventArgs e) => await Local("paper-rank");
+    private async void PaperKpi(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        var picker = new OpenFileDialog { Filter = "PowerFactory CSV (*.csv)|*.csv", CheckFileExists = true };
+        if (picker.ShowDialog(this) != true) return;
+        // Paper case fault starts at 1 s; explicitly request the absolute clearing time.
+        var dialog = new ClearingTimeWindow { Owner = this };
+        if (dialog.ShowDialog() == true) await Local("paper-kpi", picker.FileName, dialog.Value);
+    }
     private async void Dmq(object sender, RoutedEventArgs e) => await Execute(new { action = "dmq", reference = false });
     private async void DmqReference(object sender, RoutedEventArgs e) => await Execute(new { action = "dmq", reference = true });
     private async void Eigen(object sender, RoutedEventArgs e) => await Local("eigen");

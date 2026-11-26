@@ -1,0 +1,22 @@
+{
+  "repository": "Power-Agent/PowerAgentBench",
+  "commit": "77fe638482af94dd20ce28bfa4301658660d283d",
+  "files": {
+    "LICENSE": "f56b0e354760ee0c997526284cf705fd5369f1b3",
+    "benchmarks/dynamic/level1/actionspace.json": "5ccecab007f84383d44a476e9daa5a8df8b28daa",
+    "benchmarks/dynamic/level1/actioncost.json": "237053179cc0628b834bb18a3726c048d4feb0b9",
+    "benchmarks/dynamic/level1/harness/criteria.json": "7330d2567167d64fc90f4e88968d064215ea7e38",
+    "benchmarks/dynamic/level1/harness/config.py": "0eb896bd349cb22dfaac77562a0f747d5a16e586",
+    "benchmarks/dynamic/level1/harness/dyr_tools.py": "8daad36a21d65789d22b557bb21bc4636ca9f9ff",
+    "benchmarks/dynamic/level1/harness/dmview_runner.py": "fdc797aea86ba258b5b548e1ce1ffaae53234c04",
+    "benchmarks/dynamic/level1/harness/evaluator.py": "f728b9017ae215a3bc6218894a104e07967d34da",
+    "benchmarks/dynamic/level1/harness/channels.py": "0f790fb75bcf0cd4a4c92ddf7fd310bf7536f8ca",
+    "benchmarks/dynamic/level1/harness/ini_gen.py": "edba3db4c9e19befaededc2d4f9db2d07ba114f0",
+    "cases/solar_wecc/psse/Solar.dyr": "5338de24cdaf29a740782db91bc3cfa17eba1f6f",
+    "cases/solar_wecc/psse/Solar.sav": "b32d581da642928f6aa2f5cb21242030f00e282c",
+    "benchmarks/dynamic/level2/compute_kpis.py": "7a5d09fc52cbbc85617d5d2abc85cf8769961751",
+    "benchmarks/dynamic/level2/semantic_memory.json": "b9e56f0932b76f39de7bab52cdae9ca11a35b95c",
+    "benchmarks/dynamic/level2/Agent_DIgSILENT.py": "51a3bb8871877c6c76a6a15970fbf9fd588ecdc6",
+    "benchmarks/dynamic/level2/simulation_config.json": "11ba32db3af24afec530ccdfcbe303efc9dd2cb3"
+  }
+}

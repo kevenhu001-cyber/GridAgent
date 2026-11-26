@@ -57,10 +57,15 @@ def main():
     parser.add_argument("--study", help="View a saved study")
     parser.add_argument("--wave", nargs="+", metavar="ID_OR_CHANNEL", help="View a saved run waveform")
     parser.add_argument("--study-wave", nargs="+", metavar="ID_PATH_CHANNEL", help="View a study waveform")
+    parser.add_argument("--paper-rank", action="store_true", help="Predict original paper DSR ranking")
+    parser.add_argument("--paper-kpi", nargs=2, metavar=("CSV", "CLEARING_S"))
+    parser.add_argument("--paper-edit", nargs=4, metavar="GAIN")
     args = parser.parse_args()
     store = ResearchStore(args.workspace / "research.sqlite3")
     console = Console()
     local_commands = [
+        ("paper-rank", [] if args.paper_rank else None),
+        ("paper-kpi", args.paper_kpi), ("paper-edit", args.paper_edit),
         ("optimize", [str(args.optimize)] if args.optimize is not None else None),
         ("resume-dsr", [args.resume_dsr] if args.resume_dsr else None),
         ("eigen", [] if args.eigen else None),
