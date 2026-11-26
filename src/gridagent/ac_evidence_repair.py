@@ -26,13 +26,27 @@ def prepare(root, auth):
     if not diagnostic.exists("report"):
         raise ValueError("Repair requires committed AC diagnostic evidence")
     frozen = diagnostic.read("manifest")
-    if frozen.get("protocol") != DIAGNOSTIC_PROTOCOL:
+    protocol = frozen.get("protocol")
+    if protocol == DIAGNOSTIC_PROTOCOL:
+        spec = ACDiagnosticExperiment.model_validate(frozen["spec"])
+        count = len(spec.probes)+1
+        replay = resume_experiment
+    elif protocol == "adaptive-ac-experiment-v1":
+        from .adaptive_ac_experiment import resume_adaptive
+        from .adaptive_ac_ir import AdaptiveACExperiment
+
+        auth_spec = AdaptiveACExperiment.model_validate(frozen["spec"])
+        spec = auth_spec.experiment
+        count = diagnostic.read("report")["reserved_solver_runs"]
+        if type(count) is not int or not 2 <= count <= auth_spec.run_budget:
+            raise ValueError("Invalid adaptive diagnostic run count")
+        replay = resume_adaptive
+    else:
         raise ValueError("Repair requires AC diagnostic experiment protocol")
-    spec = ACDiagnosticExperiment.model_validate(frozen["spec"])
     if not all(diagnostic.exists(f"reservation-{i}") and diagnostic.exists(f"evaluation-{i}")
-               for i in range(len(spec.probes)+1)):
+               for i in range(count)):
         raise ValueError("Diagnostic reservations or observations missing")
-    report = resume_experiment(root, diagnostic.id, solver=no_solver)
+    report = replay(root, diagnostic.id, solver=no_solver)
     if fingerprint(report) != auth.diagnostic_report_sha256:
         raise ValueError("Repair authorization differs from diagnostic report")
     source = Study.reopen(root / "studies", spec.source_study_id)

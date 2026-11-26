@@ -23,6 +23,7 @@ WORKSPACE_COMMANDS = {
     "/optimize-ir", "/optimize-resume", "/math-program", "/math-resume", "/ac-check", "/ac-check-resume", "/diagnose-study",
     "/diagnostic-experiment", "/diagnostic-experiment-resume",
     "/ac-diagnostic-experiment", "/ac-diagnostic-experiment-resume",
+    "/adaptive-ac-experiment", "/adaptive-ac-experiment-resume",
     "/ac-evidence-repair", "/ac-evidence-repair-resume", "/remember-ac-repair", "/search-ac-experience",
     "/drafts", "/model-repair", "/modeling-benchmark", "/experience", "/plugins", "/plugin-install",
     "/plugin-remove", "/plugin-check", "/plugin-update", "/plugin-rollback", "/register-ngspice", "/ngspice-rc",
@@ -278,6 +279,7 @@ class GridApp(App):
             chat.write(Text("/ac-check PATH · /ac-check-resume ID · /diagnose-study ID"))
             chat.write(Text("/diagnostic-experiment PATH · /diagnostic-experiment-resume ID"))
             chat.write(Text("/ac-diagnostic-experiment PATH · /ac-diagnostic-experiment-resume ID"))
+            chat.write(Text("/adaptive-ac-experiment PATH · /adaptive-ac-experiment-resume ID"))
             chat.write(Text("/ac-evidence-repair PATH · /ac-evidence-repair-resume ID"))
             chat.write(Text("/remember-ac-repair ID · /search-ac-experience ID"))
             chat.write(Text("/research-python MANIFEST · /research-sandbox enable|disable|status · "

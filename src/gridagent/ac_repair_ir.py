@@ -44,8 +44,17 @@ def compile_candidates(auth, diagnostic, original, report):
     variants = compile_probes(diagnostic, original)
     observed = report["observations"]
     updates = report["hypothesis_updates"]
-    if len(observed) != len(variants) or len(updates) != len(variants)-1:
-        raise ValueError("Diagnostic candidate evidence incomplete")
+    if report.get("protocol") == "adaptive-ac-experiment-v1":
+        observed_by_index = {row["index"]: row for row in observed}
+        updates_by_index = {row["index"]: row for row in updates}
+        if (len(observed_by_index) != len(observed) or len(updates_by_index) != len(updates)
+                or set(observed_by_index) != {0, *updates_by_index}):
+            raise ValueError("Adaptive diagnostic evidence inconsistent")
+    else:
+        if len(observed) != len(variants) or len(updates) != len(variants)-1:
+            raise ValueError("Diagnostic candidate evidence incomplete")
+        observed_by_index = dict(enumerate(observed))
+        updates_by_index = dict(enumerate(updates, 1))
     if len(auth.candidate_indices)*len(original.snapshots) > auth.max_solver_runs:
         raise ValueError("Budget must cover every original snapshot for every selected candidate")
     candidates, storage_devices = [], set()
@@ -53,7 +62,9 @@ def compile_candidates(auth, diagnostic, original, report):
         if index >= len(variants):
             raise ValueError("Unknown diagnostic candidate index")
         job, variant = variants[index]
-        row, update = observed[index], updates[index-1]
+        if index not in observed_by_index or index not in updates_by_index:
+            raise ValueError("Repair candidate was not experimentally tested")
+        row, update = observed_by_index[index], updates_by_index[index]
         if (row["index"] != index or row["probe"] != job["probe"] or row["change"] != job["change"]
                 or row["ac_spec_sha256"] != variant.sha256() or update["probe"] != job["probe"]):
             raise ValueError("Diagnostic evidence does not match compiled candidate")

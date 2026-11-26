@@ -57,6 +57,12 @@ def study_summary(root: Path, identifier: str):
                          f"{candidate['verified_snapshots']}/{candidate['required_snapshots']} verified")
         lines.append(f"Full DC schedule coverage: {report['full_dc_schedule_coverage']}")
         lines.append("Proposed model only; original not modified and dynamic security not established")
+    elif report.get("phase") == "adaptive_ac_experiment_finished":
+        lines.append(f"Adaptive AC: {report['termination']}")
+        lines.append(f"Reserved runs: {report['reserved_solver_runs']}/{report['max_solver_runs']}")
+        lines.append(f"Verified single-snapshot candidate: {report['verified_candidate_index']}")
+        lines.append(f"Untried candidates: {len(report['untried_candidate_indices'])}")
+        lines.append("Single-snapshot evidence only; full-scope repair required")
     elif report.get("phase") == "ac_diagnostic_experiment_finished":
         lines.append(f"AC diagnostic baseline reproduced: {report['baseline_reproduced']}")
         lines.append(f"Reserved runs: {report['reserved_solver_runs']}/{report['max_solver_runs']}")

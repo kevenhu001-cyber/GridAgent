@@ -32,6 +32,8 @@ def main():
     research.add_argument("--diagnostic-experiment-resume", metavar="ID", help="Recover diagnostic experiment evidence")
     research.add_argument("--ac-diagnostic-experiment", metavar="JSON", help="Run authorized single-factor AC probes")
     research.add_argument("--ac-diagnostic-experiment-resume", metavar="ID", help="Recover AC diagnostic evidence")
+    research.add_argument("--adaptive-ac-experiment", metavar="JSON", help="Run bounded adaptive AC probe selection")
+    research.add_argument("--adaptive-ac-experiment-resume", metavar="ID", help="Recover adaptive AC experiments")
     research.add_argument("--ac-evidence-repair", metavar="JSON", help="Revalidate authorized AC repair candidates")
     research.add_argument("--ac-evidence-repair-resume", metavar="ID", help="Recover AC repair evidence")
     research.add_argument("--remember-ac-repair", metavar="ID", help="Index replay-verified local repair experience")
@@ -125,6 +127,9 @@ def main():
         ("search-ac-experience", [args.search_ac_experience] if args.search_ac_experience else None),
         ("ac-evidence-repair", [args.ac_evidence_repair] if args.ac_evidence_repair else None),
         ("ac-evidence-repair-resume", [args.ac_evidence_repair_resume] if args.ac_evidence_repair_resume else None),
+        ("adaptive-ac-experiment", [args.adaptive_ac_experiment] if args.adaptive_ac_experiment else None),
+        ("adaptive-ac-experiment-resume",
+         [args.adaptive_ac_experiment_resume] if args.adaptive_ac_experiment_resume else None),
         ("ac-diagnostic-experiment", [args.ac_diagnostic_experiment] if args.ac_diagnostic_experiment else None),
         ("ac-diagnostic-experiment-resume",
          [args.ac_diagnostic_experiment_resume] if args.ac_diagnostic_experiment_resume else None),

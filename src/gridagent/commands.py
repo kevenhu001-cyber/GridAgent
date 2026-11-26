@@ -237,6 +237,28 @@ def workspace_command(root, command, args, *, model_factory=None):
         except Timeout as exc:
             raise ValueError("AC repair or source study is locked") from exc
         yield json.dumps(report, ensure_ascii=False, allow_nan=False)
+    elif command in {"adaptive-ac-experiment", "adaptive-ac-experiment-resume"} and len(args) == 1:
+        import json
+
+        from filelock import Timeout
+
+        from .adaptive_ac_experiment import resume_adaptive, start_adaptive
+        from .adaptive_ac_ir import AdaptiveACExperiment
+
+        try:
+            if command == "adaptive-ac-experiment":
+                with Path(args[0]).open("rb") as handle:
+                    payload = handle.read(1024 * 1024 + 1)
+                if len(payload) > 1024 * 1024:
+                    raise ValueError("Adaptive AC input exceeds 1 MiB")
+                identifier = start_adaptive(root, AdaptiveACExperiment.model_validate_json(payload))
+                yield "Adaptive AC experiment study: " + identifier
+            else:
+                identifier = args[0]
+            report = resume_adaptive(root, identifier)
+        except Timeout as exc:
+            raise ValueError("Adaptive AC experiment or source study is locked") from exc
+        yield json.dumps(report, ensure_ascii=False, allow_nan=False)
     elif command in {"ac-diagnostic-experiment", "ac-diagnostic-experiment-resume"} and len(args) == 1:
         import json
 

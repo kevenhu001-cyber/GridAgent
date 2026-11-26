@@ -437,3 +437,41 @@ def test_native_evidence_repair_revalidates_full_original_scope(tmp_path):
     assert match["structure_similarity"] == 1
     assert "change" not in match and "proposed_ac_spec" not in match
     assert found["solver_calls"] == 0
+
+
+
+@pytest.mark.integration
+def test_native_adaptive_candidate_can_be_repaired_and_indexed(tmp_path, completed):
+    pytest.importorskip("pandapower")
+    from gridagent.ac_evidence_repair import resume_repair, start_repair
+    from gridagent.ac_repair_experience import remember_ac_repair
+    from gridagent.adaptive_ac_experiment import resume_adaptive, start_adaptive
+    from gridagent.diagnosis import diagnose_study
+    from gridagent.engineering_ir import fingerprint
+
+    identifier, _ = completed
+    original = ac_input(identifier)
+    original["model"]["devices"][0]["voltage_pu"] = 0.89
+    source = start_ac_check(tmp_path, original)
+    assert not resume_ac_check(tmp_path, source)["completed"]
+    digest = diagnose_study(tmp_path, source)["source_report_sha256"]
+    raw = diagnostic_input(source, digest)
+    raw["probes"][0]["value_pu"] = 1
+    raw["probes"].append({"kind": "voltage_setpoint", "device": "slackA", "value_pu": 1.1})
+    raw["max_solver_runs"] = 3
+    adaptive = start_adaptive(tmp_path, {"experiment": raw, "run_budget": 3})
+    report = resume_adaptive(tmp_path, adaptive)
+    assert report["completed"], report
+    assert report["reserved_solver_runs"] == 2
+    assert report["verified_candidate_index"] == 1
+    assert report["untried_candidate_indices"] == [2]
+    auth = {"diagnostic_study_id": adaptive, "diagnostic_report_sha256": fingerprint(report),
+            "candidate_indices": [2], "max_solver_runs": 1}
+    with pytest.raises(ValueError, match="not experimentally tested"):
+        start_repair(tmp_path, auth)
+    auth["candidate_indices"] = [1]
+    repair = start_repair(tmp_path, auth)
+    verified = resume_repair(tmp_path, repair)
+    assert verified["completed"], verified
+    assert remember_ac_repair(tmp_path, repair)["outcomes"] == ["verified_original_scope"]
+    assert diagnose_study(tmp_path, source)["source_report_sha256"] == digest

@@ -94,7 +94,11 @@ def replay_records(root, identifier):
         raise ValueError("Repair evidence incomplete")
     report = resume_repair(root, identifier, solver=no_solver)
     diagnostic = Study.reopen(root / "studies", report["diagnostic_study_id"])
-    spec = ACDiagnosticExperiment.model_validate(diagnostic.read("manifest")["spec"])
+    diagnostic_manifest = diagnostic.read("manifest")
+    raw = diagnostic_manifest["spec"]
+    if diagnostic_manifest["protocol"] == "adaptive-ac-experiment-v1":
+        raw = raw["experiment"]
+    spec = ACDiagnosticExperiment.model_validate(raw)
     source = Study.reopen(root / "studies", spec.source_study_id)
     context = features(source.read("manifest")["spec"])
     target = rule_for(spec.target_scope, spec.target_check)
