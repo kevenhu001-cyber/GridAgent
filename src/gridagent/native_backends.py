@@ -79,7 +79,7 @@ def run_program(root, program, timeout_s=300, *, run_id=None, cancelled=None):
     (folder / "request.json").write_text(json.dumps(request, allow_nan=False), encoding="utf-8")
     env = {k: v for k, v in os.environ.items() if k.upper() in {
         "PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "WINDIR", "TEMP", "TMP",
-        "LD_LIBRARY_PATH", "LANG", "LC_ALL", "VIRTUAL_ENV", "LOCALAPPDATA", "APPDATA",
+        "LD_LIBRARY_PATH", "LANG", "LC_ALL", "VIRTUAL_ENV", "LOCALAPPDATA", "APPDATA", "NUMBA_CACHE_DIR",
         "PROCESSOR_ARCHITECTURE", "PROCESSOR_ARCHITEW6432", "PROCESSOR_IDENTIFIER",
         "NUMBER_OF_PROCESSORS", "COMSPEC", "PATHEXT"
     }}

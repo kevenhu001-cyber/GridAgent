@@ -43,7 +43,7 @@ class AndesSimulator:
         # Do not pass model-provider credentials to the solver.
         env = {k: v for k, v in os.environ.items() if k.upper() in {
             "PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "WINDIR", "TEMP", "TMP",
-            "LD_LIBRARY_PATH", "LANG", "LC_ALL", "VIRTUAL_ENV"
+            "LD_LIBRARY_PATH", "LANG", "LC_ALL", "VIRTUAL_ENV", "NUMBA_CACHE_DIR"
         }}
         try:
             with (folder / "solver.log").open("w", encoding="utf-8") as log:

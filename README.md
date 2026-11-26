@@ -1,5 +1,9 @@
 # GridAgent
 
+<img src="desktop/branding/gridagent-logo.webp" alt="GridAgent logo" width="220">
+
+Developed by **TopoDrive**. Lead developer: **Adex Hu**.
+
 An open-source, simulation-grounded agent for power-system dynamics and engineering research, inspired by [PowerAgentBench-Dyn](https://arxiv.org/abs/2606.20401).
 
 **Status: early development.** Independent implementation; not an official reproduction or production grid-control system.
@@ -157,3 +161,7 @@ Use the native **Simulation Plugins** window or `gridagent --plugins`,
 `gridagent --plugin-install pypsa`, `gridagent --plugin-remove pypsa`.
 Optional managed backends: PyPSA, OpenDSS, PyBaMM, pvlib, windpowerlib, CVXPY, Pyomo, CasADi, PYPOWER, PyPowSyBl, OSQP, scikit-rf, CoolProp and rainflow. Tools and curated prompts are
 bound on the next chat turn, without restarting the application. See [plugin design](docs/plugins.md).
+
+### Architecture
+
+See [GridAgent architectural direction](docs/architecture.md) for the native workbench, execution boundaries, evidence-backed presentation contracts, and long-term acceptance gates.

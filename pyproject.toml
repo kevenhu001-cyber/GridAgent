@@ -6,6 +6,8 @@ build-backend = "hatchling.build"
 name = "gridagent"
 version = "0.1.0"
 description = "Simulation-grounded agent for power-system research"
+authors = [{name = "Adex Hu"}]
+maintainers = [{name = "TopoDrive"}]
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 license = "GPL-3.0-or-later"

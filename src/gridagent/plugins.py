@@ -78,7 +78,7 @@ def spec(plugin):
 
 def clean_env():
     allowed = {"PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "WINDIR", "TEMP", "TMP",
-               "LOCALAPPDATA", "APPDATA", "LANG", "LC_ALL", "LD_LIBRARY_PATH",
+               "LOCALAPPDATA", "APPDATA", "NUMBA_CACHE_DIR", "LANG", "LC_ALL", "LD_LIBRARY_PATH",
                "PROCESSOR_ARCHITECTURE", "PROCESSOR_ARCHITEW6432", "PROCESSOR_IDENTIFIER",
                "NUMBER_OF_PROCESSORS", "COMSPEC", "PATHEXT"}
     env = {k: v for k, v in os.environ.items() if k.upper() in allowed}

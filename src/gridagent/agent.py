@@ -2,10 +2,18 @@
 import importlib.util
 import json
 import os
+import time
 from pathlib import Path
 from typing import Annotated, TypedDict
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+    message_chunk_to_message,
+)
 from langchain_core.tools import StructuredTool, tool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
@@ -48,6 +56,7 @@ Never claim solver failure proves
 physical instability. Voltage severity is a proxy, not the paper's full stability
 criterion. Distinguish estimated, measured and unavailable data. Cite run IDs.
 Respect the remaining simulation budget. Explain conclusions and limitations.
+Format mathematical expressions with Markdown $...$ inline or $ on separate lines for display equations.
 Never request secrets, access arbitrary files, or perform live grid control."""
 
 
@@ -73,7 +82,38 @@ def model_from_env(workspace=None, *, settings=None, api_key=None):
                       timeout=60, max_retries=1)
 
 
-def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 12, workspace=None):
+def invoke_public_stream(model, messages, on_delta=None):
+    """Stream public text only; aggregate complete tool-call chunks before execution."""
+    if on_delta is None:
+        return model.invoke(messages)
+    from .message_format import text_content
+
+    accumulated = None
+    pending = []
+    last = time.monotonic()
+    for chunk in model.stream(messages):
+        # Never forward tool-call args, reasoning blocks or provider metadata.
+        text = text_content(chunk)
+        if text:
+            pending.append(text)
+        if pending and (time.monotonic() - last >= 0.045 or sum(map(len, pending)) >= 512):
+            on_delta("".join(pending))
+            pending.clear()
+            last = time.monotonic()
+        if accumulated is None:
+            accumulated = chunk
+        elif isinstance(accumulated, AIMessageChunk) and isinstance(chunk, AIMessageChunk):
+            accumulated = accumulated + chunk
+        else:
+            raise TypeError("Unexpected model stream message sequence")
+    if pending:
+        on_delta("".join(pending))
+    if accumulated is None:
+        raise ValueError("Model returned an empty stream")
+    return message_chunk_to_message(accumulated) if isinstance(accumulated, AIMessageChunk) else accumulated
+
+
+def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 12, workspace=None, *, on_delta=None):
     if not 0 <= budget <= 30 or not 1 <= max_calls <= 60:
         raise ValueError("Invalid budget")
 
@@ -326,7 +366,7 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
 
     def decide(state: State):
         policy = f"Remaining numerical simulation budget: {budget - state['used']}; "                  f"remaining tool calls: {max_calls - state['calls']}."
-        msg = bound.invoke([SystemMessage(content=system + "\n" + policy), *state["messages"]])
+        msg = invoke_public_stream(bound, [SystemMessage(content=system + "\n" + policy), *state["messages"]], on_delta)
         return {"messages": [msg], "rounds": state["rounds"] + 1}
 
     def route(state: State):
@@ -375,10 +415,10 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
 
     def stop(state: State):
         # One final synthesis call without bound tools; it cannot spend more solver budget.
-        msg = model.invoke([SystemMessage(content=system +
+        msg = invoke_public_stream(model, [SystemMessage(content=system +
                             "\nTool-call limit reached. Summarize available evidence, failures and remaining "
                             "uncertainty. Do not call tools or claim unfinished work is complete."),
-                            *state["messages"]])
+                            *state["messages"]], on_delta)
         if getattr(msg, "tool_calls", []):
             msg = AIMessage(content="Tool-call limit reached; no further simulation executed. Review saved results.")
         return {"messages": [msg]}
