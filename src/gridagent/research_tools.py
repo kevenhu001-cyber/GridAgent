@@ -1,0 +1,79 @@
+"""Read-only, bounded evidence tools for the general research agent."""
+from pathlib import Path
+
+import numpy as np
+
+from .topology import shortest_path
+from .workspace import artifact_folder, list_runs, load_object, waveform
+
+
+def run_record(root, identifier):
+    folder = artifact_folder(root, "runs", identifier)
+    record = load_object(folder / "result.json")
+    # Return numerical evidence without arbitrary filesystem paths or raw solver logs.
+    keys = ("status", "reason", "case", "operation", "backend", "model_sha256",
+            "bus_ids", "fault", "scenario", "metrics", "voltages_pu", "angles_rad", "topology", "samples")
+    return {"run_id": identifier, **{k: record[k] for k in keys if k in record}}
+
+
+def topology_path(root, run_id, origin, destination):
+    folder = artifact_folder(root, "runs", run_id)
+    record = run_record(root, run_id)
+    if record.get("status") != "ok" or record.get("operation") != "inspect":
+        raise ValueError("Use a successful inspect_case run")
+    return {"run_id": run_id, **shortest_path(load_object(folder / "topology.json"), origin, destination)}
+
+
+def recent_runs(root, limit=12):
+    if not 1 <= limit <= 30:
+        raise ValueError("Limit must be 1..30")
+    rows = list_runs(root)
+    rows.sort(key=lambda row: (Path(root) / "runs" / row["id"]).stat().st_mtime, reverse=True)
+    return rows[:limit]
+
+
+def analyze_voltage(root, run_id, channel, start_s=None):
+    record = run_record(root, run_id)
+    if record.get("status") != "ok" or record.get("operation") != "fault":
+        raise ValueError("Use a completed fault simulation")
+    data = waveform(root, run_id, channel)
+    t, y = data["time"], data["value"]
+    clearing = 1 + record["fault"]["duration_s"]
+    start = clearing if start_s is None else float(start_s)
+    if not np.isfinite(start) or start < 0:
+        raise ValueError("Invalid analysis window")
+    t, y = t[t >= start], y[t >= start]
+    if len(t) < 2 or t[-1] <= t[0]:
+        raise ValueError("Insufficient waveform samples in requested window")
+    dt = np.diff(t)
+    duration = float(t[-1] - t[0])
+    def integrate(a):
+        return float(np.sum(dt * (a[:-1] + a[1:]) / 2))
+    i, j = int(y.argmin()), int(y.argmax())
+    return {"run_id": run_id, "channel": data["channel"], "window_s": [float(t[0]), float(t[-1])],
+            "samples": len(t), "min_pu": float(y[i]), "min_time_s": float(t[i]),
+            "max_pu": float(y[j]), "max_time_s": float(t[j]),
+            "rms_deviation_from_1pu": float(np.sqrt(integrate((y-1)**2)/duration)),
+            "low_sample_fraction_time_proxy": integrate((y < 0.95).astype(float))/duration,
+            "high_sample_fraction_time_proxy": integrate((y > 1.05).astype(float))/duration,
+            "last_pu": float(y[-1]), "stability": "not_assessed",
+            "method": "trapezoidal sample indicators; approximate threshold duration"}
+
+
+def compare_faults(root, baseline_id, candidate_id):
+    a, b = run_record(root, baseline_id), run_record(root, candidate_id)
+    if baseline_id == candidate_id:
+        raise ValueError("Select two distinct runs")
+    for row in (a, b):
+        if row.get("status") != "ok" or row.get("operation") != "fault" or not row.get("model_sha256"):
+            raise ValueError("Comparison needs completed, fingerprinted fault runs")
+    if a["model_sha256"] != b["model_sha256"] or a["fault"]["end_s"] != b["fault"]["end_s"]:
+        raise ValueError("Model snapshot and simulation end time must match")
+    keys = ("v_min_pu", "v_max_pu", "voltage_severity_proxy")
+    return {"baseline_run": baseline_id, "candidate_run": candidate_id, "model_sha256": a["model_sha256"],
+            "baseline_fault": a["fault"], "candidate_fault": b["fault"],
+            "baseline_window_s": a["metrics"]["window_s"], "candidate_window_s": b["metrics"]["window_s"],
+            "metrics": {k: {"baseline": a["metrics"][k], "candidate": b["metrics"][k],
+                            "delta": b["metrics"][k]-a["metrics"][k]} for k in keys},
+            "caution": "Each run uses its own post-clearing window; descriptive comparison, not causal proof.",
+            "stability": "not_assessed"}

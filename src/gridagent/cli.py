@@ -26,6 +26,8 @@ def tool_summary(message):
         return f"{message.name}: result received"
     status = data.get("status", "ok")
     result = f"{message.name}: {status}"
+    if message.name == "research_plan" and status == "ok":
+        return "Research plan: " + data["objective"] + "\n" + "\n".join(f"{i+1}. {step}" for i, step in enumerate(data["steps"])) + "\nVerify: " + data["verification"]
     if data.get("run_id"):
         result += f" | run {data['run_id']}"
     if status != "ok":
@@ -58,6 +60,8 @@ def main():
     parser.add_argument("--wave", nargs="+", metavar="ID_OR_CHANNEL", help="View a saved run waveform")
     parser.add_argument("--study-wave", nargs="+", metavar="ID_PATH_CHANNEL", help="View a study waveform")
     parser.add_argument("--paper-dmq", metavar="PROFILE", help="Run original licensed DMQ")
+    parser.add_argument("--import-model", type=Path, metavar="XLSX")
+    parser.add_argument("--models", action="store_true")
     parser.add_argument("--paper-trials", nargs="+", metavar="TASK_COUNT_PROFILE", help="Independent paper trials")
     parser.add_argument("--paper-mitigate", metavar="PROFILE", help="Screen and test fresh condenser variants")
     parser.add_argument("--paper-dsr", metavar="PROFILE", help="Run original licensed top-three DSR")
@@ -68,6 +72,8 @@ def main():
     store = ResearchStore(args.workspace / "research.sqlite3")
     console = Console()
     local_commands = [
+        ("import-model", [str(args.import_model)] if args.import_model else None),
+        ("models", [] if args.models else None),
         ("paper-trials", args.paper_trials),
         ("paper-mitigate", [args.paper_mitigate] if args.paper_mitigate else None),
         ("paper-dsr", [args.paper_dsr] if args.paper_dsr else None),
@@ -141,7 +147,7 @@ def main():
                 console.print(format_update(node, value), markup=False)
             return
         sid = store.require_session(args.session) if args.session else store.create_session()
-        graph = build_agent(model, simulator, budget=args.budget)
+        graph = build_agent(model, simulator, budget=args.budget, workspace=args.workspace)
     except ValueError as exc:
         parser.error(str(exc))
     if args.ask:

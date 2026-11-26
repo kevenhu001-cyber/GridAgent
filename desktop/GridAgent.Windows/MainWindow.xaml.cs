@@ -170,6 +170,13 @@ public partial class MainWindow : Window
         var picker = new OpenFileDialog { Filter = "Dedicated DMView profile (*.json)|*.json", CheckFileExists = true };
         if (picker.ShowDialog(this) == true) await Local("paper-dmq", picker.FileName);
     }
+    private async void ImportModel(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        var picker = new OpenFileDialog { Filter = "ANDES workbook (*.xlsx)|*.xlsx", CheckFileExists = true };
+        if (picker.ShowDialog(this) == true) await Local("import-model", picker.FileName);
+    }
+    private async void Models(object sender, RoutedEventArgs e) => await Local("models");
     private async void PaperMitigation(object sender, RoutedEventArgs e)
     {
         if (_busy) return;

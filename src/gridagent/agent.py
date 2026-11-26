@@ -1,7 +1,10 @@
 """LangGraph decision loop with deterministic, sequential tool enforcement."""
 import json
 import os
+from pathlib import Path
 from typing import Annotated, TypedDict
+
+from pydantic import Field
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
@@ -14,7 +17,12 @@ from .simulator import Simulator
 
 SYSTEM = """You are GridAgent, an offline power-system research assistant.
 Use tools for numerical claims. Inspect the case before a new fault study.
-Open simulation tools use packaged research systems. Original IEEE39 training memory is a distinct
+Use registered model IDs, never arbitrary paths. Open IEEE39 is distinct from the paper project.
+For multi-step research, use research_plan to record a short user-visible plan, then adapt using tool feedback.
+Inspect topology and available buses, run baseline and targeted cases, compare matching model fingerprints,
+and verify conclusions with stored numerical evidence. Do not use tools for purely conceptual questions.
+If a tool fails, diagnose the reported reason and change the approach within budget, not invent results.
+Open simulation tools use packaged or explicitly registered research systems. Original IEEE39 training memory is a distinct
 historical data source, never a new simulation. Licensed paper studies require explicit user invocation.
 Never claim solver failure proves
 physical instability. Voltage severity is a proxy, not the paper's full stability
@@ -40,14 +48,16 @@ def model_from_env():
                       timeout=60, max_retries=1)
 
 
-def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 12):
+def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 12, workspace=None):
     if not 0 <= budget <= 30 or not 1 <= max_calls <= 60:
         raise ValueError("Invalid budget")
 
     @tool
     def list_cases() -> dict:
-        """List the built-in offline research cases."""
-        return {"cases": list(CASES)}
+        """List built-in offline cases and user-registered immutable model IDs."""
+        from .models import list_models
+
+        return {"cases": list(CASES), "models": list_models(Path(workspace)) if workspace is not None else []}
 
     @tool
     def inspect_case(case: CaseName = "kundur") -> dict:
@@ -78,8 +88,51 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
         return {"source": "PowerAgentBench training memory", "commit": PIN,
                 "location": location, "historical": training_history(location)}
 
-    tools = {t.name: t for t in [list_cases, inspect_case, power_flow, eigenanalysis,
-                                  simulate_fault, paper_training_history]}
+    @tool
+    def research_plan(objective: Annotated[str, Field(min_length=1, max_length=500)],
+                      steps: Annotated[list[str], Field(min_length=1, max_length=8)],
+                      verification: Annotated[str, Field(min_length=1, max_length=500)]) -> dict:
+        """Record a concise user-facing engineering plan or update it; does not execute simulations."""
+        if any(not step.strip() or len(step) > 300 for step in steps):
+            raise ValueError("Plan steps must be short and nonempty")
+        return {"status": "ok", "objective": objective, "steps": steps, "verification": verification}
+
+    tool_list = [list_cases, inspect_case, power_flow, eigenanalysis, simulate_fault,
+                 paper_training_history, research_plan]
+    if workspace is not None:
+        from .research_tools import analyze_voltage, compare_faults, recent_runs, run_record, topology_path
+
+        root = Path(workspace)
+
+        @tool
+        def list_research_runs(limit: Annotated[int, Field(ge=1, le=30)] = 12) -> dict:
+            """Find existing numerical runs before repeating simulations."""
+            return {"runs": recent_runs(root, limit)}
+
+        @tool
+        def read_research_run(run_id: str) -> dict:
+            """Read numerical evidence from a stored run ID, not a file path."""
+            return run_record(root, run_id)
+
+        @tool
+        def network_path(run_id: str, origin: str, destination: str) -> dict:
+            """Compute shortest in-service branch-hop path from an inspect_case run. Not impedance distance."""
+            return topology_path(root, run_id, origin, destination)
+
+        @tool
+        def analyze_voltage_waveform(run_id: str, channel: str, start_s: float | None = None) -> dict:
+            """Analyze measured voltage extrema, times and RMS deviation; defaults to post-clearing."""
+            return analyze_voltage(root, run_id, channel, start_s)
+
+        @tool
+        def compare_fault_runs(baseline_id: str, candidate_id: str) -> dict:
+            """Compare completed fault simulations with identical model hashes and end times."""
+            return compare_faults(root, baseline_id, candidate_id)
+
+        tool_list.extend([list_research_runs, read_research_run, network_path,
+                          analyze_voltage_waveform, compare_fault_runs])
+    tools = {t.name: t for t in tool_list}
+    numerical_tools = {"power_flow", "simulate_fault", "eigenanalysis"}
     bound = model.bind_tools(list(tools.values()))
 
     def decide(state: State):
@@ -102,10 +155,10 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
                 calls += 1
                 if name not in tools:
                     result = {"status": "denied", "reason": "Unknown tool"}
-                elif name in {"power_flow", "simulate_fault", "eigenanalysis"} and used >= budget:
+                elif name in numerical_tools and used >= budget:
                     result = {"status": "denied", "reason": "Simulation budget exhausted"}
                 else:
-                    if name in {"power_flow", "simulate_fault", "eigenanalysis"}:
+                    if name in numerical_tools:
                         used += 1  # Charge attempted runs, including failures.
                     try:
                         result = tools[name].invoke(call["args"])

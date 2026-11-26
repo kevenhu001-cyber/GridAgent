@@ -67,7 +67,7 @@ def dispatch(root, request, emit):
     elif action == "ask":
         model = model_from_env()
         budget = int(request.get("budget", 3))
-        graph = build_agent(model, AndesSimulator(root / "runs"), budget=budget)
+        graph = build_agent(model, AndesSimulator(root / "runs"), budget=budget, workspace=root)
         sid = store.require_session(request["session"]) if request.get("session") else store.create_session()
         emit("session", sid)
         prompt = request["prompt"].strip()

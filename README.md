@@ -109,3 +109,11 @@ PowerAgentBench source, case files and training memory (not test memory).
 Paper ranking alone is prediction-only. Optional licensed adapters are available via
 --paper-dmq PROFILE and --paper-dsr PROFILE; see docs/upstream-integration.md.
 They require dedicated installed simulator environments and are not yet license-tested. Windows bundles these assets.
+
+## General research agent
+
+The default chat now supports recorded engineering plans, user-approved ANDES
+workbook registration, Kundur/IEEE14/IEEE39, topology inspection, branch-hop
+paths, existing-run retrieval, waveform analysis and fingerprinted comparisons.
+Use `gridagent --import-model case.xlsx`, `gridagent --models`, then ask a
+research question in chat. The Windows file picker and TUI share the registry.

@@ -8,7 +8,17 @@ from .workspace import list_runs, study_summary, waveform, waveform_text
 
 def workspace_command(root, command, args):
     root = Path(root)
-    if command == "paper-trials" and 2 <= len(args) <= 3:
+    if command == "models" and not args:
+        from .models import list_models
+
+        for row in list_models(root):
+            yield f"{row['name']} · {row['id']} · {row['format']}"
+    elif command == "import-model" and len(args) == 1:
+        from .models import register_model
+
+        identifier = register_model(root, args[0])
+        yield f"Registered model {identifier}. Use inspect_case to validate it before simulation."
+    elif command == "paper-trials" and 2 <= len(args) <= 3:
         from .paper_trials import configured_trials
 
         yield from configured_trials(root, args[0], int(args[1]), args[2] if len(args) == 3 else None)

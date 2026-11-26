@@ -22,6 +22,8 @@ def file_digest(path):
 def validate_workbook(path):
     if path.suffix.lower() != ".xlsx" or path.stat().st_size > 32 * 1024 * 1024:
         raise ValueError("Select an ANDES .xlsx workbook no larger than 32 MiB")
+    if not zipfile.is_zipfile(path):
+        raise ValueError("Invalid workbook archive")
     with zipfile.ZipFile(path) as archive:
         entries = archive.infolist()
         if len(entries) > 5000 or sum(e.file_size for e in entries) > 128 * 1024 * 1024:
