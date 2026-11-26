@@ -5,9 +5,11 @@
     <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
     <UseWinUI>true</UseWinUI>
     <WindowsPackageType>None</WindowsPackageType>
-    <!-- Import the SDK's PRI/XAML publish targets even for the portable build.
-         WindowsAppSDK #3718 / #6720: unpackaged publish may omit app resources. -->
-    <EnableMsixTooling>true</EnableMsixTooling>
+    <!-- Use the unpackaged MRT Core path, with the corrected BuildTools publish wiring.
+         A package-specific invocation overrides ProjectPriIndexName on the command line. -->
+    <ProjectPriIndexName Condition="'$(ProjectPriIndexName)' == ''">Application</ProjectPriIndexName>
+    <ProjectPriFileName>resources.pri</ProjectPriFileName>
+    <PublishReadyToRun>false</PublishReadyToRun>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
@@ -35,6 +37,9 @@
     <PackageReference Include="SkiaSharp" Version="2.88.9" />
     <PackageReference Include="Markdig" Version="0.41.3" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260710003" />
+    <!-- WindowsAppSDK #6394: fixed PRI/XBF publish integration. Pin the build tools,
+         not a speculative change to the WinUI runtime. -->
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools.MSIX" Version="1.7.260930100" PrivateAssets="all" />
     <Compile Include="../GridAgent.Windows/LocalEngine.cs" Link="LocalEngine.cs" />
   </ItemGroup>
   <Target Name="VerifyGridAgentPublishedResources" AfterTargets="Publish" Condition="'$(WindowsPackageType)' == 'None'">
@@ -50,5 +55,6 @@
           Condition="'@(_GridAgentXbf)' != ''" />
     <Error Condition="!Exists('$(PublishDir)resources.pri') And !Exists('$(PublishDir)$(AssemblyName).pri')"
            Text="GridAgent application PRI is missing from publish output. The WinUI app cannot be shipped without its resources." />
+    <Message Importance="high" Text="GridAgent PRI index: $(ProjectPriIndexName); file: $(ProjectPriFullPath); publish: $(PublishDir)" />
   </Target>
 </Project>

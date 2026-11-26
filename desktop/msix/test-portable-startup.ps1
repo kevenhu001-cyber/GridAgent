@@ -5,8 +5,13 @@ Set-StrictMode -Version Latest
 $root = (Resolve-Path $PortableDirectory).Path
 $exe = Join-Path $root "GridAgent.exe"
 $started = Get-Date
-$process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
+$log = Join-Path $root "startup-diagnostics.log"
+if (Test-Path $log) { Remove-Item $log -Force }
+$oldDiagnostics = $env:GRIDAGENT_STARTUP_DIAGNOSTICS
+$env:GRIDAGENT_STARTUP_DIAGNOSTICS = "1"
+$process = $null
 try {
+    $process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
     $null = $process.Handle
     $deadline = (Get-Date).AddSeconds(45)
     do {
@@ -23,6 +28,10 @@ try {
     } while ((Get-Date) -lt $deadline)
     throw "Portable GridAgent main window startup timed out."
 } catch {
+    if (Test-Path $log) {
+        Write-Host "Portable WinUI startup stages:"
+        Get-Content $log -Tail 80 | Write-Host
+    } else { Write-Host "Process did not reach managed App diagnostics." }
     try {
         Get-WinEvent -FilterHashtable @{ LogName = "Application"; StartTime = $started } -MaxEvents 60 -ErrorAction Stop |
             Where-Object { $_.Message -match "GridAgent" } |
@@ -30,6 +39,10 @@ try {
     } catch { Write-Host "No matching application events available." }
     throw
 } finally {
-    if (!$process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
-    $process.Dispose()
+    $env:GRIDAGENT_STARTUP_DIAGNOSTICS = $oldDiagnostics
+    if ($process) {
+        if (!$process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
+        $process.Dispose()
+    }
+    if (Test-Path $log) { Remove-Item $log -Force }
 }

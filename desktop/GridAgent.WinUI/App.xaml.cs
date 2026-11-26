@@ -47,15 +47,25 @@ public partial class App : Application
     }
 }
 
-// Development package only; best-effort local diagnostics must not mask the original exception.
+// Explicit CI opt-in for portable builds, or development package only.
+ // Best-effort local diagnostics must not mask the original exception.
 internal static class StartupDiagnostics
 {
     internal static void Record(string stage, Exception? error = null)
     {
         try
         {
-            if (!AppDataPaths.IsPackaged || global::Windows.ApplicationModel.Package.Current.Id.Name != "GridAgent.Development") return;
-            var path = Path.Combine(AppDataPaths.DataRoot, "startup-diagnostics.log");
+            string path;
+            if (AppDataPaths.IsPackaged)
+            {
+                if (global::Windows.ApplicationModel.Package.Current.Id.Name != "GridAgent.Development") return;
+                path = Path.Combine(AppDataPaths.DataRoot, "startup-diagnostics.log");
+            }
+            else
+            {
+                if (Environment.GetEnvironmentVariable("GRIDAGENT_STARTUP_DIAGNOSTICS") != "1") return;
+                path = Path.Combine(AppContext.BaseDirectory, "startup-diagnostics.log");
+            }
             File.AppendAllText(path, $"{DateTimeOffset.UtcNow:O} {stage}" +
                 (error is null ? "" : $" {error}") + Environment.NewLine);
         }

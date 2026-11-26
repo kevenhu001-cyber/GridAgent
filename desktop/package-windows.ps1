@@ -28,6 +28,7 @@ if (!$LegacyWpf) {
     $appPri = @("resources.pri", "GridAgent.pri") | Where-Object { Test-Path (Join-Path $Output $_) -PathType Leaf } | Select-Object -First 1
     if (!$appPri) { throw "Published WinUI application PRI missing; refusing to build an unusable package." }
     Write-Host "Published WinUI application resources: $appPri"
+    & (Join-Path $PSScriptRoot "msix/verify-portable-pri.ps1") -Directory $Output
 }
 $Runtime = Join-Path $Output "runtime"
 # Copy the complete installed CPython layout, not a non-relocatable virtualenv.
