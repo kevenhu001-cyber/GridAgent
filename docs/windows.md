@@ -51,8 +51,7 @@ is required. Model APIs require network access and credentials; licensed
 commercial simulators are not included. Do not move the EXE out of its folder.
 The build checks relocation to a path with spaces with system Python off PATH,
 then runs a real bridge session, ANDES fault and eigenanalysis. Package contents
-and runtime checks remain subject to CI. The distribution is a portable folder,
-not yet a signed installer. Dependency versions are recorded per build, not
+and runtime checks remain subject to CI. The portable distribution remains a folder. An additional signed development MSIX build is described below. Dependency versions are recorded per build, not
 fully locked across builds. Retain upstream package license metadata; a full
 third-party notice/source compliance review is still required before release.
 
@@ -65,3 +64,20 @@ simulator profiles are optional and separate from the embedded open runtime.
 The default package bundles ANDES, pandapower, Python Control, HiGHS and shared scientific libraries.
 PyPSA, OpenDSS and PyBaMM are installed through Simulation Plugins (internet required).
 The packaged interpreter is used for installation and subprocess execution; system Python is unnecessary.
+
+## MSIX (development and production signing)
+
+Build from the already verified native WinUI portable directory, using Windows SDK MakeAppx and SignTool:
+
+    ./desktop/package-windows.ps1 -Output desktop-publish
+    ./desktop/package-msix.ps1 -PortableDirectory desktop-publish -Development
+
+The package is a full-trust, medium-integrity x64 packaged desktop application (Windows 10 2004+). The .NET, Windows App SDK and CPython runtime remain self-contained; the protected installed directory is read-only. MSIX defaults to a package-local workspace, plugin directory, theme settings and writable numerical cache. To keep research data across uninstall or share it with the portable/TUI version, choose and back up an external workspace; package-local data may be removed when uninstalling. Optional plugins are still user-authorized and stored outside the install directory.
+
+The CI development artifact contains the signed .msix, public .cer, SHA-256 inventory and package identity metadata. The self-signed test certificate is short-lived and generated per build; no PFX or private key is distributed. On a dedicated test machine, verify the source and certificate thumbprint, then explicitly trust the public certificate in LocalMachine TrustedPeople (administrator approval required). Install through Windows App Installer or Add-AppxPackage. Remove the test certificate when finished. Do not use development signing for public distribution. No trust settings are modified by the build script.
+
+For public sideload distribution use a trusted production signing identity; supply its certificate in CurrentUser\\My and a stable identity name, for example:
+
+    ./desktop/package-msix.ps1 -PortableDirectory desktop-publish -CertificateThumbprint <thumbprint> -IdentityName <publisher-owned-identity> -Version 0.1.0.0
+
+The publisher is derived from the certificate and production signing is timestamped. Store association and automatic updates are separate release tasks. Validate package activation, child Python, optional plugins and Windows Sandbox on real Windows installations before calling MSIX release-ready. Keep ZIP for portable use and TUI. See [Microsoft manual packaging](https://learn.microsoft.com/windows/msix/desktop/desktop-to-uwp-manual-conversion) and [signing guidance](https://learn.microsoft.com/windows/msix/package/sign-msix-package-guide).

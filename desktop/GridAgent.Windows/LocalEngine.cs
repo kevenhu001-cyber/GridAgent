@@ -11,9 +11,11 @@ internal static class LocalEngine
 {
     internal static ProcessStartInfo CreateStartInfo(EngineSettings settings, bool readService = false)
     {
+        Directory.CreateDirectory(settings.Workspace);
         var start = new ProcessStartInfo
         {
             FileName = settings.Python,
+            WorkingDirectory = settings.Workspace,
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardInput = true,
@@ -33,6 +35,7 @@ internal static class LocalEngine
         if (Directory.Exists(assets)) start.Environment["GRIDAGENT_BENCHMARK_ROOT"] = assets;
         start.Environment["PYTHONUTF8"] = "1";
         start.Environment["PYTHONNOUSERSITE"] = "1";
+        start.Environment["PYTHONDONTWRITEBYTECODE"] = "1";
         if (!string.IsNullOrWhiteSpace(settings.Model)) start.Environment["GRIDAGENT_MODEL"] = settings.Model;
         if (!string.IsNullOrWhiteSpace(settings.BaseUrl)) start.Environment["GRIDAGENT_BASE_URL"] = settings.BaseUrl;
         if (readService)

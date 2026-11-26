@@ -36,7 +36,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         RuntimeStatus.Text = File.Exists(BundledPython) ? "Bundled Python · ready" : "Developer runtime";
-        WorkspacePath.Text = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GridAgent");
+        WorkspacePath.Text = AppDataPaths.DefaultWorkspace;
         ModelName.Text = Environment.GetEnvironmentVariable("GRIDAGENT_MODEL") ?? "";
         BaseUrl.Text = Environment.GetEnvironmentVariable("GRIDAGENT_BASE_URL") ?? "";
         Messages.ItemsSource = _messages;
@@ -156,7 +156,7 @@ public partial class MainWindow : Window
             ? Execute(new { action = "refresh" }) : Task.CompletedTask;
     }
     private void ShowChat() => Navigation.SelectedItem = AssistantNavigation;
-    private static string ThemePreferencePath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GridAgent", "desktop-theme.txt");
+    private static string ThemePreferencePath => AppDataPaths.ThemeFile;
     private void LoadTheme()
     {
         _loadingTheme = true;

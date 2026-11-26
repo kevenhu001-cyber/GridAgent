@@ -6,6 +6,7 @@ public partial class App : Application
     public App() => InitializeComponent();
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        AppDataPaths.ConfigureProcess();
         _window = new MainWindow();
         _window.Activate();
     }

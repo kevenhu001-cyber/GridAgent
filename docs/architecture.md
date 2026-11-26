@@ -44,3 +44,6 @@ Avoid prematurely adopting microservices, general distributed execution, a marke
 ## Validation
 
 The Python unit/integration suites check engineering behavior. The .NET presentation contract tests verify state transitions and schema handling independent of XAML. Windows CI compiles WinUI and exercises relocated runtime protocols, optional plugins and real solver calls. Dedicated interactive Windows verification remains necessary for layout, accessibility, graphics, provider streaming, cancellation and responsiveness. Report measured figures with the test environment and distinguish amortized bridge timings from actual GUI cold startup.
+
+## MSIX distribution boundary
+The MSIX build wraps the same self-contained WinUI payload as the portable release, with no second application implementation. Package identity and signing are distribution concerns. The package uses full-trust desktop activation at medium integrity; application binaries and the embedded interpreter are read-only. Mutable plugin installations, settings and numerical caches use explicit user-local package storage. External research workspaces remain selectable, so users can retain evidence independently of package uninstall. A development signature is not a production trust claim.

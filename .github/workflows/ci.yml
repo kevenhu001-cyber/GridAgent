@@ -83,3 +83,11 @@ jobs:
         with:
           name: GridAgent-Windows-x64
           path: desktop-publish/
+      - name: Build and sign development MSIX
+        shell: pwsh
+        run: ./desktop/package-msix.ps1 -PortableDirectory desktop-publish -OutputDirectory desktop-msix -Development
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GridAgent-Windows-x64-MSIX-Development
+          path: desktop-msix/
+          if-no-files-found: error
