@@ -18,7 +18,8 @@ SYSTEM = """You are GridAgent, an offline power-system research assistant.
 Use tools for numerical claims. Inspect the case before a new fault study.
 Use registered model IDs, never arbitrary paths. Open IEEE39 is distinct from the paper project.
 For multi-step research, use research_plan to record a short user-visible plan, then adapt using tool feedback.
-Inspect topology and available buses, run baseline and targeted cases, compare matching model fingerprints,
+Inspect topology and available buses and branch IDs before proposing scenarios. Run baseline and targeted cases,
+compare matching model fingerprints,
 and verify conclusions with stored numerical evidence. Do not use tools for purely conceptual questions.
 If a tool fails, diagnose the reported reason and change the approach within budget, not invent results.
 Open simulation tools use packaged or explicitly registered research systems. Original IEEE39 training memory is a distinct
@@ -60,7 +61,7 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
 
     @tool
     def inspect_case(case: CaseName = "kundur") -> dict:
-        """Inspect the packaged case and available bus identifiers."""
+        """Inspect a registered or packaged model and return topology and available buses."""
         return simulator.run("inspect", {"case": case})
 
     @tool
@@ -109,7 +110,7 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
                  paper_training_history, research_plan]
     if workspace is not None:
         from .research_tools import (analyze_voltage, compare_faults, compare_power_flows,
-                                     recent_runs, run_record, topology_path)
+                                     network_branches, recent_runs, run_record, topology_path)
 
         root = Path(workspace)
 
@@ -129,6 +130,13 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
             return topology_path(root, run_id, origin, destination)
 
         @tool
+        def list_network_branches(run_id: str, bus: str | None = None,
+                                  offset: Annotated[int, Field(ge=0)] = 0,
+                                  limit: Annotated[int, Field(ge=1, le=50)] = 30) -> dict:
+            """List actual line/transformer IDs from a saved inspection, optionally adjacent to one bus."""
+            return network_branches(root, run_id, bus, offset, limit)
+
+        @tool
         def analyze_voltage_waveform(run_id: str, channel: str, start_s: float | None = None) -> dict:
             """Analyze measured voltage extrema, times and RMS deviation; defaults to post-clearing."""
             return analyze_voltage(root, run_id, channel, start_s)
@@ -144,7 +152,7 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
             return compare_power_flows(root, baseline_id, candidate_id)
 
         tool_list.extend([list_research_runs, read_research_run, network_path,
-                          analyze_voltage_waveform, compare_fault_runs, compare_flow_runs])
+                          list_network_branches, analyze_voltage_waveform, compare_fault_runs, compare_flow_runs])
     tools = {t.name: t for t in tool_list}
     numerical_tools = {"power_flow", "simulate_fault", "eigenanalysis", "scenario_power_flow"}
     bound = model.bind_tools(list(tools.values()))

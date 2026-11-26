@@ -99,3 +99,21 @@ def compare_power_flows(root, baseline_id, candidate_id):
             "candidate_voltage_min_pu": min(b["voltages_pu"].values()),
             "candidate_voltage_max_pu": max(b["voltages_pu"].values()),
             "scope": "steady-state voltage comparison; no thermal or transient stability verdict"}
+
+
+def network_branches(root, run_id, bus=None, offset=0, limit=30):
+    if not 1 <= limit <= 50 or offset < 0:
+        raise ValueError("Invalid pagination")
+    folder = artifact_folder(root, "runs", run_id)
+    record = run_record(root, run_id)
+    if record.get("status") != "ok" or record.get("operation") != "inspect":
+        raise ValueError("Use a successful inspect_case run")
+    topology = load_object(folder / "topology.json")
+    if bus is not None and bus not in topology["buses"]:
+        raise ValueError("Unknown bus")
+    branches = [b for b in topology["branches"] if bus is None or bus in (b["from"], b["to"])]
+    branches.sort(key=lambda row: row["id"])
+    end = offset + limit
+    return {"run_id": run_id, "model_sha256": record.get("model_sha256"),
+            "bus": bus, "total": len(branches), "branches": branches[offset:end],
+            "next_offset": end if end < len(branches) else None}

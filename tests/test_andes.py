@@ -38,10 +38,14 @@ def test_packaged_model_inspection(tmp_path, case):
 def test_registered_model_scenario(tmp_path):
     andes = pytest.importorskip("andes")
     from gridagent.models import register_model
-    from gridagent.research_tools import compare_power_flows
+    from gridagent.research_tools import compare_power_flows, network_branches
 
     identifier = register_model(tmp_path, andes.get_case("kundur/kundur_full.xlsx"))
     sim = AndesSimulator(tmp_path / "runs", timeout_s=300)
+    inspection = sim.run("inspect", {"case": identifier})
+    assert inspection["status"] == "ok", inspection
+    branches = network_branches(tmp_path, inspection["run_id"])
+    assert branches["total"] > 0
     a = sim.run("power_flow", {"case": identifier})
     b = sim.run("scenario_flow", {"case": identifier, "load_scale": 0.95})
     assert a["status"] == b["status"] == "ok", (a, b)
@@ -51,3 +55,11 @@ def test_registered_model_scenario(tmp_path):
     assert comparison["buses"] > 0
     assert any(abs(row["delta_pu"]) > 1e-7 for row in comparison["largest_voltage_changes"])
     assert (tmp_path / "runs" / b["run_id"] / "case.xlsx").is_file()
+    # Select a real in-service branch; outage may island the system, so do not assert convergence.
+    branch = next(row["id"] for row in branches["branches"] if row["in_service"])
+    outage = sim.run("scenario_flow", {"case": identifier, "outage_branch": branch})
+    assert outage["status"] in {"ok", "failed"}
+    if outage["status"] == "ok":
+        assert outage["scenario"]["outage_branch"] == branch
+    else:
+        assert outage.get("scenario", {}).get("outage_branch") == branch, outage

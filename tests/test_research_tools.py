@@ -41,3 +41,20 @@ def test_flow_comparison(tmp_path):
     result = compare_power_flows(tmp_path, a, b)
     assert result["largest_voltage_changes"][0]["bus"] == "2"
     assert result["candidate_voltage_min_pu"] == 0.95
+
+
+def test_branch_lookup_is_paged_and_filtered(tmp_path):
+    from gridagent.research_tools import network_branches
+
+    identifier = "c"*32
+    folder = tmp_path / "runs" / identifier
+    folder.mkdir(parents=True)
+    (folder / "result.json").write_text(json.dumps({"status": "ok", "operation": "inspect",
+                                                   "model_sha256": "same"}))
+    (folder / "topology.json").write_text(json.dumps({"buses": ["1", "2", "3"], "branches": [
+        {"id": "L1", "from": "1", "to": "2", "in_service": True},
+        {"id": "L2", "from": "2", "to": "3", "in_service": True}]}))
+    page = network_branches(tmp_path, identifier, "2", limit=1)
+    assert page["total"] == 2 and page["next_offset"] == 1
+    assert page["branches"][0]["id"] == "L1"
+    assert network_branches(tmp_path, identifier, "1")["total"] == 1

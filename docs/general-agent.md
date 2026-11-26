@@ -26,7 +26,7 @@ the configured model provider.
 
 List models, inspect case/topology, baseline power flow, bounded hypothetical
 PQ load scaling (0.5–1.5) and one existing line outage, eigenanalysis, bus fault,
-research plan, run listing/reading, shortest branch-hop path, voltage waveform
+research plan, run listing/reading, paginated network branch lookup, shortest branch-hop path, voltage waveform
 statistics, fault comparison, power-flow comparison, and published training
 history. Numerical attempts share one budget; read-only evidence calls share
 the total tool-call limit. Model planning is prompt-guided, not a formal proof
