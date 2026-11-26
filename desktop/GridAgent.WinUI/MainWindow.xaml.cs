@@ -35,7 +35,9 @@ public partial class MainWindow : Window
     private bool _launchInitialized;
     public MainWindow(bool skipOnboarding = false)
     {
+        StartupDiagnostics.Record("window.xaml.begin");
         InitializeComponent();
+        StartupDiagnostics.Record("window.xaml.complete");
         RuntimeStatus.Text = File.Exists(BundledPython) ? "Bundled Python · ready" : "Developer runtime";
         WorkspacePath.Text = SetupPreferences.LoadWorkspace() ?? AppDataPaths.DefaultWorkspace;
         ModelName.Text = Environment.GetEnvironmentVariable("GRIDAGENT_MODEL") ?? "";
@@ -58,6 +60,10 @@ public partial class MainWindow : Window
         {
             if (_launchInitialized) return;
             _launchInitialized = true;
+            StartupDiagnostics.Record("window.loaded");
+            // The development smoke uses its own isolated workspace and bridge.
+            // Avoid racing its process-wide plugin settings with normal initialization.
+            if (skipOnboarding) { _initialized = true; return; }
             await Execute(new { action = "initialize" });
             _initialized = true;
             if (!skipOnboarding && !SetupPreferences.Completed) await ShowSetupAsync();

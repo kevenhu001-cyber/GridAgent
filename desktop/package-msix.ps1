@@ -1,4 +1,4 @@
-# Package the verified, self-contained WinUI portable layout without rebuilding the engine.
+# Build an identity-specific WinUI resource map and reuse the verified private engine.
 [CmdletBinding(DefaultParameterSetName="Development")]
 param(
     [Parameter(Mandatory)][string]$PortableDirectory,
@@ -35,10 +35,8 @@ if ($out.StartsWith($source.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnor
 foreach ($file in @("GridAgent.exe", "runtime\python.exe", "runtime\python311._pth", "runtime-manifest.json", "Microsoft.UI.Xaml.dll")) {
     if (!(Test-Path (Join-Path $source $file) -PathType Leaf)) { throw "Verified WinUI portable layout missing $file" }
 }
-# A manually wrapped MSIX uses the package-root resources.pri as the default resource map.
-# Never substitute the SDK framework's PRI for the application's own resources.
-$appPri = @("resources.pri", "GridAgent.pri") | Where-Object { Test-Path (Join-Path $source $_) -PathType Leaf } | Select-Object -First 1
-if (!$appPri) { throw "Portable WinUI application PRI missing; refusing MSIX packaging." }
+# An unpackaged PRI cannot be made package-specific by renaming it.
+$makepri = Find-SdkTool "makepri.exe"
 $makeappx = Find-SdkTool "makeappx.exe"
 $signtool = Find-SdkTool "signtool.exe"
 New-Item -ItemType Directory $out | Out-Null
@@ -46,14 +44,7 @@ $stage = Join-Path ([IO.Path]::GetTempPath()) ("GridAgent-msix-" + [guid]::NewGu
 $cert = $null
 try {
     New-Item -ItemType Directory $stage | Out-Null
-    & robocopy $source $stage /E /XD __pycache__ /XF "*.pyc" /NFL /NDL /NJH /NJS /NP
-    if ($LASTEXITCODE -ge 8) { throw "Staging failed ($LASTEXITCODE)" }
-    if (!(Test-Path (Join-Path $stage "resources.pri") -PathType Leaf)) {
-        Copy-Item (Join-Path $stage $appPri) (Join-Path $stage "resources.pri")
-    }
-    # Do not ship the portable-only command launcher as an app entry point.
-    Remove-Item (Join-Path $stage "gridagent-tui.cmd") -ErrorAction SilentlyContinue
-    if ($Development) {
+     if ($Development) {
         $IdentityName = "GridAgent.Development"
         $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=TopoDrive Development" -CertStoreLocation "Cert:\CurrentUser\My" -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -NotAfter (Get-Date).AddDays(30)
         Export-Certificate -Cert $cert -FilePath (Join-Path $out "GridAgent-Development.cer") | Out-Null
@@ -61,6 +52,42 @@ try {
         if ($IdentityName -eq "GridAgent.Development") { throw "Use a separate production package identity." }
         $cert = Get-Item ("Cert:\CurrentUser\My\" + $CertificateThumbprint)
         if (!$cert.HasPrivateKey) { throw "Signing certificate has no accessible private key." }
+    }
+    # Build the UI again with the final package identity as the PRI index name.
+    # Clean the project's intermediate output so an unpackaged PRI cannot be reused.
+    # The already-tested numerical runtime is copied separately, not rebuilt.
+    $project = Join-Path $PSScriptRoot "GridAgent.WinUI\GridAgent.WinUI.csproj"
+    Invoke-Checked "dotnet" @("clean", $project, "-c", "Release", "-r", "win-x64")
+    Invoke-Checked "dotnet" @("publish", $project, "-c", "Release", "-r", "win-x64", "--self-contained", "true", "-p:ProjectPriIndexName=$IdentityName", "-o", $stage)
+    foreach ($file in @("GridAgent.exe", "App.xbf", "MainWindow.xbf", "Microsoft.UI.Xaml.dll")) {
+        if (!(Test-Path (Join-Path $stage $file) -PathType Leaf)) { throw "MSIX-specific WinUI publish missing $file" }
+    }
+    # Inspect the internal resource map rather than trusting the PRI filename.
+    $dump = Join-Path ([IO.Path]::GetTempPath()) ("GridAgent-pri-" + [guid]::NewGuid().ToString("N") + ".xml")
+    $matchedPri = $null
+    try {
+        foreach ($name in @("resources.pri", "GridAgent.pri")) {
+            $candidate = Join-Path $stage $name
+            if (!(Test-Path $candidate -PathType Leaf)) { continue }
+            Invoke-Checked $makepri @("dump", "/if", $candidate, "/of", $dump, "/o")
+            [xml]$pri = Get-Content $dump -Raw
+            $maps = @($pri.SelectNodes("/*[local-name()='PriInfo']/*[local-name()='ResourceMap']") | ForEach-Object { $_.GetAttribute("name") })
+            Write-Host "PRI $name resource maps: $($maps -join ', ')"
+            if ($maps -ccontains $IdentityName) { $matchedPri = $candidate; break }
+        }
+    } finally {
+        if (Test-Path $dump) { Remove-Item $dump -Force }
+    }
+    if (!$matchedPri) { throw "No application PRI matches package identity '$IdentityName'; refusing to sign an unusable MSIX." }
+    $rootPri = Join-Path $stage "resources.pri"
+    if ($matchedPri -ne $rootPri) { Copy-Item $matchedPri $rootPri -Force }
+    Write-Host "Verified package resource map: $IdentityName"
+    foreach ($dir in @("runtime", "examples", "benchmark-assets")) {
+        & robocopy (Join-Path $source $dir) (Join-Path $stage $dir) /E /XD __pycache__ /XF "*.pyc" /NFL /NDL /NJH /NJS /NP
+        if ($LASTEXITCODE -ge 8) { throw "Staging $dir failed ($LASTEXITCODE)" }
+    }
+    foreach ($file in @("LICENSE", "windows.md", "research-tasks.md", "runtime-requirements.txt", "runtime-manifest.json")) {
+        Copy-Item (Join-Path $source $file) $stage
     }
     [xml]$manifest = Get-Content (Join-Path $PSScriptRoot "msix\AppxManifest.xml") -Raw
     $manifest.Package.Identity.Name = $IdentityName

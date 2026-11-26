@@ -17,6 +17,7 @@ $installed = $null
 $appProcessId = 0
 $appProcess = $null
 $activationStarted = $null
+$startupLog = $null
 try {
     Import-Certificate -FilePath $certFile -CertStoreLocation "Cert:\LocalMachine\TrustedPeople" | Out-Null
     Add-AppxPackage -Path $package[0].FullName -ErrorAction Stop
@@ -24,6 +25,7 @@ try {
     if (!$installed -or $installed.Publisher -ne $info.publisher -or $installed.Version.ToString() -ne $info.version) { throw "Installed package identity mismatch." }
     $marker = Join-Path $env:LOCALAPPDATA ("Packages\" + $installed.PackageFamilyName + "\LocalState\msix-smoke.json")
     if (Test-Path $marker) { throw "Unexpected existing smoke marker." }
+    $startupLog = Join-Path (Split-Path $marker -Parent) "startup-diagnostics.log"
     Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -52,13 +54,15 @@ public static class GridAgentActivation
     $appProcessId = [GridAgentActivation]::Launch($installed.PackageFamilyName + "!GridAgent")
     Write-Host "Activated packaged GridAgent PID $appProcessId"
     $appProcess = Get-Process -Id $appProcessId -ErrorAction SilentlyContinue
+    if ($appProcess) { try { $null = $appProcess.Handle } catch { Write-Host "Process handle unavailable: $($_.Exception.Message)" } }
     $deadline = (Get-Date).AddMinutes(8)
     while (!(Test-Path $marker) -and (Get-Date) -lt $deadline) {
         if (!$appProcess -or $appProcess.HasExited) {
             # The marker is published atomically by the app. Recheck after exit
             # to avoid misclassifying an app that just finished writing it.
             if (Test-Path $marker) { break }
-            $exitCode = if ($appProcess) { $appProcess.ExitCode } else { "unavailable" }
+            $exitCode = "unavailable"
+            if ($appProcess) { try { if ($null -ne $appProcess.ExitCode) { $exitCode = $appProcess.ExitCode } } catch {} }
             throw "Packaged GridAgent terminated before its smoke result (PID $appProcessId, exit code $exitCode)."
         }
         Start-Sleep -Seconds 2
@@ -69,6 +73,10 @@ public static class GridAgentActivation
     if (!$result.success) { throw "Packaged application smoke failed at $($result.stage): $($result.error)" }
     Write-Host "Installed MSIX activated; private Python, resident metadata, AC solver and plugin lifecycle passed."
 } catch {
+    if ($startupLog -and (Test-Path $startupLog)) {
+        Write-Host "Development app startup stages:"
+        Get-Content $startupLog -Tail 80 | Write-Host
+    }
     if ($activationStarted) {
         # CI-only diagnostics: bounded recent crash/activation events, before uninstall.
         foreach ($log in @("Application", "Microsoft-Windows-AppModel-Runtime/Admin", "Microsoft-Windows-TWinUI/Operational")) {

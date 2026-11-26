@@ -124,6 +124,9 @@ jobs:
       - name: Build and verify portable Windows application
         shell: pwsh
         run: ./desktop/package-windows.ps1 -Output desktop-publish
+      - name: Verify portable WinUI window starts
+        shell: pwsh
+        run: ./desktop/msix/test-portable-startup.ps1 -PortableDirectory desktop-publish
       - name: Measure isolated bridge startup latency
         shell: pwsh
         run: |
