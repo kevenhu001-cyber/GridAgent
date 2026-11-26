@@ -52,9 +52,9 @@ class GridApp(App):
         self.busy = True
         event.input.disabled = True
         self.query_one("#status", Static).update("Running research task...")
-        self.run_worker(lambda: self._run(question), thread=True, exit_on_error=False)
+        self.run_worker(lambda: self._run_task(question), thread=True, exit_on_error=False)
 
-    def _run(self, question):
+    def _run_task(self, question):
         from langchain_core.messages import HumanMessage
         messages = [HumanMessage(content=question)]
         try:

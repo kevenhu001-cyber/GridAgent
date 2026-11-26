@@ -58,7 +58,7 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
         return simulator.run("power_flow", {"case": case})
 
     @tool(args_schema=FaultRequest)
-    def simulate_fault(case: CaseName, bus: int, duration_s: float, end_s: float = 5.0) -> dict:
+    def simulate_fault(bus: int, duration_s: float, case: CaseName = "kundur", end_s: float = 5.0) -> dict:
         """Run a three-phase bus fault on a research case; return post-fault metrics and waveform."""
         return simulator.run("fault", {"case": case, "bus": bus,
                                       "duration_s": duration_s, "end_s": end_s})
