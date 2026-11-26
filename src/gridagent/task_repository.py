@@ -178,6 +178,12 @@ class EngineeringTaskRepository:
             if research_table and db.execute(
                     "SELECT 1 FROM research_tasks WHERE id = ?", (task_id,)).fetchone():
                 raise ValueError("Research-managed tasks must be changed through ResearchTasks")
+            dispatch_table = db.execute("""
+                SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'dispatch_tasks'
+            """).fetchone()
+            if dispatch_table and db.execute(
+                    "SELECT 1 FROM dispatch_tasks WHERE id = ?", (task_id,)).fetchone():
+                raise ValueError("Dispatch-managed tasks must be changed through DispatchTasks")
             return self._mutate_in(db, task_id, expected_revision, operation)
 
     def transition(self, task_id: str, expected_revision: int, target: TaskStatus, **kwargs):

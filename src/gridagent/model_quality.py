@@ -56,7 +56,7 @@ def pp_checks(folder, request):
     return result
 
 
-def dispatch_checks(folder, request):
+def dispatch_checks(folder, request, result_record=None):
     hours = request["hours"]
     frames = {name: table(folder, name) for name in
               ("generation_mw", "load_mw", "storage_soc_mwh", "storage_charge_mw",
@@ -71,6 +71,7 @@ def dispatch_checks(folder, request):
     residual = {b["name"]: np.zeros(hours) for b in request["buses"]}
     violation = 0.0
     demand_error = 0.0
+    operating_cost = 0.0
     for item in request["loads"]:
         values = frames["load_mw"][item["name"]].to_numpy()
         demand_error = max(demand_error, float(np.max(np.abs(values-item["p_set_mw"]))))
@@ -80,7 +81,9 @@ def dispatch_checks(folder, request):
         ceiling = item["p_nom_mw"] * np.asarray(item["p_max_pu"] if item["p_max_pu"] is not None else 1)
         violation = max(violation, float(np.max(values-ceiling)), float(np.max(-values)))
         residual[item["bus"]] += values
+        operating_cost += float(np.sum(values * np.asarray(item["marginal_cost"])))
     soc_error = 0.0
+    terminal_error = 0.0
     for item in request["storage"]:
         name = item["name"]
         charge = frames["storage_charge_mw"][name].to_numpy()
@@ -90,10 +93,15 @@ def dispatch_checks(folder, request):
                         float(np.max(discharge-item["p_nom_mw"])), float(np.max(-charge)),
                         float(np.max(-discharge)), float(np.max(-soc)),
                         float(np.max(soc-item["p_nom_mw"]*item["max_hours"])))
-        # Cyclic predecessor: final snapshot is the initial SOC.
-        mismatch = soc-np.roll(soc,1)-charge*item["efficiency_store"]+discharge/item["efficiency_dispatch"]
+        predecessor = np.roll(soc, 1)
+        if not item.get("cyclic_soc", True):
+            predecessor[0] = item["initial_soc_mwh"]
+        mismatch = soc-predecessor-charge*item["efficiency_store"]+discharge/item["efficiency_dispatch"]
         soc_error = max(soc_error, float(np.max(np.abs(mismatch))))
+        if item.get("terminal_soc_mwh") is not None:
+            terminal_error = max(terminal_error, abs(float(soc[-1])-item["terminal_soc_mwh"]))
         residual[item["bus"]] += discharge-charge
+        operating_cost += float(np.sum(discharge)) * item["marginal_cost"]
     for item in request["links"]:
         p0 = frames["link_mw"][item["name"]].to_numpy()
         p1 = frames["link_destination_mw"][item["name"]].to_numpy()
@@ -111,10 +119,22 @@ def dispatch_checks(folder, request):
     scale = max(1.0, sum(max(x["p_set_mw"]) for x in request["loads"]),
                 sum(x["p_nom_mw"] for x in request["generators"]))
     tol = 1e-6 + 1e-8*scale
-    return [*result, check("demand_preserved", demand_error<=tol, demand_error, f"<= {tol} MW"),
-            check("nodal_power_balance", balance<=tol, balance, f"<= {tol} MW"),
-            check("component_limits", violation<=tol, violation, f"<= {tol}"),
-            check("cyclic_storage_balance", soc_error<=tol, soc_error, f"<= {tol} MWh")]
+    cyclic = all(item.get("cyclic_soc", True) for item in request["storage"])
+    balance_check = "cyclic_storage_balance" if cyclic else "storage_energy_balance"
+    checks = [*result, check("demand_preserved", demand_error<=tol, demand_error, f"<= {tol} MW"),
+              check("nodal_power_balance", balance<=tol, balance, f"<= {tol} MW"),
+              check("component_limits", violation<=tol, violation, f"<= {tol}"),
+              check(balance_check, soc_error<=tol, soc_error, f"<= {tol} MWh")]
+    if not cyclic:
+        checks.append(check("terminal_soc", terminal_error<=tol, terminal_error, f"<= {tol} MWh"))
+    if result_record is not None:
+        reported = result_record.get("metrics", {}).get("objective")
+        valid = isinstance(reported, (int, float)) and not isinstance(reported, bool) and math.isfinite(reported)
+        cost_error = abs(operating_cost-reported) if valid else None
+        cost_tol = 1e-5 + 1e-7*max(1.0, abs(operating_cost))
+        checks.append(check("operating_cost_reconciliation", valid and cost_error<=cost_tol,
+                            cost_error, f"<= {cost_tol} currency units"))
+    return checks
 
 
 def evaluate_run(folder, request, result):
@@ -122,7 +142,7 @@ def evaluate_run(folder, request, result):
     if tests[0]["passed"]:
         try:
             tests.extend(pp_checks(folder, request) if request["backend"]=="pandapower"
-                         else dispatch_checks(folder, request))
+                         else dispatch_checks(folder, request, result))
         except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
             tests.append(check("evidence_integrity", False, type(exc).__name__, "Complete readable solver evidence"))
     return {"protocol": PROTOCOL, "passed": all(t["passed"] for t in tests),

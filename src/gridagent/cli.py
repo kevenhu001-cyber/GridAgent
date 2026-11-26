@@ -17,6 +17,10 @@ def main():
     research.add_argument("--research", metavar="QUESTION", help="Start a verified AC power-flow research task")
     research.add_argument("--research-manifest", metavar="JSON", help="Start from an authorized research manifest")
     research.add_argument("--research-ir", metavar="JSON", help="Compile and run a versioned AC engineering study")
+    research.add_argument("--dispatch-ir", metavar="JSON", help="Compile and run an hourly storage dispatch study")
+    research.add_argument("--dispatch-resume", metavar="ID")
+    research.add_argument("--dispatch-status", metavar="ID")
+    research.add_argument("--dispatch-cancel", metavar="ID")
     research.add_argument("--research-tasks", action="store_true", help="List saved research tasks")
     research.add_argument("--research-status", metavar="ID")
     research.add_argument("--research-resume", metavar="ID")
@@ -89,6 +93,10 @@ def main():
          [args.research] if args.research is not None else None),
         ("research-manifest", [args.research_manifest] if args.research_manifest else None),
         ("research-ir", [args.research_ir] if args.research_ir else None),
+        ("dispatch-ir", [args.dispatch_ir] if args.dispatch_ir else None),
+        ("dispatch-resume", [args.dispatch_resume] if args.dispatch_resume else None),
+        ("dispatch-status", [args.dispatch_status] if args.dispatch_status else None),
+        ("dispatch-cancel", [args.dispatch_cancel] if args.dispatch_cancel else None),
         ("research-tasks", [] if args.research_tasks else None),
         ("research-status", [args.research_status] if args.research_status else None),
         ("research-resume", [args.research_resume] if args.research_resume else None),
