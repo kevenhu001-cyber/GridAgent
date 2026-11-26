@@ -39,8 +39,26 @@ partial is resumable. Resuming it may attach a newer plan revision. A task canno
 6. Failed tasks require a reason. Terminal tasks cannot be resumed or silently rewritten.
 7. Cancellation requests do not claim that a running subprocess has stopped; runtime acknowledgement remains explicit.
 
+## Persistence
+
+Open the canonical repository through the existing workspace store:
+
+```python
+from pathlib import Path
+from gridagent.store import ResearchStore
+from gridagent.task_contracts import RequirementSpec, TaskStatus
+
+tasks = ResearchStore(Path(".gridagent/research.sqlite3")).engineering_tasks()
+task = tasks.create(RequirementSpec(request="Check voltage limits"))
+task, event = tasks.transition(task.task_id, task.revision, TaskStatus.PLANNED, plan_revision=1)
+```
+
+Two additive tables hold a head revision and immutable snapshots with matching lifecycle events. Revision zero contains the initial requirement snapshot and no event. Subsequent mutations append a snapshot and event and advance the head within one SQLite transaction. A stale expected revision raises TaskRevisionConflict; callers must reload and reconsider, not blindly retry.
+
+A reopened workspace can read historical requirements, inspect event continuity, and discover unfinished tasks. Discovery is not execution: the runtime must reconcile unknown solver operations before resuming them. No automatic replay or claim of solver verification is made here.
+
 ## Scope and migration
 
-This PR adds the canonical contracts and unit tests only. Existing ResearchTasks, ResearchStore, CLI/TUI flows and desktop IPC remain unchanged to avoid mixing a data-contract introduction with a persistence migration. The next integration step is to adapt the existing SQLite research task store to persist these snapshots and append-only events, then route both ordinary chat and research entry points through the shared task lifecycle.
+The V2 contract and repository coexist with the existing session and research task tables. Existing ResearchTasks, recorded_task, CLI/TUI flows and desktop IPC still use their original orchestration. The next integration slice is to route one existing workflow through the canonical repository and define its evidence and execution checkpoints before expanding to the other entry points. No roadmap gate is complete solely because the repository exists.
 
-No simulator calls, provider calls, background workers or filesystem writes are performed by this module.
+No simulator calls, provider calls or background workers are performed by this module.

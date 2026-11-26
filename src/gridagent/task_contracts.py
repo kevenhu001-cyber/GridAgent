@@ -209,8 +209,13 @@ def transition_task(
         raise TaskTransitionError(f"Transition {task.status.value} -> {target.value} is not allowed")
     if task.cancel_requested and target != TaskStatus.CANCELLED:
         raise TaskTransitionError("A cancellation-requested task may only transition to cancelled")
-    if task.status == TaskStatus.AWAITING_APPROVAL and target == TaskStatus.PLANNED and not approved:
-        raise TaskTransitionError("The current plan must be explicitly approved before execution")
+    if target == TaskStatus.CANCELLED and (not task.cancel_requested or actor != "runtime"):
+        raise TaskTransitionError("Cancellation requires a recorded request and runtime acknowledgement")
+    if task.status == TaskStatus.AWAITING_APPROVAL and target == TaskStatus.PLANNED:
+        if not approved:
+            raise TaskTransitionError("The current plan must be explicitly approved before execution")
+        if plan_revision is not None and plan_revision != task.plan_revision:
+            raise TaskTransitionError("Approval must refer to the exact pending plan revision")
     if target == TaskStatus.FAILED and not (reason and reason.strip()):
         raise TaskTransitionError("Failed tasks must include a reason")
 

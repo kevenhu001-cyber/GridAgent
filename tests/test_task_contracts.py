@@ -151,3 +151,19 @@ def test_plan_revision_cannot_move_backwards():
     partial, _ = move(running, TaskStatus.PARTIAL)
     with pytest.raises(TaskTransitionError, match="move backwards"):
         move(partial, TaskStatus.PLANNED, plan_revision=2)
+
+
+def test_approval_cannot_replace_the_pending_plan():
+    planned, _ = move(new_task(), TaskStatus.PLANNED, plan_revision=1)
+    awaiting, _ = move(planned, TaskStatus.AWAITING_APPROVAL)
+    with pytest.raises(TaskTransitionError, match="exact pending plan revision"):
+        move(awaiting, TaskStatus.PLANNED, approved=True, plan_revision=2)
+
+
+def test_cancellation_requires_request_and_runtime_acknowledgement():
+    task = new_task()
+    with pytest.raises(TaskTransitionError, match="recorded request"):
+        move(task, TaskStatus.CANCELLED)
+    requested, _ = request_cancellation(task)
+    with pytest.raises(TaskTransitionError, match="runtime acknowledgement"):
+        move(requested, TaskStatus.CANCELLED, actor="agent")

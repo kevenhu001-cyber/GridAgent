@@ -47,6 +47,12 @@ class ResearchStore:
         finally:
             db.close()
 
+    def engineering_tasks(self):
+        """Open the V2 task repository in this same local SQLite workspace."""
+        from .task_repository import EngineeringTaskRepository
+
+        return EngineeringTaskRepository(self)
+
     def create_session(self, title="New research session"):
         sid = uuid4().hex
         with self.connect() as db:
