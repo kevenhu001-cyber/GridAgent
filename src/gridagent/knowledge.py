@@ -11,6 +11,10 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field
 
 ALIASES = {
+    "wind_power_curve": "windpowerlib wind turbine generation curve 风电 功率曲线",
+    "quadratic_dispatch": "CVXPY convex quadratic economic dispatch 凸优化 经济调度",
+    "unit_commitment": "Pyomo HiGHS MILP startup unit commitment 机组组合 启停",
+    "equivalent_cell_response": "CasADi Thevenin RC cell battery voltage 等效电路 电池 动态",
     "solar_dc_power": "pvlib PVWatts solar photovoltaic DC power 光伏 辐照度 温度 功率",
     "control_step_response": "control transfer function step response poles 控制 传递函数 阶跃 极点",
     "opendss_feeder": "OpenDSS distribution feeder 配电网 三相 电压",

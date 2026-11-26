@@ -14,16 +14,16 @@ from uuid import uuid4
 from pydantic import TypeAdapter
 
 from .native_program import PPProgram, Program
-from .plugins import available, launch
+from .plugins import CATALOG, available, launch
 from .workspace import artifact_folder, load_object
 
 ADAPTER = TypeAdapter(Program)
 
 
 def available_backends():
-    return [{"name": name, "installed": available(name) if name in {"pypsa", "opendss", "pybamm", "pvlib"}
+    return [{"name": name, "installed": available(name) if name in CATALOG
              else importlib.util.find_spec(name) is not None}
-            for name in ("andes", "pandapower", "highspy", "control", "pypsa", "opendss", "pybamm", "pvlib")]
+            for name in ("andes", "pandapower", "highspy", "control", *CATALOG)]
 
 
 def run_program(root, program, timeout_s=300):

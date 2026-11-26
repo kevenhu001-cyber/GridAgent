@@ -12,6 +12,18 @@ from uuid import uuid4
 from filelock import FileLock
 
 CATALOG = {
+    "windpowerlib": {"title": "windpowerlib", "packages": ["windpowerlib>=0.2,<1"],
+                     "modules": ["windpowerlib"], "tools": ["wind_power_curve"],
+                     "prompt": "Use wind_power_curve for turbine power from a user-provided curve in m/s and W; no wake or weather prediction."},
+    "cvxpy": {"title": "CVXPY", "packages": ["cvxpy>=1.6,<2"],
+              "modules": ["cvxpy"], "tools": ["quadratic_dispatch"],
+              "prompt": "Use quadratic_dispatch for convex single-period economic dispatch with nonnegative quadratic costs, MW and cost per hour. No network or commitment."},
+    "pyomo": {"title": "Pyomo + HiGHS", "packages": ["pyomo>=6.9,<7", "highspy>=1.7,<2"],
+              "modules": ["pyomo", "highspy"], "tools": ["unit_commitment"],
+              "prompt": "Use unit_commitment for hourly single-bus MILP with start and online costs, initially off units. No ramp, minimum up/down or reserve."},
+    "casadi": {"title": "CasADi", "packages": ["casadi>=3.6,<4"],
+               "modules": ["casadi"], "tools": ["equivalent_cell_response"],
+               "prompt": "Use equivalent_cell_response for constant-current Thevenin RC voltage dynamics, fixed OCV, zero initial polarization. Not electrochemical or thermal simulation."},
     "pvlib": {"title": "pvlib", "packages": ["pvlib>=0.13,<0.17"], "modules": ["pvlib"],
               "tools": ["solar_dc_power"], "prompt": "Use solar_dc_power for PVWatts DC power from effective irradiance W/m2, cell temperature C and rated W. Not AC output or weather prediction."},
     "pypsa": {"title": "PyPSA + HiGHS", "packages": ["pypsa>=1.0,<1.3", "highspy>=1.7,<2"],

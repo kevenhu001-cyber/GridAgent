@@ -45,3 +45,9 @@ Other open-source or commercial platforms require their own reviewed adapter,
 manifest, prompts and evaluation. No arbitrary remote MCP servers, package names,
 or unreviewed installation scripts are accepted. PowerMCP integration, upgrades,
 offline wheel bundles, and task auto-resume are future work.
+
+The built-in catalog also includes windpowerlib (user-supplied turbine power curves),
+CVXPY (convex quadratic economic dispatch), Pyomo/HiGHS (bounded hourly single-bus
+unit commitment), and CasADi (first-order Thevenin RC battery dynamics). Each has
+a typed tool, curated prompt, bounded result tables and analytic smoke-test reference.
+There is no plugin marketplace, account, or remote manifest infrastructure.

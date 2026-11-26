@@ -86,11 +86,14 @@ def control_response(params, folder):
 
 
 def main():
+    from .extra_workers import commitment, dispatch, equivalent_cell, wind
+
     folder = Path.cwd()
     request = json.loads((folder / "request.json").read_text(encoding="utf-8"))
     backend = request["backend"]
     try:
-        handler = {"opendss": feeder, "pybamm": battery, "pvlib": solar, "control": control_response}[backend]
+        handler = {"opendss": feeder, "pybamm": battery, "pvlib": solar, "control": control_response,
+                   "windpowerlib": wind, "cvxpy": dispatch, "pyomo": commitment, "casadi": equivalent_cell}[backend]
         result = {"backend": backend, "status": "ok", **handler(request["parameters"], folder)}
         encoded = json.dumps(result, allow_nan=False)
     except Exception as exc:  # noqa: BLE001 - native solver boundary

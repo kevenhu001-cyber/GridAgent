@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Annotated, TypedDict
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_core.tools import tool
+from langchain_core.tools import StructuredTool, tool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
@@ -14,6 +14,7 @@ from pydantic import Field, ValidationError
 
 from .domain import CASES, CaseName, DeviceEdit, FaultRequest, ScenarioRequest
 from .extension_program import Battery, ControlResponse, Feeder, Solar
+from .extra_programs import Commitment, EconomicDispatch, EquivalentCell, Wind
 from .knowledge import KnowledgeIndex, QueryPlan, contracts
 from .native_program import DispatchProgram, PPProgram
 from .plugins import available, guidance
@@ -251,10 +252,26 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
         for plugin, plugin_tool in (("pypsa", pypsa_dispatch), ("opendss", opendss_feeder), ("pybamm", battery_discharge), ("pvlib", solar_dc_power)):
             if available(plugin):
                 tool_list.append(plugin_tool)
+        def optional_tool(backend, name, schema, description):
+            def invoke(**kwargs):
+                from .extension_runner import run_extension
+
+                return run_extension(root, backend, kwargs)
+
+            return StructuredTool.from_function(invoke, name=name, description=description, args_schema=schema)
+
+        for backend, name, schema, description in (
+            ("windpowerlib", "wind_power_curve", Wind, "Interpolate turbine power curve using windpowerlib."),
+            ("cvxpy", "quadratic_dispatch", EconomicDispatch, "Solve convex single-period generation dispatch."),
+            ("pyomo", "unit_commitment", Commitment, "Solve bounded hourly single-bus unit commitment with HiGHS."),
+            ("casadi", "equivalent_cell_response", EquivalentCell, "Integrate a first-order Thevenin RC battery model."),
+        ):
+            if available(backend):
+                tool_list.append(optional_tool(backend, name, schema, description))
         if importlib.util.find_spec("control") is not None:
             tool_list.append(control_step_response)
     tools = {t.name: t for t in tool_list}
-    numerical_tools = {"power_flow", "simulate_fault", "eigenanalysis", "scenario_power_flow", "pandapower_program", "pypsa_dispatch", "opendss_feeder", "battery_discharge", "solar_dc_power", "control_step_response"}
+    numerical_tools = {"power_flow", "simulate_fault", "eigenanalysis", "scenario_power_flow", "pandapower_program", "pypsa_dispatch", "opendss_feeder", "battery_discharge", "solar_dc_power", "control_step_response", "wind_power_curve", "quadratic_dispatch", "unit_commitment", "equivalent_cell_response"}
     base_contracts = contracts(tools)
 
     def knowledge_index():

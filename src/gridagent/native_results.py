@@ -8,6 +8,8 @@ TABLES = {"pandapower": {"bus", "line", "trafo", "load", "gen", "sgen", "storage
                          "res_bus", "res_line", "res_trafo", "res_bus_sc"},
           "opendss": {"node_voltage"}, "pybamm": {"battery_voltage"},
           "pvlib": {"solar_power"}, "control": {"control_step"},
+          "windpowerlib": {"wind_power"}, "cvxpy": {"economic_dispatch"},
+          "pyomo": {"commitment"}, "casadi": {"equivalent_cell"},
           "pypsa": {"generation_mw", "storage_mw", "storage_soc_mwh", "link_mw", "marginal_price"}}
 
 

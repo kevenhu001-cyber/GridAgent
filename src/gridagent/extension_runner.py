@@ -6,10 +6,14 @@ from pathlib import Path
 from uuid import uuid4
 
 from .extension_program import Battery, ControlResponse, Feeder, Solar
+from .extra_programs import Commitment, EconomicDispatch, EquivalentCell, Wind
 from .plugins import clean_env, launch
 
-SCHEMAS = {"opendss": Feeder, "pybamm": Battery, "pvlib": Solar, "control": ControlResponse}
-OPERATIONS = {"opendss": "feeder", "pybamm": "discharge", "pvlib": "solar_dc", "control": "step_response"}
+SCHEMAS = {"opendss": Feeder, "pybamm": Battery, "pvlib": Solar, "control": ControlResponse,
+           "windpowerlib": Wind, "cvxpy": EconomicDispatch, "pyomo": Commitment, "casadi": EquivalentCell}
+OPERATIONS = {"opendss": "feeder", "pybamm": "discharge", "pvlib": "solar_dc", "control": "step_response",
+              "windpowerlib": "power_curve", "cvxpy": "economic_dispatch",
+              "pyomo": "unit_commitment", "casadi": "equivalent_cell"}
 
 
 def run_extension(root, backend, parameters):
