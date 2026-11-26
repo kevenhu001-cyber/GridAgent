@@ -32,11 +32,12 @@ public partial class MainWindow : Window
     private JsonElement _topology;
     private sealed record Entry(string Id, string Label, string? Info = null);
 
-    public MainWindow()
+    private bool _launchInitialized;
+    public MainWindow(bool skipOnboarding = false)
     {
         InitializeComponent();
         RuntimeStatus.Text = File.Exists(BundledPython) ? "Bundled Python · ready" : "Developer runtime";
-        WorkspacePath.Text = AppDataPaths.DefaultWorkspace;
+        WorkspacePath.Text = SetupPreferences.LoadWorkspace() ?? AppDataPaths.DefaultWorkspace;
         ModelName.Text = Environment.GetEnvironmentVariable("GRIDAGENT_MODEL") ?? "";
         BaseUrl.Text = Environment.GetEnvironmentVariable("GRIDAGENT_BASE_URL") ?? "";
         Messages.ItemsSource = _messages;
@@ -53,9 +54,12 @@ public partial class MainWindow : Window
         Navigation.SelectedItem = AssistantNavigation;
         Root.Loaded += async (_, _) =>
         {
+            if (_launchInitialized) return;
+            _launchInitialized = true;
             await Execute(new { action = "initialize" });
             _initialized = true;
-            if (string.IsNullOrWhiteSpace(ModelName.Text)) { Navigation.SelectedItem = Navigation.SettingsItem; Notify("Configure a model provider to use the assistant. Offline tools are available without one.", InfoBarSeverity.Informational); }
+            if (!skipOnboarding && !SetupPreferences.Completed) await ShowSetupAsync();
+            else if (!skipOnboarding && string.IsNullOrWhiteSpace(ModelName.Text)) Notify("Configure a model provider in Settings to use the assistant. Offline tools are available without one.", InfoBarSeverity.Informational);
             await EnsureWorkspaceIndex();
         };
     }
@@ -254,6 +258,7 @@ public partial class MainWindow : Window
         var folder = await picker.PickSingleFolderAsync();
         if (folder == null) return;
         WorkspacePath.Text = folder.Path;
+        SetupPreferences.SaveWorkspace(folder.Path);
         ApiKey.Password = "";
         ClearMessages();
         await Execute(new { action = "initialize" });

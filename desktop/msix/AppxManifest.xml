@@ -4,11 +4,11 @@
          xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
          xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
          IgnorableNamespaces="uap uap10 rescap">
-  <Identity Name="GridAgent.Development" Publisher="CN=GridAgent Development" Version="1.0.0.0" ProcessorArchitecture="x64"/>
+  <Identity Name="GridAgent.Development" Publisher="CN=TopoDrive Development" Version="1.0.0.0" ProcessorArchitecture="x64"/>
   <Properties>
     <DisplayName>GridAgent (Development)</DisplayName>
-    <PublisherDisplayName>GridAgent</PublisherDisplayName>
-    <Description>Local AI-assisted power system research workbench</Description>
+    <PublisherDisplayName>TopoDrive</PublisherDisplayName>
+    <Description>GridAgent by TopoDrive. AI-assisted power system research. Lead developer: Adex Hu.</Description>
     <Logo>MsixAssets\StoreLogo.png</Logo>
   </Properties>
   <Resources><Resource Language="en-US"/></Resources>
@@ -17,7 +17,7 @@
   </Dependencies>
   <Applications>
     <Application Id="GridAgent" Executable="GridAgent.exe" uap10:RuntimeBehavior="packagedClassicApp" uap10:TrustLevel="mediumIL">
-      <uap:VisualElements DisplayName="GridAgent (Development)" Description="Power system research workbench"
+      <uap:VisualElements DisplayName="GridAgent (Development)" Description="AI-assisted power system research by TopoDrive"
         Square150x150Logo="MsixAssets\Square150x150Logo.png" Square44x44Logo="MsixAssets\Square44x44Logo.png" BackgroundColor="transparent"/>
     </Application>
   </Applications>

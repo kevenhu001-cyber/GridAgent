@@ -48,7 +48,7 @@ try {
     Remove-Item (Join-Path $stage "gridagent-tui.cmd") -ErrorAction SilentlyContinue
     if ($Development) {
         $IdentityName = "GridAgent.Development"
-        $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=GridAgent Development" -CertStoreLocation "Cert:\CurrentUser\My" -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -NotAfter (Get-Date).AddDays(30)
+        $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=TopoDrive Development" -CertStoreLocation "Cert:\CurrentUser\My" -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -NotAfter (Get-Date).AddDays(30)
         Export-Certificate -Cert $cert -FilePath (Join-Path $out "GridAgent-Development.cer") | Out-Null
     } else {
         if ($IdentityName -eq "GridAgent.Development") { throw "Use a separate production package identity." }
@@ -74,8 +74,9 @@ try {
     # Development certificate is intentionally not installed into a trust store here.
     $hash = (Get-FileHash $package -Algorithm SHA256).Hash
     "$hash  $([IO.Path]::GetFileName($package))" | Set-Content -Encoding ascii (Join-Path $out "SHA256SUMS.txt")
-    $meta = @{ identity = $IdentityName; publisher = $cert.Subject; version = $Version; architecture = "x64"; development = [bool]$Development; certificate_thumbprint = $cert.Thumbprint; bytes = (Get-Item $package).Length }
+    $meta = @{ identity = $IdentityName; developer = "TopoDrive"; lead_developer = "Adex Hu"; publisher = $cert.Subject; version = $Version; architecture = "x64"; development = [bool]$Development; certificate_thumbprint = $cert.Thumbprint; bytes = (Get-Item $package).Length }
     $meta | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $out "package-info.json")
+    Invoke-Checked $Python @((Join-Path $PSScriptRoot "msix\make-install-guide.py"), $out)
     Write-Host "MSIX built and signed: $package ($($meta.bytes) bytes)"
 } finally {
     if ($Development -and $null -ne $cert) { Remove-Item ("Cert:\CurrentUser\My\" + $cert.Thumbprint) -ErrorAction SilentlyContinue }

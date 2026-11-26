@@ -14,6 +14,11 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>GridAgent</AssemblyName>
+    <Product>GridAgent</Product>
+    <Company>TopoDrive</Company>
+    <Authors>Adex Hu</Authors>
+    <Description>AI-assisted power system research workbench</Description>
+    <Version>0.1.0</Version>
     <RootNamespace>GridAgent.Windows</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>

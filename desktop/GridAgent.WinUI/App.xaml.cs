@@ -7,10 +7,11 @@ public partial class App : Application
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         AppDataPaths.ConfigureProcess();
-        _window = new MainWindow();
+        bool smoke = AppDataPaths.IsPackaged && global::Windows.ApplicationModel.Package.Current.Id.Name == "GridAgent.Development" &&
+            (args.Arguments.Trim() == "--msix-smoke" || Environment.GetCommandLineArgs().Contains("--msix-smoke"));
+        _window = new MainWindow(skipOnboarding: smoke);
         _window.Activate();
-        if (AppDataPaths.IsPackaged && global::Windows.ApplicationModel.Package.Current.Id.Name == "GridAgent.Development" &&
-            (args.Arguments.Trim() == "--msix-smoke" || Environment.GetCommandLineArgs().Contains("--msix-smoke")))
+        if (smoke)
             _ = MsixSmoke.RunAsync();
     }
 }

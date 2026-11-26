@@ -1,5 +1,7 @@
 # GridAgent
 
+Developed by **TopoDrive**. Lead developer: **Adex Hu**.
+
 An open-source, simulation-grounded agent for power-system dynamics and engineering research, inspired by [PowerAgentBench-Dyn](https://arxiv.org/abs/2606.20401).
 
 **Status: early development.** Independent implementation; not an official reproduction or production grid-control system.
