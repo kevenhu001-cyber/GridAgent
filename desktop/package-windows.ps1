@@ -1,6 +1,6 @@
 # Run on Windows x64 with a full CPython 3.11 installation and .NET 10 SDK.
 # Produces a portable app directory. No Python installation is needed on the target PC.
-param([string]$Output = "desktop-publish", [string]$Python = "python")
+param([string]$Output = "desktop-publish", [string]$Python = "python", [switch]$LegacyWpf)
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
@@ -18,7 +18,9 @@ if ($LASTEXITCODE -ne 0) { throw "Cannot locate CPython" }
 $Version = (& $Python -c "import sys,struct; assert sys.version_info[:2] == (3,11) and struct.calcsize('P') == 8; print(sys.version.split()[0])").Trim()
 if ($LASTEXITCODE -ne 0) { throw "Build requires x64 CPython 3.11" }
 
-Invoke-Checked dotnet @("publish", (Join-Path $Repo "desktop/GridAgent.Windows"), "-c", "Release", "-r", "win-x64", "--self-contained", "true", "-o", $Output)
+## WinUI 3 is the default; legacy is a temporary explicit rollback option.
+$DesktopProject = if ($LegacyWpf) { "desktop/GridAgent.Windows" } else { "desktop/GridAgent.WinUI" }
+Invoke-Checked dotnet @("publish", (Join-Path $Repo $DesktopProject), "-c", "Release", "-r", "win-x64", "--self-contained", "true", "-o", $Output)
 $Runtime = Join-Path $Output "runtime"
 # Copy the complete installed CPython layout, not a non-relocatable virtualenv.
 # Exclude build-machine site packages and console entry-point wrappers.

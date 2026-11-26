@@ -1,3 +1,5 @@
+> **Windows desktop migration:** The default portable build uses the native WinUI 3 workbench. The old WPF project remains a temporary explicit rollback build (`-LegacyWpf`) until Windows visual and feature-parity validation is complete. Both use the same Python bridge and workspace format. See [WinUI design and verification](winui-workbench.md).
+
 # Native Windows desktop
 
 GridAgent.Windows is a Windows-only WPF/.NET 10 application. It does not use
