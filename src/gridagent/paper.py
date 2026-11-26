@@ -49,8 +49,10 @@ def load_kpi_module():
     return module
 
 
-def original_kpis(csv_path, clearing_s, after_extra=0.1):
+def original_kpis(csv_path, clearing_s, after_extra=0.1, require_full=False):
     # Upstream treats missing speed as stable. Refuse incomplete inputs before calling it.
+    if not 1 < clearing_s < 10:
+        raise ValueError("Clearing time must be between 1 and 10 s")
     frame = pd.read_csv(csv_path, header=[0, 1], sep=None, engine="python")
     time_col = next((c for c in frame.columns if "Time" in str(c[1])), frame.columns[0])
     voltage = [c for c in frame.columns if "u1" in str(c[1])]
@@ -63,6 +65,8 @@ def original_kpis(csv_path, clearing_s, after_extra=0.1):
     if not np.isfinite(recovery[[time_col, *voltage, *speed]].to_numpy(dtype=float)).all():
         raise ValueError("Nonfinite recovery waveform")
     t = recovery[time_col].to_numpy(dtype=float)
+    if require_full and (len(voltage) != 39 or t[-1] < 9.95):
+        raise ValueError("Original DSR needs all 39 bus voltage channels and full 10 s simulation")
     if np.any(np.diff(t) < 0) or t[-1] <= t[0]:
         raise ValueError("Invalid recovery timestamps")
     report = load_kpi_module().compute_kpis(str(csv_path), short_start=1.0,
@@ -118,13 +122,13 @@ class Ranking(BaseModel):
     predictions: list[Prediction] = Field(min_length=10, max_length=10)
 
 
-def paper_rank(root, estimator):
+def paper_rank(root, estimator, simulator=None):
     evidence, total, usable = training_evidence()
     study = Study(Path(root) / "studies")
     with study.lock():
         manifest = {"upstream_commit": PIN, "candidates": CANDIDATES, "budget": 3,
                     "training_count": total, "eligible_count": usable,
-                    "phase": "prediction_only"}
+                    "phase": "prediction_only" if simulator is None else "licensed_screening"}
         study.write("manifest", {"protocol": "poweragentbench-dsr-prediction-v1", "manifest": manifest,
                                  "manifest_sha256": digest(manifest)})
         study.write("retrieval", evidence)
@@ -136,14 +140,36 @@ def paper_rank(root, estimator):
         selected = [p.id for p in ordered[:3]]
         study.write("predictions", {"ranking": [p.model_dump(mode="json") for p in ordered],
                                     "selected": selected})
-        study.write("report", {"study_id": study.id, "protocol": "poweragentbench-dsr-prediction-v1",
-                               "completed": False, "phase": "predictions_frozen",
-                               "selected": selected, "attempted": 0,
-                               "simulation": "not_run", "mitigation": "not_run"})
         for item in ordered:
             case = evidence[item.id]
             yield f"{item.id} · {case['location']} · {case['duration_ms']} ms · estimated S={item.severity:.4f}"
-        yield "Frozen top three: " + ", ".join(selected) + ". No PowerFactory simulation performed."
+        yield "Frozen top three: " + ", ".join(selected)
+        observed = []
+        if simulator is not None:
+            for index, item in enumerate(ordered[:3], 1):
+                case = evidence[item.id]
+                study.write(f"attempt-{index}", {"id": item.id, "case": case["location"],
+                                                 "duration_ms": case["duration_ms"]})
+                result = simulator(case, study.path / f"run-{index}")
+                row = {"id": item.id, "status": result.get("status"), "result": result}
+                if result.get("status") == "ok":
+                    kpi = result["kpi"]
+                    row["severity_error"] = abs(item.severity - kpi["severity_score"])
+                    row["stability_match"] = item.stable == bool(kpi["stable"])
+                    for key, estimate in (("vmin_aft", item.v_min_pu), ("vmax_aft", item.v_max_pu)):
+                        if estimate is not None and kpi.get(key) is not None:
+                            row[key + "_error"] = abs(estimate - kpi[key])
+                study.write(f"result-{index}", row)
+                observed.append(row)
+                yield f"Original PowerFactory run {index}/3 · {item.id} · {row['status']}"
+        study.write("report", {"study_id": study.id, "protocol": "poweragentbench-dsr-prediction-v1",
+                               "completed": False,
+                               "phase": "screening_attempted" if simulator else "predictions_frozen",
+                               "selected": selected, "attempted": len(observed),
+                               "observations": observed,
+                               "simulation": "attempted" if simulator else "not_run",
+                               "mitigation": "not_run"})
+        yield "Mitigation not run; full paper workflow success is not claimed."
 
 
 def model_estimator(model):

@@ -24,6 +24,12 @@ def workspace_command(root, command, args):
         from .paper_dmq import model_proposer, original_dmq, profile_runner
 
         yield from original_dmq(root, model_proposer(model_from_env()), profile_runner(args[0]))
+    elif command == "paper-dsr" and len(args) == 1:
+        from .agent import model_from_env
+        from .paper import model_estimator, paper_rank
+        from .paper_dsr import profile_runner
+
+        yield from paper_rank(root, model_estimator(model_from_env()), profile_runner(args[0]))
     elif command == "paper-rank" and not args:
         from .agent import model_from_env
         from .paper import model_estimator, paper_rank

@@ -1,0 +1,9 @@
+{
+  "dedicated_project": true,
+  "python": "C:\\Research\\PowerFactory-Python313\\python.exe",
+  "powerfactory_python_path": "C:\\Program Files\\DIgSILENT\\PowerFactory 2025 SP1\\Python\\3.13",
+  "project_path": "\\PowerFactory_User\\GridAgent IEEE39 Research Copy.IntPrj",
+  "base_study_case": "0. Base",
+  "result_name": "All calculations.ElmRes",
+  "timeout_s": 600
+}

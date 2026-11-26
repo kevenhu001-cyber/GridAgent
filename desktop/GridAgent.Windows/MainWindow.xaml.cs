@@ -170,6 +170,12 @@ public partial class MainWindow : Window
         var picker = new OpenFileDialog { Filter = "Dedicated DMView profile (*.json)|*.json", CheckFileExists = true };
         if (picker.ShowDialog(this) == true) await Local("paper-dmq", picker.FileName);
     }
+    private async void PaperDsr(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        var picker = new OpenFileDialog { Filter = "Dedicated PowerFactory profile (*.json)|*.json", CheckFileExists = true };
+        if (picker.ShowDialog(this) == true) await Local("paper-dsr", picker.FileName);
+    }
     private async void PaperRank(object sender, RoutedEventArgs e) => await Local("paper-rank");
     private async void PaperKpi(object sender, RoutedEventArgs e)
     {

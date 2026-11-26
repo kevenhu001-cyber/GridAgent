@@ -57,6 +57,10 @@ def study_summary(root: Path, identifier: str):
             lines.append(f"Attempts: {report['attempts']} · applied edits: {report['accepted_edits']}")
         for key, value in report["final_gains"].items():
             lines.append(f"{key}: {report['initial_gains'][key]:g} → {value:g}")
+    elif report.get("phase") == "screening_attempted":
+        lines.append(f"Original PowerFactory screening attempts: {report['attempted']} · mitigation not run")
+        for row in report["observations"]:
+            lines.append(f"{row['id']} · {row['status']} · severity error {row.get('severity_error')}")
     elif report.get("phase") == "predictions_frozen":
         lines.append("Original paper predictions frozen; no fresh simulations")
         lines.append("Selected: " + ", ".join(report["selected"]))

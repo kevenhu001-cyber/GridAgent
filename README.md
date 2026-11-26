@@ -106,5 +106,6 @@ PowerAgentBench source, case files and training memory (not test memory).
 `gridagent --paper-rank` freezes estimates for the ten original cases;
 `gridagent --paper-kpi CSV CLEARING_S` calls the original KPI implementation;
 `gridagent --paper-edit Kqp Kqi Kvp Kvi` creates an isolated, verified Solar model edit.
-Paper ranking is prediction-only until the licensed PowerFactory backend is integrated.
-The original DMQ edit is not a completed DMView test. Windows bundles these assets.
+Paper ranking alone is prediction-only. Optional licensed adapters are available via
+--paper-dmq PROFILE and --paper-dsr PROFILE; see docs/upstream-integration.md.
+They require dedicated installed simulator environments and are not yet license-tested. Windows bundles these assets.

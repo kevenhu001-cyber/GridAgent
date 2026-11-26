@@ -21,9 +21,7 @@ rule, not a general certificate.
 
 Original DMQ editing calls published dyr_tools.py in a separate process, checks
 the target model identity, compares all non-gain spans and checks locked SAV
-bytes. It writes an isolated case; no DMView execution yet. The actual licensed
-DMView runner/evaluator and PowerFactory driver are staged for next integration,
-not invoked by the user-facing Agent yet. Separate licensed simulator profiles
+bytes. It writes an isolated case; no DMView execution yet. The licensed runner/evaluator and driver have separate adapters described below. Separate licensed simulator profiles
 are required (PSS/E 36.2/DMView 3.4 and PowerFactory with compatible Python).
 No commercial software is distributed. Windows remains native, TUI shares the
 same commands and artifacts.
@@ -37,3 +35,14 @@ checks locked fields and reruns the original eight tests after each validated
 LLM edit, at most five proposals. A simulator error stops the workflow.
 This adapter is not yet tested with licensed software. The ordinary Windows
 open mode still needs no external Python. See examples/paper-dmq-profile.json.
+
+## Licensed DSR adapter
+
+`gridagent --paper-dsr PROFILE.json` invokes the original PowerFactory driver
+on a dedicated copy of the IEEE39 project. A new study case is created for each
+of the frozen top three; complete RMS CSVs are scored by the original KPI code.
+Prediction errors and stability agreement are recorded. Mitigation is not yet
+implemented; no full-workflow success is claimed. The original project and
+complete voltage/speed channel mapping must be installed and verified by the
+user. This adapter has not been tested with a commercial license. See example
+profile. Windows buttons and TUI /paper-dsr and /paper-dmq use the same commands.
