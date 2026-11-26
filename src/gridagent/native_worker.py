@@ -102,9 +102,9 @@ def pypsa_run(program, folder):
 
     n = pypsa.Network()
     n.set_snapshots(pd.date_range("2000-01-01", periods=program.hours, freq="h"))
+    n.add("Carrier", "AC")
     for bus in program.buses:
         n.add("Bus", bus.name, carrier="AC")
-    n.add("Carrier", "AC")
     for load in program.loads:
         n.add("Load", load.name, bus=load.bus, p_set=load.p_set_mw)
     for gen in program.generators:

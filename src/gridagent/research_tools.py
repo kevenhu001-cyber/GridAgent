@@ -11,7 +11,7 @@ def run_record(root, identifier):
     folder = artifact_folder(root, "runs", identifier)
     record = load_object(folder / "result.json")
     # Return numerical evidence without arbitrary filesystem paths or raw solver logs.
-    keys = ("status", "reason", "detail", "case", "operation", "backend", "version", "scope", "counts", "solver_status", "termination_condition", "audit", "model_sha256",
+    keys = ("status", "reason", "detail", "case", "operation", "backend", "version", "scope", "counts", "solver_status", "termination_condition", "audit", "parent_run", "model_sha256",
             "bus_ids", "fault", "scenario", "device_changes", "metrics", "voltages_pu", "angles_rad", "topology", "samples")
     return {"run_id": identifier, **{k: record[k] for k in keys if k in record}}
 

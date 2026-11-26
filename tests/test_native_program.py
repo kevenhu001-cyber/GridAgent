@@ -44,3 +44,23 @@ def test_native_pypsa_storage(tmp_path):
     assert result["status"] == "ok", result
     assert result["metrics"]["storage_discharge_mwh"] > 0
     assert (tmp_path / "runs" / result["run_id"] / "storage_soc_mwh.csv").is_file()
+
+
+@pytest.mark.integration
+def test_pandapower_construct_fault_and_replay(tmp_path):
+    pytest.importorskip("pandapower")
+    from gridagent.native_backends import run_program
+
+    steps = [{"op": "create_bus", "index": 0, "vn_kv": 110},
+             {"op": "create_bus", "index": 1, "vn_kv": 110},
+             {"op": "create_ext_grid", "bus": 0, "s_sc_max_mva": 1000},
+             {"op": "create_line_from_parameters", "index": 0, "from_bus": 0, "to_bus": 1,
+              "length_km": 10, "r_ohm_per_km": 0.1, "x_ohm_per_km": 0.4, "max_i_ka": 0.5},
+             {"op": "create_load", "index": 0, "bus": 1, "p_mw": 20, "q_mvar": 5}]
+    first = run_program(tmp_path, {"backend": "pandapower", "steps": steps})
+    assert first["status"] == "ok", first
+    next_run = run_program(tmp_path, {"backend": "pandapower", "parent_run": first["run_id"],
+                                     "analysis": "short_circuit", "fault_bus": 1})
+    assert next_run["status"] == "ok", next_run
+    assert next_run["metrics"]["ikss_ka"] > 0
+    assert next_run["parent_run"] == first["run_id"]

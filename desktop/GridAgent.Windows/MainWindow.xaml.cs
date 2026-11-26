@@ -178,6 +178,32 @@ public partial class MainWindow : Window
     }
     private async void Models(object sender, RoutedEventArgs e) => await Local("models");
     private async void Backends(object sender, RoutedEventArgs e) => await Local("backends");
+    private void ReviewScript(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        try
+        {
+            var root = Path.GetFullPath(WorkspacePath.Text.Trim());
+            var drafts = Path.Combine(root, "drafts");
+            Directory.CreateDirectory(drafts);
+            var picker = new OpenFileDialog { Filter = "Python source (*.py)|*.py", InitialDirectory = drafts,
+                                              CheckFileExists = true };
+            if (picker.ShowDialog(this) != true) return;
+            var source = File.ReadAllText(picker.FileName);
+            if (System.Text.Encoding.UTF8.GetByteCount(source) > 65536)
+                throw new InvalidOperationException("Source exceeds 64 KiB.");
+            var review = new ScriptReviewWindow(source) { Owner = this };
+            if (review.ShowDialog() != true) return;
+            var output = SandboxRunner.Launch(root, source);
+            Append("Windows Sandbox launch requested. Review outputs manually in: " + output +
+                   ". No numerical result is verified yet.");
+        }
+        catch (Exception ex)
+        {
+            Append("Sandbox could not launch (" + ex.GetType().Name +
+                   "). Windows Sandbox and the bundled runtime must be installed.");
+        }
+    }
     private async void NativeProgram(object sender, RoutedEventArgs e)
     {
         if (_busy) return;

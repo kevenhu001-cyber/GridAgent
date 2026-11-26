@@ -37,3 +37,18 @@ protocols are unchanged. The knowledge index derives contracts from tool
 schemas, with native API keywords; upstream manuals have not been ingested.
 Official references: https://pandapower.readthedocs.io/ and
 https://docs.pypsa.org/. No automatic backend model conversion is implemented.
+
+## Optional free-form Python drafting and execution
+
+The Agent may save standalone Python drafts under drafts/ID/script.py. Drafts
+are syntax checked but never executed by the host. The Windows client offers
+Review Python draft, displays the exact source, and requires explicit approval
+before launching a separate Windows Sandbox session. This requires a supported
+Windows edition with the optional Windows Sandbox feature enabled and the
+bundled runtime. No host-Python fallback. A fresh sandbox job maps only the
+runtime and approved input read-only and a dedicated new output folder writable;
+network, clipboard, printer, audio/video and vGPU redirection are disabled.
+The user must close the sandbox when finished. Output files are untrusted and
+are not automatically ingested or claimed as measured results. No automatic
+arbitrary-code execution, sandbox result verification, or TUI launch yet.
+The sandbox integration is untested on a virtualization-enabled Windows host.

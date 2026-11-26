@@ -8,7 +8,12 @@ from .workspace import list_runs, study_summary, waveform, waveform_text
 
 def workspace_command(root, command, args):
     root = Path(root)
-    if command == "backends" and not args:
+    if command == "drafts" and not args:
+        from .script_drafts import list_drafts
+
+        for row in list_drafts(root):
+            yield f"{row['title']} · {row['id']} · {row['status']}"
+    elif command == "backends" and not args:
         from .native_backends import available_backends
 
         for row in available_backends():

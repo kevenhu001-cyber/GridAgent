@@ -30,7 +30,8 @@ def run_program(root, program, timeout_s=300):
     parent = None
     if isinstance(program, PPProgram) and program.parent_run:
         prior = artifact_folder(Path(root), "runs", program.parent_run)
-        if load_object(prior / "result.json").get("backend") != "pandapower":
+        previous_result = load_object(prior / "result.json")
+        if previous_result.get("backend") != "pandapower" or previous_result.get("status") != "ok":
             raise ValueError("Parent must be a pandapower run")
         previous = PPProgram.model_validate(load_object(prior / "request.json"))
         if previous.parent_run is not None:

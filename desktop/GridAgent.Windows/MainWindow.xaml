@@ -19,6 +19,7 @@
      <Button Content="Available models" Click="Models"/>
      <Button Content="Simulation backends" Click="Backends"/>
      <Button Content="Run simulation program…" Click="NativeProgram"/>
+     <Button Content="Review Python draft…" Click="ReviewScript"/>
      <Button Content="Import engineering references…" Click="ImportKnowledge"/>
      <Button Content="Knowledge packs" Click="Knowledge"/>
     </StackPanel>
