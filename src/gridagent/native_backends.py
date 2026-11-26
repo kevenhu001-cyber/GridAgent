@@ -46,7 +46,9 @@ def run_program(root, program, timeout_s=300):
     (folder / "request.json").write_text(json.dumps(request, allow_nan=False), encoding="utf-8")
     env = {k: v for k, v in os.environ.items() if k.upper() in {
         "PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "WINDIR", "TEMP", "TMP",
-        "LD_LIBRARY_PATH", "LANG", "LC_ALL", "VIRTUAL_ENV", "LOCALAPPDATA", "APPDATA"
+        "LD_LIBRARY_PATH", "LANG", "LC_ALL", "VIRTUAL_ENV", "LOCALAPPDATA", "APPDATA",
+        "PROCESSOR_ARCHITECTURE", "PROCESSOR_ARCHITEW6432", "PROCESSOR_IDENTIFIER",
+        "NUMBER_OF_PROCESSORS", "COMSPEC", "PATHEXT"
     }}
     env.update({"PYTHONNOUSERSITE": "1", "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1",
                 "MKL_NUM_THREADS": "1"})
@@ -64,6 +66,11 @@ def run_program(root, program, timeout_s=300):
         result["reason"] = "Native solver timeout"
     except OSError:
         result["reason"] = "Native solver could not start"
+    from .model_quality import evaluate_run
+
+    quality = evaluate_run(folder, request, result)
+    result["quality"] = quality
+    (folder / "quality.json").write_text(json.dumps(quality, allow_nan=False), encoding="utf-8")
     result["run_id"] = folder.name
     if parent:
         result["parent_run"] = parent

@@ -40,7 +40,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-      - run: pip install -e '.[dev,andes]'
+      - run: pip install -e '.[dev,engineering]'
       - run: python scripts/sync_benchmark.py benchmark-assets
       - run: pytest -m 'not integration' -q
       - run: pytest -m integration -q
