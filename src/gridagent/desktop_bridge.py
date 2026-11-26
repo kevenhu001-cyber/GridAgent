@@ -5,6 +5,7 @@ import sys
 from contextlib import redirect_stdout
 from pathlib import Path
 
+import numpy as np
 from langchain_core.messages import HumanMessage, ToolMessage
 
 from .agent import build_agent, model_from_env
@@ -13,6 +14,27 @@ from .commands import workspace_command
 from .dsr import list_studies
 from .simulator import AndesSimulator
 from .store import ResearchStore, recorded_task
+from .workspace import list_runs, waveform
+
+
+def chart_series(root, identifier):
+    """Return bounded chart data without dropping per-bucket extrema."""
+    first = waveform(root, identifier)
+    series = []
+    for channel in first["channels"]:
+        data = first if channel == first["channel"] else waveform(root, identifier, channel)
+        t, y = data["time"], data["value"]
+        if len(t) > 1200:
+            indices = {0, len(t) - 1}
+            for block in np.array_split(np.arange(len(t)), 599):
+                indices.add(int(block[np.argmin(y[block])]))
+                indices.add(int(block[np.argmax(y[block])]))
+            idx = sorted(indices)
+        else:
+            idx = slice(None)
+        series.append({"channel": channel, "time": t[idx].tolist(), "value": y[idx].tolist(),
+                       "samples": len(t), "minimum": float(y.min()), "maximum": float(y.max())})
+    return series
 
 
 def dispatch(root, request, emit):
@@ -23,6 +45,7 @@ def dispatch(root, request, emit):
     def refresh():
         emit("sessions", store.sessions())
         emit("studies", list_studies(root / "studies"))
+        emit("runs", list_runs(root))
 
     if action == "refresh":
         refresh()
@@ -60,6 +83,8 @@ def dispatch(root, request, emit):
                     elif text_content(msg):
                         emit("assistant", text_content(msg))
         refresh()
+    elif action == "waveform":
+        emit("waveform", chart_series(root, request["run"]))
     elif action == "local":
         for line in workspace_command(root, request["command"], request.get("args", [])):
             emit("result", line)

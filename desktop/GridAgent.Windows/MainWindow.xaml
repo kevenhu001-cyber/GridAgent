@@ -30,6 +30,12 @@
        <ListBox x:Name="StudyList" DisplayMemberPath="Label"/>
       </DockPanel>
      </TabItem>
+     <TabItem Header="Runs">
+      <DockPanel>
+       <Button DockPanel.Dock="Bottom" Content="View voltage waveform" Click="OpenWaveform" Margin="0,8,0,0"/>
+       <ListBox x:Name="RunList" DisplayMemberPath="Label"/>
+      </DockPanel>
+     </TabItem>
     </TabControl>
    </DockPanel>
   </Border>

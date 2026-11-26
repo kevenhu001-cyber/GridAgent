@@ -23,3 +23,18 @@ def test_desktop_reference_without_model(tmp_path, monkeypatch):
     dispatch(tmp_path, {"action": "dmq", "reference": True}, lambda kind, data: events.append((kind, data)))
     assert any(kind == "result" and "8/8 passed" in data for kind, data in events)
     assert any(kind == "studies" and data for kind, data in events)
+
+
+def test_desktop_waveform_keeps_extrema(tmp_path):
+    run_id = "a" * 32
+    folder = tmp_path / "runs" / run_id
+    folder.mkdir(parents=True)
+    rows = ["time_s,B5"] + [f"{i / 1000},{0.2 if i == 501 else 1.0}" for i in range(3000)]
+    (folder / "voltage.csv").write_text("\n".join(rows), encoding="utf-8")
+    events = []
+    dispatch(tmp_path, {"action": "waveform", "run": run_id},
+             lambda kind, data: events.append((kind, data)))
+    series = events[0][1][0]
+    assert series["samples"] == 3000
+    assert len(series["time"]) <= 1200
+    assert min(series["value"]) == 0.2

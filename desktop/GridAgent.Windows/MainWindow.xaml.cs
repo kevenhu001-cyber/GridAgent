@@ -44,6 +44,7 @@ public partial class MainWindow : Window
                 _session = null;
                 SessionList.ItemsSource = null;
                 StudyList.ItemsSource = null;
+                RunList.ItemsSource = null;
             }
             var settings = new EngineSettings(PythonPath.Text.Trim(), root, ModelName.Text.Trim(), BaseUrl.Text.Trim(), ApiKey.Password);
             await LocalEngine.RunAsync(settings, request, Handle);
@@ -77,6 +78,22 @@ public partial class MainWindow : Window
                     var id = x.GetProperty("id").GetString()!;
                     return new Entry(id, id[..Math.Min(12, id.Length)] + " · " + x.GetProperty("status").GetString());
                 }).ToList();
+                break;
+            case "runs":
+                RunList.ItemsSource = data.EnumerateArray().Select(x =>
+                {
+                    var id = x.GetProperty("id").GetString()!;
+                    return new Entry(id, x.GetProperty("operation").GetString() + " · " + id[..Math.Min(8, id.Length)]);
+                }).ToList();
+                break;
+            case "waveform":
+                var channels = data.EnumerateArray().Select(x => new WaveformSeries(
+                    x.GetProperty("channel").GetString()!,
+                    x.GetProperty("time").EnumerateArray().Select(v => v.GetDouble()).ToArray(),
+                    x.GetProperty("value").EnumerateArray().Select(v => v.GetDouble()).ToArray(),
+                    x.GetProperty("samples").GetInt32(),
+                    x.GetProperty("minimum").GetDouble(), x.GetProperty("maximum").GetDouble())).ToList();
+                new WaveformWindow(channels) { Owner = this }.Show();
                 break;
             case "user": Append("You\n" + data.GetString()); break;
             case "assistant": Append(data.GetString() ?? ""); break;
@@ -125,6 +142,11 @@ public partial class MainWindow : Window
     {
         if (_busy || WorkspaceChanged() || StudyList.SelectedItem is not Entry row) return;
         await Local("study", row.Id);
+    }
+    private async void OpenWaveform(object sender, RoutedEventArgs e)
+    {
+        if (_busy || WorkspaceChanged() || RunList.SelectedItem is not Entry row) return;
+        await Execute(new { action = "waveform", run = row.Id });
     }
     private async void ResumeDsr(object sender, RoutedEventArgs e)
     {

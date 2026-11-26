@@ -26,10 +26,11 @@ reference, eigenanalysis and optimization do not require a model key.
 
 ## Current capabilities
 
-Native session and study lists, history replay, natural-language tasks with
+Native session, study and run lists, history replay, natural-language tasks with
 stage updates, DMQ/reference, manifest picker for DSR, eigenanalysis,
-optimization, run listing and DSR resume. The transcript is selectable plain
-text. No rich Markdown, interactive plots, model picker, persistent desktop
+optimization, run listing and DSR resume. Select a fault run in the Runs tab to open a native voltage chart with channel selection and
+extrema-preserving display sampling. Original CSV remains unchanged. The transcript is selectable plain
+text. No rich Markdown, plot zoom/pan, model picker, persistent desktop
 preferences or cancel button yet. Closing is blocked during active work.
 The model key is not stored in SQLite or configuration.
 
