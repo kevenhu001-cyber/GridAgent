@@ -202,6 +202,28 @@ def workspace_command(root, command, args, *, model_factory=None):
         from .paper import model_estimator, paper_rank
 
         yield from paper_rank(root, model_estimator(create_model()))
+    elif command in {"ac-evidence-repair", "ac-evidence-repair-resume"} and len(args) == 1:
+        import json
+
+        from filelock import Timeout
+
+        from .ac_evidence_repair import resume_repair, start_repair
+        from .ac_repair_ir import ACRepairAuthorization
+
+        try:
+            if command == "ac-evidence-repair":
+                with Path(args[0]).open("rb") as handle:
+                    payload = handle.read(1024 * 1024 + 1)
+                if len(payload) > 1024 * 1024:
+                    raise ValueError("AC repair input exceeds 1 MiB")
+                identifier = start_repair(root, ACRepairAuthorization.model_validate_json(payload))
+                yield "AC evidence repair study: " + identifier
+            else:
+                identifier = args[0]
+            report = resume_repair(root, identifier)
+        except Timeout as exc:
+            raise ValueError("AC repair or source study is locked") from exc
+        yield json.dumps(report, ensure_ascii=False, allow_nan=False)
     elif command in {"ac-diagnostic-experiment", "ac-diagnostic-experiment-resume"} and len(args) == 1:
         import json
 

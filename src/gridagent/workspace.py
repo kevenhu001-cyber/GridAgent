@@ -49,6 +49,14 @@ def study_summary(root: Path, identifier: str):
     lines = [f"Study {identifier}", f"Protocol: {manifest.get('protocol', 'unknown')}"]
     if report is None:
         lines.append("Unfinished · partial artifacts preserved")
+    elif report.get("phase") == "ac_evidence_repair_finished":
+        lines.append(f"AC repair: {report['recommended_candidate_index']}")
+        lines.append(f"Reserved runs: {report['reserved_solver_runs']}/{report['max_solver_runs']}")
+        for candidate in report["candidates"]:
+            lines.append(f"Candidate {candidate['candidate_index']}: "
+                         f"{candidate['verified_snapshots']}/{candidate['required_snapshots']} verified")
+        lines.append(f"Full DC schedule coverage: {report['full_dc_schedule_coverage']}")
+        lines.append("Proposed model only; original not modified and dynamic security not established")
     elif report.get("phase") == "ac_diagnostic_experiment_finished":
         lines.append(f"AC diagnostic baseline reproduced: {report['baseline_reproduced']}")
         lines.append(f"Reserved runs: {report['reserved_solver_runs']}/{report['max_solver_runs']}")

@@ -283,3 +283,144 @@ def test_native_voltage_diagnostic_reproduces_failure_and_resolves_target(tmp_pa
     assert not report["root_cause_confirmed"]
     assert resume_experiment(tmp_path, experiment, solver=lambda *a, **kw: pytest.fail("Repeated solve")) == report
     assert diagnose_study(tmp_path, source)["source_report_sha256"] == digest
+
+
+
+def repair_authorization():
+    return {"diagnostic_study_id": "a"*32, "diagnostic_report_sha256": "b"*64,
+            "candidate_indices": [1], "max_solver_runs": 2}
+
+
+def repair_fixture():
+    from gridagent.ac_diagnostic_ir import ACDiagnosticExperiment, compile_probes
+
+    source = ac_input("a"*32)
+    source["snapshots"].append({"hour": 1})
+    spec = ACDiagnosticExperiment.model_validate(diagnostic_input())
+    cases = compile_probes(spec, source)
+    observations = [{**job, "observation": {"passed": index == 1}}
+                    for index, (job, _) in enumerate(cases)]
+    report = {"baseline_reproduced": True, "observations": observations,
+              "hypothesis_updates": [{"probe": cases[1][0]["probe"],
+                                      "status": "target_resolved_in_counterfactual",
+                                      "all_snapshot_checks_passed": True}]}
+    return spec, source, report
+
+
+def test_repair_compiler_preserves_full_original_scope():
+    from gridagent.ac_repair_ir import compile_candidates
+
+    diagnostic, source, report = repair_fixture()
+    job, candidate = compile_candidates(repair_authorization(), diagnostic, source, report)[0]
+    expected = ACCheckSpec.model_validate(source).canonical()
+    expected["model"]["revision"] += 1
+    next(d for d in expected["model"]["devices"] if d["id"] == "slackA")["voltage_pu"] = 0.98
+    assert candidate.canonical() == expected
+    assert job["full_ac_spec_sha256"] == candidate.sha256()
+    assert len(candidate.snapshots) == 2
+
+
+@pytest.mark.parametrize("fault", ["baseline", "partial_improvement", "failed_other_check", "index",
+                                   "budget", "duplicate", "changed_probe", "extra_capacity"])
+def test_repair_compiler_rejects_unjustified_candidates(fault):
+    from gridagent.ac_repair_ir import compile_candidates
+
+    diagnostic, source, report = repair_fixture()
+    auth = repair_authorization()
+    if fault == "baseline":
+        report["baseline_reproduced"] = False
+    elif fault == "partial_improvement":
+        report["hypothesis_updates"][0]["status"] = "target_violation_reduced"
+    elif fault == "failed_other_check":
+        report["observations"][1]["observation"]["passed"] = False
+    elif fault == "index":
+        auth["candidate_indices"] = [2]
+    elif fault == "budget":
+        auth["max_solver_runs"] = 1
+    elif fault == "duplicate":
+        auth["candidate_indices"] = [1, 1]
+    elif fault == "changed_probe":
+        report["observations"][1]["change"] = {}
+    else:
+        auth["storage_apparent_limits_mva"] = {"unknown": 10}
+    with pytest.raises(ValueError):
+        compile_candidates(auth, diagnostic, source, report)
+
+
+def test_repair_storage_capability_uses_scheduled_p_and_q():
+    from types import SimpleNamespace
+
+    from gridagent.ac_repair_ir import ACRepairAuthorization, storage_capacity_check
+
+    raw = repair_authorization()
+    raw["storage_apparent_limits_mva"] = {"battery": 5}
+    auth = ACRepairAuthorization.model_validate(raw)
+    job = {"probe": {"kind": "storage_reactive", "device": "battery"}}
+    variant = SimpleNamespace(dispatch_tolerance_mw=1e-5)
+    device = SimpleNamespace(id="battery", charging_mw=-4, reactive_mvar=-3)
+    case = (None, SimpleNamespace(model=SimpleNamespace(devices=[device])))
+    assert not storage_capacity_check(auth, job, variant, case)["passed"]
+    device.reactive_mvar = -2
+    check = storage_capacity_check(auth, job, variant, case)
+    assert check["passed"]
+    assert check["conservative_required_mva"] > 4.47
+
+
+def test_repair_summary_rejects_partial_or_version_mismatched_scope():
+    from gridagent.ac_evidence_repair import summarize_candidates
+    from gridagent.ac_repair_ir import compile_candidates
+
+    diagnostic, source, report = repair_fixture()
+    candidates = compile_candidates(repair_authorization(), diagnostic, source, report)
+    rows = [{"candidate_index": 1, "snapshot_index": i,
+             "observation": {"passed": True, "native_evidence": {"solver_version": "3"}}}
+            for i in range(2)]
+    summary = summarize_candidates(candidates, rows, "3", 2)[0]
+    assert summary["verified"]
+    assert summary["proposed_ac_spec"] is not None
+    rows[1]["observation"]["passed"] = False
+    assert not summarize_candidates(candidates, rows, "3", 2)[0]["verified"]
+    rows[1]["observation"]["passed"] = True
+    rows[1]["observation"]["native_evidence"]["solver_version"] = "4"
+    assert not summarize_candidates(candidates, rows, "3", 2)[0]["verified"]
+    assert summarize_candidates(candidates, rows[:1], "3", 2)[0]["proposed_ac_spec"] is None
+
+
+@pytest.mark.integration
+def test_native_evidence_repair_revalidates_full_original_scope(tmp_path):
+    pytest.importorskip("pandapower")
+    from gridagent.ac_diagnostic_experiment import resume_experiment, start_experiment
+    from gridagent.ac_evidence_repair import resume_repair, start_repair
+    from gridagent.diagnosis import diagnose_study
+    from gridagent.engineering_ir import fingerprint
+
+    raw_dc = dc_input()
+    raw_dc["demand_mw"] = [6, 6]
+    raw_dc["network"]["buses"][0]["demand_mw"] = [0, 0]
+    raw_dc["network"]["buses"][1]["demand_mw"] = [6, 6]
+    raw_dc["network"]["reserve_requirement_mw"] = [1, 1]
+    dc = start_program(tmp_path, raw_dc)
+    assert resume_program(tmp_path, dc)["completed"]
+    original = ac_input(dc)
+    original["model"]["devices"][0]["voltage_pu"] = 0.89
+    original["reactive_demand_mvar"] = {"A": [0, 0], "B": [1, 1]}
+    original["snapshots"] = [{"hour": 0}, {"hour": 1}]
+    source = start_ac_check(tmp_path, original)
+    assert not resume_ac_check(tmp_path, source)["completed"]
+    digest = diagnose_study(tmp_path, source)["source_report_sha256"]
+    raw = diagnostic_input(source, digest)
+    raw["probes"][0]["value_pu"] = 1
+    diagnostic = start_experiment(tmp_path, raw)
+    report = resume_experiment(tmp_path, diagnostic)
+    assert report["hypothesis_updates"][0]["all_snapshot_checks_passed"], report
+    auth = repair_authorization()
+    auth.update(diagnostic_study_id=diagnostic, diagnostic_report_sha256=fingerprint(report))
+    repair = start_repair(tmp_path, auth)
+    fixed = resume_repair(tmp_path, repair)
+    assert fixed["completed"], fixed
+    assert fixed["recommended_candidate_index"] == 1
+    assert fixed["candidates"][0]["verified_snapshots"] == 2
+    assert fixed["full_dc_schedule_coverage"]
+    assert not fixed["original_model_modified"]
+    assert resume_repair(tmp_path, repair, solver=lambda *a, **kw: pytest.fail("Repeated solve")) == fixed
+    assert diagnose_study(tmp_path, source)["source_report_sha256"] == digest
