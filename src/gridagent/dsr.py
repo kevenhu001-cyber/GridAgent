@@ -5,10 +5,13 @@ The LLM receives candidate features and historical measurements, never evaluator
 """
 import hashlib
 import json
+import os
+import re
 from pathlib import Path
 from typing import Annotated, TypedDict
 from uuid import uuid4
 
+from filelock import FileLock
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -155,11 +158,132 @@ class Study:
         self.path = root.resolve() / self.id
         self.path.mkdir(parents=True, exist_ok=False)
 
+    @classmethod
+    def reopen(cls, root: Path, identifier: str):
+        if not re.fullmatch(r"[a-f0-9]{32}", identifier):
+            raise ValueError("Expected a full study ID")
+        path = (root.resolve() / identifier).resolve()
+        if path.parent != root.resolve() or not path.is_dir():
+            raise ValueError("Unknown study")
+        study = cls.__new__(cls)
+        study.id, study.path = identifier, path
+        return study
+
+    def lock(self):
+        return FileLock(str(self.path / ".execution.lock"), timeout=0)
+
+    def read(self, name):
+        return json.loads((self.path / (name + ".json")).read_text(encoding="utf-8"))
+
+    def exists(self, name):
+        return (self.path / (name + ".json")).is_file()
+
     def write(self, name, value):
-        # Exclusive creation prevents accidental overwriting of frozen predictions.
+        # Publish complete write-once records atomically on the local filesystem.
         data = json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False)
-        with (self.path / (name + ".json")).open("x", encoding="utf-8") as handle:
-            handle.write(data + "\n")
+        target = self.path / (name + ".json")
+        temp = self.path / (".stage-" + uuid4().hex)
+        try:
+            with temp.open("x", encoding="utf-8") as handle:
+                handle.write(data + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.link(temp, target)
+        finally:
+            temp.unlink(missing_ok=True)
+
+
+def execute_attempt(study, simulator, index, candidate):
+    request = candidate.fault.model_dump(mode="json")
+    reservation = {"id": candidate.id, "request": request}
+    study.write(f"attempt-{index}", reservation)
+    try:
+        result = simulator.run("fault", request)
+    except Exception as exc:  # noqa: BLE001 - solver boundary; attempt is already reserved
+        result = {"status": "failed", "reason": type(exc).__name__}
+    record = {"id": candidate.id, "result": result}
+    study.write(f"result-{index}", record)
+    return record
+
+
+def make_report(study, selected, results):
+    observed = []
+    for record in results:
+        result = record["result"]
+        metrics = result.get("metrics", {})
+        observed.append({"id": record["id"], "status": result.get("status", "failed"),
+                         "run_id": result.get("run_id"), "score": metrics.get("voltage_severity_proxy"),
+                         "v_min_pu": metrics.get("v_min_pu"), "v_max_pu": metrics.get("v_max_pu"),
+                         "stability": "not_assessed"})
+    return {"study_id": study.id, "protocol": "andes-voltage-proxy-v1",
+            "selected": selected, "attempted": len(results), "observed": observed,
+            "mitigation": "not_implemented",
+            "completed": len(results) == len(selected) and
+            all(o["status"] == "ok" and o["score"] is not None for o in observed)}
+
+
+def resume_dsr(root: Path, identifier: str, simulator: Simulator):
+    """Resume only a frozen open DSR study, never repeat a reserved simulation."""
+    study = Study.reopen(root, identifier)
+    with study.lock():
+        record = study.read("manifest")
+        if record.get("protocol") != "andes-voltage-proxy-v1":
+            raise ValueError("Only open DSR screening is resumable")
+        manifest = Manifest.model_validate(record["manifest"])
+        if digest(manifest.model_dump(mode="json")) != record["manifest_sha256"]:
+            raise ValueError("Manifest hash mismatch")
+        if not study.exists("predictions"):
+            raise ValueError("No frozen predictions; start a new study")
+        frozen = study.read("predictions")
+        predictions = Predictions.model_validate({"predictions": frozen["ranking"]}).predictions
+        candidates = {c.id: c for c in manifest.candidates}
+        if len({p.id for p in predictions}) != 10 or {p.id for p in predictions} != set(candidates):
+            raise ValueError("Frozen candidate IDs differ")
+        selected = [p.id for p in sorted(predictions, key=lambda p: (-p.score, p.id))[:manifest.budget]]
+        if selected != frozen["selected"]:
+            raise ValueError("Frozen selection violates ranking or budget")
+        if study.exists("report"):
+            yield "report", {"report": study.read("report")}
+            return
+        # Validate all previously reserved attempts before executing anything new.
+        reserved = set()
+        for path in study.path.glob("attempt-*.json"):
+            match = re.fullmatch(r"attempt-([1-9][0-9]*)\.json", path.name)
+            if not match:
+                raise ValueError("Invalid reservation filename")
+            reserved.add(int(match.group(1)))
+        if reserved != set(range(1, len(reserved) + 1)) or len(reserved) > manifest.budget:
+            raise ValueError("Inconsistent reservation history")
+        for path in study.path.glob("result-*.json"):
+            match = re.fullmatch(r"result-([1-9][0-9]*)\.json", path.name)
+            if not match or int(match.group(1)) not in reserved:
+                raise ValueError("Result without reservation")
+        results = []
+        for index in sorted(reserved):
+            cid = selected[index - 1]
+            expected = {"id": cid, "request": candidates[cid].fault.model_dump(mode="json")}
+            if study.read(f"attempt-{index}") != expected:
+                raise ValueError("Reservation differs from frozen selection")
+            if study.exists(f"result-{index}"):
+                prior = study.read(f"result-{index}")
+                if prior.get("id") != cid or not isinstance(prior.get("result"), dict):
+                    raise ValueError("Invalid prior result")
+                results.append(prior)
+            else:
+                # A process may have died after starting the solver. Never guess or replay.
+                results.append({"id": cid, "result": {"status": "unknown",
+                                "reason": "Reserved attempt has no durable result; budget charged"}})
+        yield "resume", {"id": identifier, "used": len(results), "budget": manifest.budget}
+        for index in range(1, len(results) + 1):
+            if not study.exists(f"result-{index}"):
+                study.write(f"result-{index}", results[index - 1])
+        for index in range(len(results) + 1, manifest.budget + 1):
+            result = execute_attempt(study, simulator, index, candidates[selected[index - 1]])
+            results.append(result)
+            yield "simulate", {"used": index, "results": results.copy()}
+        report = make_report(study, selected, results)
+        study.write("report", report)
+        yield "report", {"report": report}
 
 
 class State(TypedDict, total=False):
@@ -203,32 +327,14 @@ def build_dsr(manifest: Manifest, memory: list[MemoryCase], estimator, simulator
         if used >= manifest.budget or used >= len(state["selected"]):
             raise RuntimeError("Simulation budget exhausted")
         cid = state["selected"][used]
-        request = candidates[cid].fault.model_dump(mode="json")
-        study.write(f"attempt-{used + 1}", {"id": cid, "request": request})
-        try:
-            result = simulator.run("fault", request)
-        except Exception as exc:  # noqa: BLE001 - solver boundary; attempt is already reserved
-            result = {"status": "failed", "reason": type(exc).__name__}
-        record = {"id": cid, "result": result}
-        study.write(f"result-{used + 1}", record)
+        record = execute_attempt(study, simulator, used + 1, candidates[cid])
         return {"used": used + 1, "results": [*state["results"], record]}
 
     def route(state):
         return "simulate" if state["used"] < manifest.budget else "report"
 
     def report(state):
-        observed = []
-        for record in state["results"]:
-            result = record["result"]
-            metrics = result.get("metrics", {})
-            observed.append({"id": record["id"], "status": result.get("status", "failed"),
-                             "run_id": result.get("run_id"), "score": metrics.get("voltage_severity_proxy"),
-                             "v_min_pu": metrics.get("v_min_pu"), "v_max_pu": metrics.get("v_max_pu"),
-                             "stability": "not_assessed"})
-        value = {"study_id": study.id, "protocol": "andes-voltage-proxy-v1",
-                 "selected": state["selected"], "attempted": state["used"],
-                 "observed": observed, "mitigation": "not_implemented",
-                 "completed": all(o["status"] == "ok" and o["score"] is not None for o in observed)}
+        value = make_report(study, state["selected"], state["results"])
         study.write("report", value)
         return {"report": value}
 
@@ -267,15 +373,18 @@ def study_updates(manifest_path, workspace, model, simulator, memory_path=None, 
     if holdout:
         memory = holdout_memory(manifest, memory)
     study = Study(workspace / "studies")
-    graph = build_dsr(manifest, memory, llm_estimator(model), simulator, study)
-    yield "study", {"id": study.id, "path": str(study.path)}
-    for event in graph.stream({}, stream_mode="updates"):
-        yield from event.items()
+    with study.lock():
+        graph = build_dsr(manifest, memory, llm_estimator(model), simulator, study)
+        yield "study", {"id": study.id, "path": str(study.path)}
+        for event in graph.stream({}, stream_mode="updates"):
+            yield from event.items()
 
 
 def format_update(node, value):
     if node == "study":
         return f"DSR study {value['id']} · {value['path']}"
+    if node == "resume":
+        return f"Resuming {value['id']} · {value['used']}/{value['budget']} attempts already charged"
     if node == "retrieve":
         n = sum(bool(e["matches"]) for e in value["evidence"].values())
         return f"Historical evidence available for {n}/10 candidates"

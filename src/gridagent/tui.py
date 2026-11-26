@@ -83,7 +83,7 @@ class GridApp(App):
         event.input.value = ""
         chat = self.query_one("#chat", RichLog)
         if question == "/help":
-            chat.write(Text("/new · new session | /sessions · list | /open ID · reopen | /dsr PATH · screen faults | /dmq · model review | /studies · list | /runs | /study ID | /wave ID CHANNEL | /study-wave ID PATH CHANNEL | /eigen | /sweep BUS DURATIONS | Ctrl+Q · quit"))
+            chat.write(Text("/new · new session | /sessions · list | /open ID · reopen | /dsr PATH · screen faults | /dmq · model review | /studies · list | /runs | /study ID | /wave ID CHANNEL | /study-wave ID PATH CHANNEL | /eigen | /sweep BUS DURATIONS | /resume-dsr ID | Ctrl+Q · quit"))
             return
         if question == "/new":
             self.action_new_session()
@@ -108,7 +108,7 @@ class GridApp(App):
             for row in rows:
                 chat.write(Text(f"{row['id']}  {row['status']}"))
             return
-        if question.split()[0] in {"/runs", "/study", "/wave", "/study-wave", "/eigen", "/sweep"}:
+        if question.split()[0] in {"/runs", "/study", "/wave", "/study-wave", "/eigen", "/sweep", "/resume-dsr"}:
             try:
                 parts = shlex.split(question)
             except ValueError:

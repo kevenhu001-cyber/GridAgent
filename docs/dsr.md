@@ -51,3 +51,16 @@ faults from it. Use the same snapshot across trials. Ordinary engineering mode
 permits exact historical matches, but is not an unseen-case benchmark.
 The TUI also supports /studies; start it with --memory and --holdout to apply
 the same restrictions to /dsr. Study reports are independent of chat history.
+
+## Resume a frozen screening study
+
+    gridagent --resume-dsr STUDY_ID
+
+Or /resume-dsr ID in the TUI (including offline mode). After the ranking is
+frozen, no further LLM call is needed. A local execution lock prevents two
+clients from running the same study simultaneously. Each existing reservation
+is charged even if its result was lost; it is recorded as unknown, never
+replayed. Remaining unreserved candidates run in frozen order. Completed
+reports are read without running new simulations. Incomplete pre-ranking
+studies require a new study. This is explicit stage recovery, not general
+LangGraph mid-node checkpointing. Other workflows are not resumable yet.

@@ -48,6 +48,7 @@ def main():
     parser.add_argument("--snapshot-memory", type=Path, help="Export historical fault records")
     parser.add_argument("--studies", action="store_true", help="List saved research studies")
     parser.add_argument("--offline", action="store_true", help="Open local research TUI without an API key")
+    parser.add_argument("--resume-dsr", help="Resume a frozen DSR study without an API key")
     parser.add_argument("--eigen", action="store_true", help="Run ANDES small-signal analysis")
     parser.add_argument("--sweep", nargs="+", type=float, metavar="BUS_OR_DURATION",
                         help="Sweep fault duration: BUS DURATION [DURATION ...]")
@@ -58,13 +59,13 @@ def main():
     args = parser.parse_args()
     store = ResearchStore(args.workspace / "research.sqlite3")
     console = Console()
-    if args.eigen or args.sweep or args.runs or args.study or args.wave or args.study_wave:
+    if args.resume_dsr or args.eigen or args.sweep or args.runs or args.study or args.wave or args.study_wave:
         from .commands import workspace_command
 
-        command, values = ("eigen", []) if args.eigen else (
+        command, values = ("resume-dsr", [args.resume_dsr]) if args.resume_dsr else (("eigen", []) if args.eigen else (
             ("sweep", [str(x) for x in args.sweep]) if args.sweep else
             ("runs", []) if args.runs else ("study", [args.study]) if args.study else
-            ("wave", args.wave) if args.wave else ("study-wave", args.study_wave))
+            ("wave", args.wave) if args.wave else ("study-wave", args.study_wave)))
         try:
             for line in workspace_command(args.workspace, command, values):
                 console.print(line, markup=False)

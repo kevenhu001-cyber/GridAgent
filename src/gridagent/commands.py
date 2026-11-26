@@ -8,7 +8,18 @@ from .workspace import list_runs, study_summary, waveform, waveform_text
 
 def workspace_command(root, command, args):
     root = Path(root)
-    if command == "runs" and not args:
+    if command == "resume-dsr" and len(args) == 1:
+        from filelock import Timeout
+
+        from .dsr import format_update as format_dsr
+        from .dsr import resume_dsr
+
+        try:
+            for node, data in resume_dsr(root / "studies", args[0], AndesSimulator(root / "runs")):
+                yield format_dsr(node, data)
+        except Timeout as exc:
+            raise ValueError("Study is currently executing in another process") from exc
+    elif command == "runs" and not args:
         for row in list_runs(root):
             yield f"{row['id']}  {row['operation']}  {row['status']}"
     elif command == "study" and len(args) == 1:

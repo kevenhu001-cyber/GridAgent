@@ -15,6 +15,7 @@ dependencies = [
   "pydantic>=2,<3",
   "textual>=1,<9",
   "numpy>=1.26,<3",
+  "filelock>=3,<4",
 ]
 [project.optional-dependencies]
 andes = ["andes>=2,<3"]

@@ -39,7 +39,8 @@ A process crash may leave an unfinished task; automatic mid-task resume is not y
 
     gridagent --dsr examples/dsr-kundur.json
 
-Or type /dsr examples/dsr-kundur.json in the TUI. This ranks ten candidate
+Or type /dsr examples/dsr-kundur.json in the TUI. Resume an interrupted frozen
+DSR study using gridagent --resume-dsr STUDY_ID. This ranks ten candidate
 faults, freezes estimates, and attempts only the selected three simulations.
 See [DSR protocol and offline evaluation](docs/dsr.md) for limitations.
 
