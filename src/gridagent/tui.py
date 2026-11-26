@@ -41,7 +41,7 @@ class GridApp(App):
     def compose(self) -> ComposeResult:
         with Horizontal(id="top"):
             yield Static("GridAgent", id="brand")
-            yield Static("Ready", id="status")
+            yield Static("Ready", id="status", markup=False)
         with Vertical(id="workspace"):
             yield Static("", id="session", markup=False)
             yield RichLog(markup=False, wrap=True, id="chat")
@@ -56,7 +56,7 @@ class GridApp(App):
         chat = self.query_one("#chat", RichLog)
         chat.clear()
         self.query_one("#session", Static).update(
-            f"Offline research · ANDES · {self.budget} simulations/task · {self.sid[:8]}")
+            f"{'Offline workspace' if self.graph is None else 'Research agent'} · ANDES · {self.sid[:8]}")
         history = self.store.history(self.sid)
         if not history:
             chat.write(Text("Start a power-system study. Try asking for a baseline power flow.", style="dim"))
@@ -137,6 +137,9 @@ class GridApp(App):
             self._status("DSR · running")
             path = question.split(maxsplit=1)[1]
             self.run_worker(lambda: self._run_dsr(path), thread=True, exit_on_error=False)
+            return
+        if self.graph is None:
+            chat.write(Text("Offline workspace. Configure a model to start agent tasks.", style="dim"))
             return
         chat.write(Text("You  " + question, style="bold"))
         self.busy = True

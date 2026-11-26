@@ -23,3 +23,7 @@ envelope and time axis; original CSV remains authoritative.
 
 Original paper mitigation, validated physical stability classification,
 participation-factor interpretation and mid-task resume remain outstanding.
+
+Launch the read-only/standalone research workspace using `gridagent --offline`.
+It does not require model credentials. Local deterministic /eigen and /sweep
+remain available; free chat, /dmq and /dsr require a configured model.

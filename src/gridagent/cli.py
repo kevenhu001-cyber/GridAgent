@@ -47,6 +47,7 @@ def main():
     parser.add_argument("--holdout", action="store_true", help="Exclude target fault outcomes from history")
     parser.add_argument("--snapshot-memory", type=Path, help="Export historical fault records")
     parser.add_argument("--studies", action="store_true", help="List saved research studies")
+    parser.add_argument("--offline", action="store_true", help="Open local research TUI without an API key")
     parser.add_argument("--eigen", action="store_true", help="Run ANDES small-signal analysis")
     parser.add_argument("--sweep", nargs="+", type=float, metavar="BUS_OR_DURATION",
                         help="Sweep fault duration: BUS DURATION [DURATION ...]")
@@ -89,6 +90,18 @@ def main():
     if args.sessions:
         for row in store.sessions():
             console.print(f"{row['id']}  {row['title']}  ({row['tasks']} tasks)", markup=False)
+        return
+    if args.offline:
+        if args.ask or args.dmq or args.dsr:
+            parser.error("Offline TUI cannot run model-dependent tasks")
+        from .tui import GridApp
+
+        try:
+            sid = store.require_session(args.session) if args.session else store.create_session()
+        except ValueError as exc:
+            parser.error(str(exc))
+        GridApp(None, args.budget, store, sid, studies_root=args.workspace / "studies",
+                workspace=args.workspace).run()
         return
     try:
         model = model_from_env()
