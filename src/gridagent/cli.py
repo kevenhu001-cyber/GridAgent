@@ -21,6 +21,8 @@ def main():
     research.add_argument("--dispatch-resume", metavar="ID")
     research.add_argument("--dispatch-status", metavar="ID")
     research.add_argument("--dispatch-cancel", metavar="ID")
+    research.add_argument("--optimize-ir", metavar="JSON", help="Run authorized AC mixed-variable optimization")
+    research.add_argument("--optimize-resume", metavar="ID", help="Resume an AC optimization study")
     research.add_argument("--research-tasks", action="store_true", help="List saved research tasks")
     research.add_argument("--research-status", metavar="ID")
     research.add_argument("--research-resume", metavar="ID")
@@ -97,6 +99,8 @@ def main():
         ("dispatch-resume", [args.dispatch_resume] if args.dispatch_resume else None),
         ("dispatch-status", [args.dispatch_status] if args.dispatch_status else None),
         ("dispatch-cancel", [args.dispatch_cancel] if args.dispatch_cancel else None),
+        ("optimize-ir", [args.optimize_ir] if args.optimize_ir else None),
+        ("optimize-resume", [args.optimize_resume] if args.optimize_resume else None),
         ("research-tasks", [] if args.research_tasks else None),
         ("research-status", [args.research_status] if args.research_status else None),
         ("research-resume", [args.research_resume] if args.research_resume else None),
