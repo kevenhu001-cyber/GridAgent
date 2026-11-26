@@ -47,9 +47,29 @@ def main():
     parser.add_argument("--holdout", action="store_true", help="Exclude target fault outcomes from history")
     parser.add_argument("--snapshot-memory", type=Path, help="Export historical fault records")
     parser.add_argument("--studies", action="store_true", help="List saved research studies")
+    parser.add_argument("--eigen", action="store_true", help="Run ANDES small-signal analysis")
+    parser.add_argument("--sweep", nargs="+", type=float, metavar="BUS_OR_DURATION",
+                        help="Sweep fault duration: BUS DURATION [DURATION ...]")
+    parser.add_argument("--runs", action="store_true", help="List local numerical runs")
+    parser.add_argument("--study", help="View a saved study")
+    parser.add_argument("--wave", nargs="+", metavar="ID_OR_CHANNEL", help="View a saved run waveform")
+    parser.add_argument("--study-wave", nargs="+", metavar="ID_PATH_CHANNEL", help="View a study waveform")
     args = parser.parse_args()
     store = ResearchStore(args.workspace / "research.sqlite3")
     console = Console()
+    if args.eigen or args.sweep or args.runs or args.study or args.wave or args.study_wave:
+        from .commands import workspace_command
+
+        command, values = ("eigen", []) if args.eigen else (
+            ("sweep", [str(x) for x in args.sweep]) if args.sweep else
+            ("runs", []) if args.runs else ("study", [args.study]) if args.study else
+            ("wave", args.wave) if args.wave else ("study-wave", args.study_wave))
+        try:
+            for line in workspace_command(args.workspace, command, values):
+                console.print(line, markup=False)
+        except (OSError, ValueError, TypeError) as exc:
+            parser.error(str(exc))
+        return
     if args.dmq_reference:
         from .dmq import format_update, study_updates
 
@@ -103,4 +123,4 @@ def main():
     GridApp(graph, args.budget, store, sid,
             dsr_runner=lambda path: study_updates(path, args.workspace, model, simulator, args.memory, args.holdout),
             studies_root=args.workspace / "studies",
-            dmq_runner=lambda: dmq_updates(args.workspace, model)).run()
+            dmq_runner=lambda: dmq_updates(args.workspace, model), workspace=args.workspace).run()

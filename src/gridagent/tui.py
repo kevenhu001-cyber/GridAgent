@@ -1,3 +1,5 @@
+import shlex
+from pathlib import Path
 from typing import ClassVar
 
 from langchain_core.messages import HumanMessage, ToolMessage
@@ -8,6 +10,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Input, RichLog, Static
 
 from .cli import text_content, tool_summary
+from .commands import workspace_command
 from .store import recorded_task
 
 
@@ -26,13 +29,14 @@ class GridApp(App):
     """
     BINDINGS: ClassVar = [("ctrl+q", "quit", "Quit"), ("ctrl+l", "new_session", "New session")]
 
-    def __init__(self, graph, budget, store, sid, dsr_runner=None, studies_root=None, dmq_runner=None):
+    def __init__(self, graph, budget, store, sid, dsr_runner=None, studies_root=None, dmq_runner=None, workspace=Path(".gridagent")):
         super().__init__()
         self.graph, self.budget, self.store, self.sid = graph, budget, store, sid
         self.busy = False
         self.dsr_runner = dsr_runner
         self.dmq_runner = dmq_runner
         self.studies_root = studies_root
+        self.workspace = workspace
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="top"):
@@ -79,7 +83,7 @@ class GridApp(App):
         event.input.value = ""
         chat = self.query_one("#chat", RichLog)
         if question == "/help":
-            chat.write(Text("/new · new session | /sessions · list | /open ID · reopen | /dsr PATH · screen faults | /dmq · model review | /studies · list | Ctrl+Q · quit"))
+            chat.write(Text("/new · new session | /sessions · list | /open ID · reopen | /dsr PATH · screen faults | /dmq · model review | /studies · list | /runs | /study ID | /wave ID CHANNEL | /study-wave ID PATH CHANNEL | /eigen | /sweep BUS DURATIONS | Ctrl+Q · quit"))
             return
         if question == "/new":
             self.action_new_session()
@@ -103,6 +107,17 @@ class GridApp(App):
                 chat.write(Text("No saved studies.", style="dim"))
             for row in rows:
                 chat.write(Text(f"{row['id']}  {row['status']}"))
+            return
+        if question.split()[0] in {"/runs", "/study", "/wave", "/study-wave", "/eigen", "/sweep"}:
+            try:
+                parts = shlex.split(question)
+            except ValueError:
+                chat.write(Text("Invalid command quoting.", style="red"))
+                return
+            self.busy = True
+            event.input.disabled = True
+            self._status("Research · working")
+            self.run_worker(lambda: self._workspace_command(parts), thread=True, exit_on_error=False)
             return
         if question == "/dmq":
             if self.dmq_runner is None:
@@ -162,6 +177,15 @@ class GridApp(App):
                 self.call_from_thread(self._write, Text(format_update(node, value)))
         except Exception as exc:  # noqa: BLE001 - UI boundary
             self.call_from_thread(self._write, Text("DMQ failed: " + type(exc).__name__, style="red"))
+        finally:
+            self.call_from_thread(self._finish)
+
+    def _workspace_command(self, parts):
+        try:
+            for line in workspace_command(self.workspace, parts[0][1:], parts[1:]):
+                self.call_from_thread(self._write, Text(line))
+        except (OSError, ValueError, TypeError) as exc:
+            self.call_from_thread(self._write, Text(str(exc), style="red"))
         finally:
             self.call_from_thread(self._finish)
 

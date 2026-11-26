@@ -12,3 +12,13 @@ def test_real_andes_fault(tmp_path):
     assert result["backend"] == "andes"
     assert result["metrics"]["stability"] == "not_assessed"
     assert (tmp_path / result["run_id"] / "voltage.csv").is_file()
+
+
+@pytest.mark.integration
+def test_real_andes_eigen(tmp_path):
+    pytest.importorskip("andes")
+    sim = AndesSimulator(tmp_path, timeout_s=300)
+    result = sim.run("eigen", {"case": "kundur"})
+    assert result["status"] == "ok", result
+    assert result["metrics"]["mode_count"] > 0
+    assert (tmp_path / result["run_id"] / "eigenvalues.csv").is_file()

@@ -19,7 +19,7 @@ class AndesSimulator:
         self.timeout_s = timeout_s
 
     def run(self, operation: str, request: dict) -> dict:
-        if operation not in {"inspect", "power_flow", "fault"} or request.get("case") not in CASES:
+        if operation not in {"inspect", "power_flow", "fault", "eigen"} or request.get("case") not in CASES:
             raise ValueError("Operation or case is not allowed")
         if operation == "fault":
             request = FaultRequest.model_validate(request).model_dump()

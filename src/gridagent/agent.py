@@ -57,13 +57,18 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
         """Solve the initial power flow and return bus voltage magnitudes."""
         return simulator.run("power_flow", {"case": case})
 
+    @tool
+    def eigenanalysis(case: CaseName = "kundur") -> dict:
+        """Compute small-signal eigenvalues, modal frequency and damping; not transient stability."""
+        return simulator.run("eigen", {"case": case})
+
     @tool(args_schema=FaultRequest)
     def simulate_fault(bus: int, duration_s: float, case: CaseName = "kundur", end_s: float = 5.0) -> dict:
         """Run a three-phase bus fault on a research case; return post-fault metrics and waveform."""
         return simulator.run("fault", {"case": case, "bus": bus,
                                       "duration_s": duration_s, "end_s": end_s})
 
-    tools = {t.name: t for t in [list_cases, inspect_case, power_flow, simulate_fault]}
+    tools = {t.name: t for t in [list_cases, inspect_case, power_flow, eigenanalysis, simulate_fault]}
     bound = model.bind_tools(list(tools.values()))
 
     def decide(state: State):
@@ -86,10 +91,10 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
                 calls += 1
                 if name not in tools:
                     result = {"status": "denied", "reason": "Unknown tool"}
-                elif name in {"power_flow", "simulate_fault"} and used >= budget:
+                elif name in {"power_flow", "simulate_fault", "eigenanalysis"} and used >= budget:
                     result = {"status": "denied", "reason": "Simulation budget exhausted"}
                 else:
-                    if name in {"power_flow", "simulate_fault"}:
+                    if name in {"power_flow", "simulate_fault", "eigenanalysis"}:
                         used += 1  # Charge attempted runs, including failures.
                     try:
                         result = tools[name].invoke(call["args"])

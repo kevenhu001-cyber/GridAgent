@@ -52,6 +52,16 @@ with four permitted gains and at most five repair proposals. Every accepted
 proposal triggers a new suite. See [DMQ protocol](docs/dmq.md). This is not
 the original WECC/DMView benchmark.
 
+## Scientific workspace
+
+    gridagent --eigen
+    gridagent --sweep 5 0.04 0.08 0.12
+    gridagent --runs
+    gridagent --study STUDY_ID
+    gridagent --wave RUN_ID CHANNEL
+
+See [workspace commands](docs/workspace.md) for TUI and offline result inspection.
+
 ## Architecture
 
 Textual TUI or CLI → LangGraph decision loop → validated tools and budget guard → isolated ANDES solver → waveform CSV and deterministic voltage metrics.

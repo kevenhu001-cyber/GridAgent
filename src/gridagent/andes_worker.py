@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from .domain import CASES, FaultRequest, voltage_metrics
+from .modal import summarize_modes
 
 
 def execute(operation: str, request: dict, folder: Path) -> dict:
@@ -13,7 +14,7 @@ def execute(operation: str, request: dict, folder: Path) -> dict:
     case = request.get("case", "kundur")
     if case not in CASES:
         raise ValueError("Unknown packaged case")
-    if operation not in {"inspect", "power_flow", "fault"}:
+    if operation not in {"inspect", "power_flow", "fault", "eigen"}:
         raise ValueError("Unknown operation")
     spec = FaultRequest.model_validate(request) if operation == "fault" else None
     ss = andes.load(andes.get_case(CASES[case]), setup=False, no_output=True)
@@ -24,7 +25,7 @@ def execute(operation: str, request: dict, folder: Path) -> dict:
                 model.set("u", idx, 0)
         ss.add("Fault", bus=spec.bus, tf=1.0, tc=1.0 + spec.duration_s)
     ss.setup()
-    result = {"backend": "andes", "case": case,
+    result = {"backend": "andes", "case": case, "operation": operation,
               "bus_ids": [str(i) for i in ss.Bus.idx.v]}
     if operation == "inspect":
         return {**result, "status": "ok"}
@@ -33,6 +34,19 @@ def execute(operation: str, request: dict, folder: Path) -> dict:
     if operation == "power_flow":
         return {**result, "status": "ok", "voltages_pu": {
             str(i): float(v) for i, v in zip(ss.Bus.idx.v, ss.Bus.v.v)}}
+    if operation == "eigen":
+        if not ss.EIG.run():
+            return {**result, "status": "failed", "reason": "Eigenanalysis failed"}
+        summary = summarize_modes(ss.EIG.mu)
+        modes = summary.pop("modes")
+        import csv
+
+        path = folder / "eigenvalues.csv"
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(modes[0]))
+            writer.writeheader()
+            writer.writerows(modes)
+        return {**result, "status": "ok", "metrics": summary, "spectrum": str(path)}
     ss.TDS.config.tf = spec.end_s
     if not ss.TDS.run():
         return {**result, "status": "failed", "reason": "Time-domain solver failed; physical stability unknown"}
