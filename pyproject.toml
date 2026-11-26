@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gridagent"
+version = "0.1.0"
+description = "Simulation-grounded agent for power-system research"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = "GPL-3.0-or-later"
+dependencies = [
+  "langgraph>=1,<2",
+  "langchain-openai>=1,<2",
+  "pydantic>=2,<3",
+  "textual>=1,<9",
+  "numpy>=1.26,<3",
+]
+[project.optional-dependencies]
+andes = ["andes>=2,<3"]
+dev = ["pytest>=8,<10", "ruff>=0.9,<1"]
+[project.scripts]
+gridagent = "gridagent.cli:main"
+[tool.hatch.build.targets.wheel]
+packages = ["src/gridagent"]
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["integration: runs a real optional simulator"]
+[tool.ruff]
+target-version = "py311"
+line-length = 110
