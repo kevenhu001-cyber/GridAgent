@@ -9,6 +9,8 @@ from filelock import FileLock
 
 from .dispatch_ir import DispatchStudy, compile_dispatch
 from .engineering_ir import fingerprint
+from .evidence import capture_evidence
+from .execution_plan import ExecutionPlan, dispatch_plan
 from .model_quality import evaluate_run
 from .native_backends import run_program
 from .store import ResearchStore
@@ -60,8 +62,11 @@ class DispatchTasks(ResearchStore):
 
     def start(self, source):
         program, provenance = compile_dispatch(source)
-        frozen = json.dumps({"provenance": provenance, "program": program.model_dump(mode="json")},
-                            allow_nan=False, ensure_ascii=False)
+        request = program.model_dump(mode="json")
+        plan = dispatch_plan(request, provenance)
+        frozen = json.dumps({"provenance": provenance, "program": request,
+                             "execution_plan": plan.model_dump(mode="json"),
+                             "execution_plan_sha256": plan.sha256()}, allow_nan=False, ensure_ascii=False)
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             task = self.repository._create_in(
@@ -70,7 +75,7 @@ class DispatchTasks(ResearchStore):
             )
             db.execute("INSERT INTO dispatch_tasks(id, source) VALUES (?, ?)", (task.task_id, frozen))
             self._move(db, task, TaskStatus.PLANNED, plan_revision=1,
-                       reason="Frozen dispatch study: " + provenance["study_sha256"])
+                       reason=f"Execution plan: {plan.sha256()}; Frozen dispatch study: {provenance['study_sha256']}")
         return task.task_id
 
     def summary(self, identifier):
@@ -100,11 +105,23 @@ class DispatchTasks(ResearchStore):
             SELECT event FROM engineering_task_revisions WHERE task_id=? AND revision=1
         """, (task.task_id,)).fetchone()
         plan = TaskEvent.model_validate_json(plan_row["event"]) if plan_row else None
-        if (provenance != p or program.model_dump(mode="json") != data["program"]
-                or task.model_revision != p["model_sha256"] or plan is None
-                or plan.reason != "Frozen dispatch study: " + p["study_sha256"]):
+        request = program.model_dump(mode="json")
+        reason = "Frozen dispatch study: " + p["study_sha256"]
+        if (provenance != p or request != data["program"]
+                or task.model_revision != p["model_sha256"] or plan is None):
             raise ValueError("Frozen dispatch compiler provenance changed")
-        return program.model_dump(mode="json")
+        expected = dispatch_plan(request, p)
+        if plan.reason != reason:
+            if "execution_plan" not in data:
+                raise ValueError("Frozen dispatch compiler provenance changed: missing execution plan")
+            actual = ExecutionPlan.model_validate(data["execution_plan"])
+            if (actual != expected or data.get("execution_plan_sha256") != actual.sha256()
+                    or plan.reason != f"Execution plan: {actual.sha256()}; " + reason):
+                raise ValueError("Frozen dispatch execution plan changed")
+            return request, actual
+        if "execution_plan" in data or "execution_plan_sha256" in data:
+            raise ValueError("Dispatch execution plan has no matching lifecycle event")
+        return request, None
 
     def cancel(self, identifier):
         """Request cancellation; only a worker holding the execution lock acknowledges it."""
@@ -138,7 +155,9 @@ class DispatchTasks(ResearchStore):
                     execute = False
                     run_id = None
                 else:
-                    request = self._validate_frozen(db, task, row)
+                    request, plan = self._validate_frozen(db, task, row)
+                    if plan is not None:
+                        plan.solve_for("dispatch", request)
                     run_id = row["run_id"]
                     execute = run_id is None
                     if execute:
@@ -149,14 +168,24 @@ class DispatchTasks(ResearchStore):
                         self._move(db, task, TaskStatus.RUNNING)
             if run_id is None:
                 return self.summary(identifier)
+            launch_error = None
             if execute:
                 # Only the newly committed reservation may launch a native job.
                 # The PyPSA plugin currently stops cooperatively only at the call boundary.
                 try:
                     solver(self.root, request, run_id=run_id)
-                except Exception:  # noqa: BLE001 - a reserved call may have executed; never retry blindly
-                    pass
+                except Exception as exc:  # noqa: BLE001 - preserve unknown execution outcome
+                    launch_error = type(exc).__name__
             evidence = self._recover(run_id, request)
+            if launch_error is not None:
+                evidence["launch_error_type"] = launch_error
+            if plan is not None:
+                verdict = evidence.get("quality") or {"passed": False, "checks": []}
+                envelope = capture_evidence(self.root, plan, "dispatch", run_id, request,
+                                            version=evidence.get("solver_version"), verdict=verdict)
+                if evidence["passed"] and envelope.status != "verified":
+                    evidence.update(passed=False, reason="artifact_provenance_failed")
+                evidence["evidence_record"] = envelope.model_dump(mode="json")
             with self.connect() as db:
                 db.execute("BEGIN IMMEDIATE")
                 task, _ = self._read_in(db, identifier)

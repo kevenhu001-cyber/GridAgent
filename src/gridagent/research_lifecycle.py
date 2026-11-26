@@ -43,8 +43,10 @@ class ResearchLifecycle:
             move(TaskStatus.NEEDS_CLARIFICATION)
         elif stage in {"ready", "awaiting_approval"}:
             if task.status == TaskStatus.DRAFT:
-                move(TaskStatus.PLANNED, plan_revision=1,
-                     reason="Frozen research manifest: " + state["manifest_sha256"])
+                reason = "Frozen research manifest: " + state["manifest_sha256"]
+                if "execution_plan_sha256" in state:
+                    reason = f"Execution plan: {state['execution_plan_sha256']}; " + reason
+                move(TaskStatus.PLANNED, plan_revision=1, reason=reason)
             if stage == "awaiting_approval":
                 move(TaskStatus.AWAITING_APPROVAL)
             elif task.status == TaskStatus.AWAITING_APPROVAL:

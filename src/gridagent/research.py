@@ -14,6 +14,8 @@ from typing_extensions import TypedDict
 from .dsr import digest
 from .engineering_compiler import compile_study
 from .engineering_ir import EngineeringStudy
+from .evidence import capture_evidence, verify_record
+from .execution_plan import ExecutionPlan, ac_plan
 from .knowledge import QueryPlan, workspace_knowledge
 from .model_quality import check
 from .model_repair import Proposal, apply, leaf, model_proposer
@@ -71,6 +73,9 @@ class ResearchTasks(ResearchStore):
             state["benchmark_memory"] = benchmark_memory
         if engineering_ir is not None:
             state["engineering_ir"] = engineering_ir
+            plan = ac_plan(ResearchManifest.model_validate(manifest), engineering_ir)
+            state["execution_plan"] = plan.model_dump(mode="json")
+            state["execution_plan_sha256"] = plan.sha256()
         stage = "planning"
         if manifest is not None:
             freeze(state, ResearchManifest.model_validate(manifest))
@@ -229,6 +234,7 @@ class ResearchTasks(ResearchStore):
         with self.connect() as db:
             task = self.lifecycle.repository._find_in(db, identifier)
         bound_model = task.model_revision if task is not None else None
+        plan = None
         if ir is not None or bound_model is not None:
             if ir is None:
                 raise ValueError("Frozen engineering IR is missing")
@@ -236,7 +242,40 @@ class ResearchTasks(ResearchStore):
             if (compiled.provenance != ir or compiled.manifest != manifest
                     or bound_model != ir["model_sha256"]):
                 raise ValueError("Frozen engineering IR or compiler provenance changed")
+            expected_plan = ac_plan(manifest, ir)
+            events = self.lifecycle.repository.events(identifier)
+            planned = next((event for event in events if event.to_status.value == "planned"), None)
+            if planned and planned.reason and planned.reason.startswith("Execution plan: "):
+                if "execution_plan" not in state:
+                    raise ValueError("Frozen execution plan is missing")
+                plan = ExecutionPlan.model_validate(state["execution_plan"])
+                if (plan != expected_plan or state.get("execution_plan_sha256") != plan.sha256()
+                        or planned.reason != f"Execution plan: {plan.sha256()}; "
+                        f"Frozen research manifest: {state['manifest_sha256']}"):
+                    raise ValueError("Frozen execution plan changed")
+            elif "execution_plan" in state or "execution_plan_sha256" in state:
+                raise ValueError("Execution plan has no matching lifecycle event")
         attempts = state["attempts"]
+        if plan is not None:
+            if len(attempts) > 1:
+                raise ValueError("Fixed IR plan cannot contain repair attempts")
+            for attempt in attempts:
+                names = [run["scenario"] for run in attempt["runs"]]
+                if names != [scenario.name for scenario in manifest.scenarios][:len(names)]:
+                    raise ValueError("Recorded runs differ from frozen execution plan")
+                for run in attempt["runs"]:
+                    scenario = next(s for s in manifest.scenarios if s.name == run["scenario"])
+                    request = scenario.materialize(attempt["program"])
+                    node = plan.solve_for(scenario.name, request)
+                    if run.get("solve_node_id") != node.id or run["request_sha256"] != digest(request):
+                        raise ValueError("Recorded reservation differs from frozen execution plan")
+                    if run["status"] != "reserved":
+                        evidence = verify_record(self.root, run.get("evidence_record"), plan, scenario.name,
+                                                 run["run_id"], request, run["evaluation"])
+                        if (run.get("version") != evidence.solver_version
+                                or run["evaluation"]["passed"] != (evidence.status == "verified")):
+                            raise ValueError("Recorded evidence differs from evaluation")
+
         if not attempts:
             attempts.append(candidate(state["manifest"]["program"]))
             self.save(identifier, state, "running")
@@ -252,10 +291,13 @@ class ResearchTasks(ResearchStore):
                     if self.cancelled(identifier):
                         break
                     request = scenario.materialize(current["program"])
+                    node = plan.solve_for(scenario.name, request) if plan is not None else None
                     run = next((row for row in current["runs"] if row["scenario"] == scenario.name), None)
                     if run is None:
                         run = {"scenario": scenario.name, "run_id": uuid4().hex,
                                "request_sha256": digest(request), "status": "reserved"}
+                        if node is not None:
+                            run["solve_node_id"] = node.id
                         current["runs"].append(run)
                         self.save(identifier, state, "running")
                         yield self.summary(identifier)
@@ -269,6 +311,15 @@ class ResearchTasks(ResearchStore):
                             version = state.setdefault("solver_version", record["version"])
                             if version != record["version"]:
                                 verdict.update(category="solver_version_changed", passed=False)
+                        if plan is not None:
+                            evidence = capture_evidence(self.root, plan, scenario.name, run["run_id"], request,
+                                                        version=record.get("version"), verdict=verdict)
+                            if verdict["passed"] and evidence.status != "verified":
+                                verdict["checks"].append(check("artifact_provenance", False))
+                                verdict.update(passed=False, category="invalid_evidence")
+                                evidence = capture_evidence(self.root, plan, scenario.name, run["run_id"], request,
+                                                            version=record.get("version"), verdict=verdict)
+                            run["evidence_record"] = evidence.model_dump(mode="json")
                         run.update(status=record["status"], version=record.get("version"), evaluation=verdict)
                         self.save(identifier, state, "evaluating")
                         yield self.summary(identifier)

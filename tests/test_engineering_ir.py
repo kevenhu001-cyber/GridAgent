@@ -121,6 +121,11 @@ def test_ir_task_persists_provenance_and_reopens(tmp_path):
     assert report["stage"] == "ready"
     assert report["engineering_status"] == "planned"
     assert report["engineering_model_revision"] == source.model.sha256()
+    from gridagent.execution_plan import ExecutionPlan
+
+    plan = ExecutionPlan.model_validate(report["record"]["execution_plan"])
+    assert plan.sha256() == report["record"]["execution_plan_sha256"]
+    assert [n.scenario for n in plan.ready()] == ["base", "peak"]
     assert report["record"]["engineering_ir"]["model_sha256"] == source.model.sha256()
     assert report["record"]["engineering_ir"]["device_indices"]["grid"]["table"] == "ext_grid"
     assert json.loads(json.dumps(report))["record"]["manifest"]["max_repairs"] == 0
@@ -138,6 +143,12 @@ def test_compiled_ir_executes_with_native_verification(tmp_path):
     assert report["engineering_status"] == "completed"
     assert report["runs_used"] == 2
     assert all(run["evaluation"]["passed"] for run in report["best_runs"])
+    from gridagent.evidence import EvidenceRecord, verify_artifacts
+
+    for run in report["best_runs"]:
+        evidence = EvidenceRecord.model_validate(run["evidence_record"])
+        assert evidence.status == "verified"
+        assert verify_artifacts(tmp_path, evidence)
 
 
 def test_resume_rejects_changed_ir_provenance_before_solver(tmp_path):

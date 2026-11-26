@@ -129,6 +129,12 @@ def test_dispatch_uses_canonical_lifecycle_and_recovers_committed_evidence(tmp_p
     final = reopened.resume(identifier, solver=lambda *a, **k: pytest.fail("Duplicate native run"))
     assert final["status"] == "completed", final
     assert final["evidence"]["passed"]
+    from gridagent.evidence import EvidenceRecord, verify_artifacts
+
+    evidence = EvidenceRecord.model_validate(final["evidence"]["evidence_record"])
+    assert evidence.status == "verified"
+    assert evidence.plan_sha256 == final["source"]["execution_plan_sha256"]
+    assert verify_artifacts(tmp_path, evidence)
     assert reopened.resume(identifier) == final
     assert [event.to_status.value for event in reopened.repository.events(identifier)] == [
         "planned", "running", "verifying", "completed"]
@@ -183,3 +189,17 @@ def test_dispatch_rejects_changed_frozen_study_before_launch(tmp_path):
     with pytest.raises(ValueError, match="provenance changed"):
         tasks.resume(identifier, solver=lambda *a, **k: pytest.fail("Unexpected native run"))
     assert tasks.summary(identifier)["status"] == "planned"
+
+
+def test_solver_exception_is_recorded_without_provider_payload(tmp_path):
+    tasks = DispatchTasks(tmp_path)
+    identifier = tasks.start(source())
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("private solver diagnostic")
+
+    final = tasks.resume(identifier, solver=fail)
+    assert final["status"] == "failed"
+    assert final["evidence"]["launch_error_type"] == "RuntimeError"
+    assert "private solver diagnostic" not in json.dumps(final)
+    assert final["evidence"]["evidence_record"]["status"] == "unavailable"
