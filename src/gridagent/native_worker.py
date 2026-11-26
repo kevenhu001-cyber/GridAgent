@@ -128,13 +128,13 @@ def pypsa_run(program, folder):
     for name, frame in (("generation_mw", n.generators_t.p), ("storage_mw", n.storage_units_t.p),
                         ("storage_soc_mwh", n.storage_units_t.state_of_charge),
                         ("link_mw", n.links_t.p0), ("marginal_price", n.buses_t.marginal_price)):
-        frame.to_csv(folder / (name + ".csv"))
+        frame.reindex(n.snapshots).to_csv(folder / (name + ".csv"))
     # Export independent per-component numerical evidence, including inputs as
     # materialized by the native backend, not values invented by the policy.
-    n.loads_t.p.to_csv(folder / "load_mw.csv")
-    n.storage_units_t.p_store.to_csv(folder / "storage_charge_mw.csv")
-    n.storage_units_t.p_dispatch.to_csv(folder / "storage_discharge_mw.csv")
-    n.links_t.p1.to_csv(folder / "link_destination_mw.csv")
+    n.loads_t.p.reindex(n.snapshots).to_csv(folder / "load_mw.csv")
+    n.storage_units_t.p_store.reindex(n.snapshots).to_csv(folder / "storage_charge_mw.csv")
+    n.storage_units_t.p_dispatch.reindex(n.snapshots).to_csv(folder / "storage_discharge_mw.csv")
+    n.links_t.p1.reindex(n.snapshots).to_csv(folder / "link_destination_mw.csv")
     n.export_to_csv_folder(folder / "network")
     result.update({"status": "ok", "metrics": {"objective": float(n.objective),
                    "hours": program.hours, "generation_mwh": float(n.generators_t.p.sum().sum()),

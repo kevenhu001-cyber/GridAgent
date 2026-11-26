@@ -49,6 +49,11 @@ def study_summary(root: Path, identifier: str):
     lines = [f"Study {identifier}", f"Protocol: {manifest.get('protocol', 'unknown')}"]
     if report is None:
         lines.append("Unfinished · partial artifacts preserved")
+    elif report.get("phase") == "native_repair_finished":
+        lines.append(f"Benchmark: {report['termination']} · {report['solver_calls']} solver calls")
+        lines.append(f"Best run: {report['best_run_id']} · iteration {report['best_iteration']}")
+        for row in (report.get("best_quality") or {}).get("tests", []):
+            lines.append(f"{row['id']} · {'pass' if row['passed'] else 'fail'} · {row.get('observed')}")
     elif "tests_passed" in report:
         lines.append(f"Model quality: {report['tests_passed']}/{report['tests_total']} tests passed")
         if "objective_evaluations" in report:

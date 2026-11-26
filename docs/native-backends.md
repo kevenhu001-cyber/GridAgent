@@ -52,3 +52,26 @@ The user must close the sandbox when finished. Output files are untrusted and
 are not automatically ingested or claimed as measured results. No automatic
 arbitrary-code execution, sandbox result verification, or TUI launch yet.
 The sandbox integration is untested on a virtualization-enabled Windows host.
+
+## Automatic quality checks and authorized repair
+
+Every native run now produces quality.json and returns the independent local
+quality verdict. PP checks distinguish solvability/coverage and operating
+voltage/loading limits; PyPSA checks demand preservation, nodal power balance,
+component limits and cyclic storage dynamics from actual exported tables.
+These are local engineering screening checks, not original PowerAgentBench.
+Ordinary chat receives failing checks and can retry within the shared budget;
+it must not change fixed user requirements merely to pass.
+
+For an explicit automatic loop run gridagent --model-repair MANIFEST.json
+(or /model-repair in TUI, Benchmark and repair in Windows). The manifest locks
+the original program and lists authorized numerical leaf paths. An initial run
+and at most five repair proposals are allowed. Invalid and duplicate proposals
+consume the repair budget, never execute. Demand, topology, operation and
+criteria remain locked; only explicitly listed existing numeric leaves can
+change. Ratings/capacity changes require explicit manifest authorization and
+are a design variant, not proof the original system was correct. Best tested
+candidate is retained with all artifacts. The policy sees feedback, not hidden
+paper test labels. Original licensed DMQ uses its existing upstream evaluator;
+these native tests do not replace it. Free Python Sandbox outputs are not yet
+automatically evaluated. No LLM weight updates or guaranteed convergence.

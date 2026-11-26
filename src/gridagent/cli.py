@@ -60,6 +60,7 @@ def main():
     parser.add_argument("--wave", nargs="+", metavar="ID_OR_CHANNEL", help="View a saved run waveform")
     parser.add_argument("--study-wave", nargs="+", metavar="ID_PATH_CHANNEL", help="View a study waveform")
     parser.add_argument("--paper-dmq", metavar="PROFILE", help="Run original licensed DMQ")
+    parser.add_argument("--model-repair", type=Path, metavar="MANIFEST")
     parser.add_argument("--drafts", action="store_true", help="List Python drafts awaiting review")
     parser.add_argument("--backends", action="store_true")
     parser.add_argument("--native-program", type=Path, metavar="JSON")
@@ -78,6 +79,7 @@ def main():
     store = ResearchStore(args.workspace / "research.sqlite3")
     console = Console()
     local_commands = [
+        ("model-repair", [str(args.model_repair)] if args.model_repair else None),
         ("drafts", [] if args.drafts else None),
         ("backends", [] if args.backends else None),
         ("native-program", [str(args.native_program)] if args.native_program else None),

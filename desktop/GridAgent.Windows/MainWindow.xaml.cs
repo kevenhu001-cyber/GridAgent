@@ -204,6 +204,14 @@ public partial class MainWindow : Window
                    "). Windows Sandbox and the bundled runtime must be installed.");
         }
     }
+    private async void ModelRepair(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        var picker = new OpenFileDialog { Filter = "Benchmark repair manifest (*.json)|*.json", CheckFileExists = true };
+        if (picker.ShowDialog(this) != true) return;
+        if (MessageBox.Show(this, "Run the fixed evaluator and allow up to five repairs of the manifest's explicit editable parameters? This uses your model API.", "Authorize benchmark repair", MessageBoxButton.OKCancel) == MessageBoxResult.OK)
+            await Local("model-repair", picker.FileName);
+    }
     private async void NativeProgram(object sender, RoutedEventArgs e)
     {
         if (_busy) return;

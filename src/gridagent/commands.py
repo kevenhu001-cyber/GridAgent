@@ -8,7 +8,17 @@ from .workspace import list_runs, study_summary, waveform, waveform_text
 
 def workspace_command(root, command, args):
     root = Path(root)
-    if command == "drafts" and not args:
+    if command == "model-repair" and len(args) == 1:
+        from .agent import model_from_env
+        from .model_repair import Manifest, format_update, model_proposer, repair_updates
+
+        source = Path(args[0])
+        if source.stat().st_size > 1024 * 1024:
+            raise ValueError("Manifest exceeds 1 MiB")
+        manifest = Manifest.model_validate_json(source.read_bytes())
+        for row in repair_updates(root, manifest, model_proposer(model_from_env())):
+            yield format_update(row)
+    elif command == "drafts" and not args:
         from .script_drafts import list_drafts
 
         for row in list_drafts(root):
