@@ -1,0 +1,43 @@
+{
+  "dedicated_project": true,
+  "python": "C:\\Research\\PowerFactory-Python313\\python.exe",
+  "powerfactory_python_path": "C:\\Program Files\\DIgSILENT\\PowerFactory 2025 SP1\\Python\\3.13",
+  "project_path": "\\PowerFactory_User\\GridAgent IEEE39 Research Copy.IntPrj",
+  "base_study_case": "0. Base",
+  "result_name": "All calculations.ElmRes",
+  "timeout_s": 600,
+  "mitigation": {
+    "simulation_budget": 6,
+    "device_names": {
+      "16": "SC16",
+      "26": "SC26",
+      "04": "SC04"
+    },
+    "variants": {
+      "16": {
+        "project_path": "\\PowerFactory_User\\GridAgent IEEE39 SC 16.IntPrj",
+        "base_study_case": "0. Base"
+      },
+      "26": {
+        "project_path": "\\PowerFactory_User\\GridAgent IEEE39 SC 26.IntPrj",
+        "base_study_case": "0. Base"
+      },
+      "04": {
+        "project_path": "\\PowerFactory_User\\GridAgent IEEE39 SC 04.IntPrj",
+        "base_study_case": "0. Base"
+      },
+      "04+16": {
+        "project_path": "\\PowerFactory_User\\GridAgent IEEE39 SC 04+16.IntPrj",
+        "base_study_case": "0. Base"
+      },
+      "04+26": {
+        "project_path": "\\PowerFactory_User\\GridAgent IEEE39 SC 04+26.IntPrj",
+        "base_study_case": "0. Base"
+      },
+      "16+26": {
+        "project_path": "\\PowerFactory_User\\GridAgent IEEE39 SC 16+26.IntPrj",
+        "base_study_case": "0. Base"
+      }
+    }
+  }
+}

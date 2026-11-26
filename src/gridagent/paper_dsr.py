@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .dsr import digest
 from .paper import LEVEL2, asset, original_kpis
+from .paper_mitigation import MitigationProfile
 
 
 class Profile(BaseModel):
@@ -21,25 +22,39 @@ class Profile(BaseModel):
     base_study_case: str = Field(min_length=1)
     result_name: str = "All calculations.ElmRes"
     timeout_s: int = Field(default=600, ge=30, le=1800)
+    mitigation: MitigationProfile | None = None
 
 
-def profile_runner(path):
+def profile_runner(path, *, with_mitigation=False):
     profile = Profile.model_validate_json(Path(path).read_text(encoding="utf-8"))
     if (os.name != "nt" or not profile.python.is_absolute() or not profile.python.is_file()
             or not profile.powerfactory_python_path.is_absolute() or not profile.powerfactory_python_path.is_dir()):
         raise ValueError("Licensed DSR requires Windows and compatible PowerFactory Python bindings")
+    if with_mitigation and profile.mitigation is None:
+        raise ValueError("Configure all six dedicated condenser variants")
+    if profile.mitigation and any(v.project_path.casefold() == profile.project_path.casefold()
+                                  for v in profile.mitigation.variants.values()):
+        raise ValueError("Baseline project must be separate from mitigation copies")
     driver = asset(f"{LEVEL2}/Agent_DIgSILENT.py")
     script = Path(__file__).with_name("paper_dsr_worker.py").resolve()
     lock_root = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "GridAgent" / "locks"
     lock_root.mkdir(parents=True, exist_ok=True)
-    lock_id = digest({"project": profile.project_path})[:20]
+    lock_id = digest({"backend": "powerfactory-local"})[:20]
 
     def run(case, folder):
         folder = folder.resolve()
         folder.mkdir()
         location, ms = case["location"], case["duration_ms"]
-        request = {"driver": str(driver), "project_path": profile.project_path,
-                   "base_study_case": profile.base_study_case, "result_name": profile.result_name,
+        plan = case.get("condenser_plan")
+        if plan is not None and (not with_mitigation or profile.mitigation is None
+                                 or plan not in profile.mitigation.variants):
+            raise ValueError("Unauthorized mitigation configuration")
+        variant = profile.mitigation.variants[plan] if plan else None
+        request = {"driver": str(driver), "project_path": variant.project_path if variant else profile.project_path,
+                   "base_study_case": variant.base_study_case if variant else profile.base_study_case,
+                   "condenser_plan": plan,
+                   "device_names": profile.mitigation.device_names if with_mitigation else {},
+                   "result_name": profile.result_name,
                    "location": location, "duration_ms": ms, "binding": str(profile.powerfactory_python_path)}
         (folder / "request.json").write_text(json.dumps(request), encoding="utf-8")
         env = {k: v for k, v in os.environ.items() if k.upper() in {
@@ -72,3 +87,10 @@ def profile_runner(path):
             return {"status": "failed", "reason": str(exc)}
         return {"status": "ok", "csv_path": str(csv_path), "kpi": kpi}
     return run
+
+
+def mitigation_runner(path):
+    profile = Profile.model_validate_json(Path(path).read_text(encoding="utf-8"))
+    if profile.mitigation is None:
+        raise ValueError("Missing mitigation configuration")
+    return profile_runner(path, with_mitigation=True), profile.mitigation.simulation_budget

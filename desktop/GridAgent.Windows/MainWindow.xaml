@@ -77,6 +77,7 @@
     <Button Content="Open DMQ" Click="Dmq"/>
     <Button Content="Paper DMQ…" Click="PaperDmq"/>
     <Button Content="Paper DSR…" Click="PaperDsr"/>
+    <Button Content="Paper mitigation…" Click="PaperMitigation"/>
     <Button Content="Paper DSR ranking" Click="PaperRank"/>
     <Button Content="Paper KPI CSV…" Click="PaperKpi"/>
     <Button Content="DMQ reference" Click="DmqReference"/>

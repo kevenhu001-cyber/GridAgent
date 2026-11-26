@@ -30,6 +30,15 @@ def workspace_command(root, command, args):
         from .paper_dsr import profile_runner
 
         yield from paper_rank(root, model_estimator(model_from_env()), profile_runner(args[0]))
+    elif command == "paper-mitigate" and len(args) == 1:
+        from .agent import model_from_env
+        from .paper import model_estimator, paper_rank
+        from .paper_dsr import mitigation_runner
+        from .paper_mitigation import model_proposer
+
+        runner, budget = mitigation_runner(args[0])
+        model = model_from_env()
+        yield from paper_rank(root, model_estimator(model), runner, model_proposer(model), budget)
     elif command == "paper-rank" and not args:
         from .agent import model_from_env
         from .paper import model_estimator, paper_rank

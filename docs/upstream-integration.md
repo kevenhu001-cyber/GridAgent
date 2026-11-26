@@ -61,3 +61,25 @@ mitigation are deliberately not scored. Holdout labels are never copied into
 the portable distribution, policy tool or training index. The normal Agent
 now also has a bounded read-only paper_training_history tool. It reports
 historical observations, not newly simulated data.
+
+## Fresh condenser mitigation
+
+Run gridagent --paper-mitigate PROFILE.json (or /paper-mitigate in TUI).
+The frozen screening ranking is followed by three fresh simulations. Only
+with three valid results does the policy select a measured contingency
+(unstable first, then severity). Six nonempty combinations of 250 MVA units
+at buses 04, 16, 26 are allowed, with at most two units. The mitigation
+policy receives no historical memory. A separate configurable budget of
+1..6 proposals (default 6) is a GridAgent choice, not a paper claim.
+Every reservation, proposal and result is retained. Only a measured stable
+improvement is eligible for recommendation; global optimality is not claimed.
+
+The original repository does not supply a complete condenser-ready project.
+Configure a dedicated baseline and six distinct preconfigured research project
+copies with validated condenser models, all three devices present (including
+inactive devices). The worker checks exact machine names, connected bus,
+250 MVA type rating and service status in the activated study case, then
+calls upstream simulation. It does not install devices, synthesize machine
+parameters or certify equivalence of project copies. Users must validate
+identical non-mitigation parameters and model provenance. Licensed testing
+remains outstanding. See examples/paper-mitigation-profile.json.

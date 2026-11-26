@@ -170,6 +170,12 @@ public partial class MainWindow : Window
         var picker = new OpenFileDialog { Filter = "Dedicated DMView profile (*.json)|*.json", CheckFileExists = true };
         if (picker.ShowDialog(this) == true) await Local("paper-dmq", picker.FileName);
     }
+    private async void PaperMitigation(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        var picker = new OpenFileDialog { Filter = "Dedicated mitigation profile (*.json)|*.json", CheckFileExists = true };
+        if (picker.ShowDialog(this) == true) await Local("paper-mitigate", picker.FileName);
+    }
     private async void PaperDsr(object sender, RoutedEventArgs e)
     {
         if (_busy) return;

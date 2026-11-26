@@ -5,6 +5,23 @@ from pathlib import Path
 from uuid import uuid4
 
 
+def verify_condensers(app, names, plan):
+    """Check preinstalled models, not create or modify equipment."""
+    expected = set(plan.split("+")) if plan else set()
+    for bus, name in names.items():
+        matches = [obj for obj in app.GetCalcRelevantObjects(name + ".ElmSym", 1)
+                   if obj.loc_name == name]
+        if len(matches) != 1:
+            raise ValueError("Condenser must uniquely exist: " + name)
+        obj = matches[0]
+        if obj.bus1.cterm.loc_name != "Bus " + bus:
+            raise ValueError("Incorrect condenser bus")
+        if abs(float(obj.typ_id.sgn) - 250.0) > 0.01:
+            raise ValueError("Incorrect condenser nominal MVA")
+        if int(obj.outserv) != (0 if bus in expected else 1):
+            raise ValueError("Condenser service state differs from approved variant")
+
+
 def main():
     folder = Path(sys.argv[1])
     request = json.loads((folder / "request.json").read_text(encoding="utf-8"))
@@ -25,6 +42,16 @@ def main():
                            word_document=0, final_word_document=0, final_presentation=0)
     agent = DIgSILENTAgent(cfg)
     try:
+        if request.get("device_names"):
+            original = agent.activate_study_case
+
+            def checked_activation():
+                ok, msg = original()
+                if ok:
+                    verify_condensers(agent.app, request["device_names"], request["condenser_plan"])
+                return ok, msg
+
+            agent.activate_study_case = checked_activation
         report = agent.run_pipeline()
         if report.get("success"):
             result = {"status": "ok", "csv_path": report["csv_path"]}
