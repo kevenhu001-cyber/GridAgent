@@ -113,7 +113,7 @@ public partial class MainWindow : Window
         BusyRing.IsActive = busy;
         BusyRing.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         SendButton.IsEnabled = !busy;
-        CancelButton.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        CancelButton.Visibility = busy && _activeResearch != null ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private async Task Execute(object request)
@@ -126,6 +126,8 @@ public partial class MainWindow : Window
             var root = Path.GetFullPath(WorkspacePath.Text.Trim());
             if (_boundWorkspace != root)
             {
+                _pluginCatalog = default;
+                PluginRows.Children.Clear();
                 _boundWorkspace = root;
                 _session = null;
                 SessionList.ItemsSource = null;
@@ -194,6 +196,7 @@ public partial class MainWindow : Window
                 if (_activeResearch != researchId || stage is "passed" or "failed" or "cancelled" or "awaiting_input" or "awaiting_approval")
                     Append(data.GetProperty("summary").GetString() ?? "");
                 _activeResearch = researchId;
+                CancelButton.Visibility = _busy ? Visibility.Visible : Visibility.Collapsed;
                 StatusText.Text = $"Research · {stage} · {data.GetProperty("runs_used")} simulations";
                 break;
             case "topology": _topology = data.Clone(); break;
@@ -229,7 +232,7 @@ public partial class MainWindow : Window
             case "assistant": Append(data.GetString() ?? "", "Assistant"); break;
             case "tool": AddTool(data.GetString() ?? "Tool"); break;
             case "result": Append(data.GetString() ?? ""); break;
-            case "status": StatusText.Text = data.GetString(); break;
+            case "status": StatusText.Text = data.GetString() ?? "Working…"; break;
             case "error": Append(data.GetString() ?? "Operation failed.", "Error"); Notify("The operation reported an error. See the conversation for details.", InfoBarSeverity.Error); break;
         }
     }
