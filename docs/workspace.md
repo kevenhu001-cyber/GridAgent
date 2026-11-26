@@ -27,3 +27,16 @@ participation-factor interpretation and mid-task resume remain outstanding.
 Launch the read-only/standalone research workspace using `gridagent --offline`.
 It does not require model credentials. Local deterministic /eigen and /sweep
 remain available; free chat, /dmq and /dsr require a configured model.
+
+## Numerical optimization and study browser
+
+    gridagent --optimize 24
+
+Or /optimize [BUDGET] in the TUI. The SciPy Powell search uses log-scaled
+bounded gains and a measured eight-test surrogate objective. The fixed
+reference seed is recorded. At most 2–60 objective evaluations are allowed;
+there are additionally one initial baseline and one independent final
+verification suite. Each objective evaluation is persisted. This is a
+comparison method for the synthetic DMQ model, not a WECC optimization.
+The best evaluated candidate is reported even if the solver does not converge.
+Ctrl+E opens a keyboard-driven local study list; Enter opens the selected report.

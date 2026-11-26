@@ -7,11 +7,48 @@ from rich.markdown import Markdown
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Footer, Input, RichLog, Static
+from textual.screen import ModalScreen
+from textual.widgets import DataTable, Footer, Input, RichLog, Static
 
 from .cli import text_content, tool_summary
 from .commands import workspace_command
 from .store import recorded_task
+
+
+class StudyBrowser(ModalScreen):
+    """Keyboard-driven experiment picker; only reads local artifact metadata."""
+
+    BINDINGS: ClassVar = [("escape", "dismiss_browser", "Close")]
+    CSS = """
+    StudyBrowser { align: center middle; background: $background 70%; }
+    #study-dialog { width: 90%; max-width: 100; height: 70%; background: $surface; padding: 1 2; border: round $primary; }
+    #study-heading { height: 2; text-style: bold; }
+    #study-table { height: 1fr; }
+    """
+
+    def __init__(self, root):
+        super().__init__()
+        self.root = root
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="study-dialog"):
+            yield Static("Research studies  ·  Enter to open  ·  Esc to close", id="study-heading")
+            yield DataTable(id="study-table", cursor_type="row")
+
+    def on_mount(self):
+        from .dsr import list_studies
+
+        table = self.query_one(DataTable)
+        table.add_columns("Study ID", "Status")
+        for row in list_studies(self.root):
+            table.add_row(row["id"], row["status"], key=row["id"])
+        table.focus()
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected):
+        self.dismiss(str(event.row_key.value))
+
+    def action_dismiss_browser(self):
+        self.dismiss(None)
 
 
 class GridApp(App):
@@ -27,7 +64,8 @@ class GridApp(App):
     Input { margin: 0 0 1 0; border: round $primary; background: $surface; }
     Footer { background: $surface; }
     """
-    BINDINGS: ClassVar = [("ctrl+q", "quit", "Quit"), ("ctrl+l", "new_session", "New session")]
+    BINDINGS: ClassVar = [("ctrl+q", "quit", "Quit"), ("ctrl+l", "new_session", "New session"),
+                          ("ctrl+e", "browse_studies", "Studies")]
 
     def __init__(self, graph, budget, store, sid, dsr_runner=None, studies_root=None, dmq_runner=None, workspace=Path(".gridagent")):
         super().__init__()
@@ -71,6 +109,18 @@ class GridApp(App):
             if task["status"] != "completed":
                 chat.write(Text(f"Previous task {task['id'][:8]}: {task['status']} (audit retained)", style="dim"))
 
+    def action_browse_studies(self):
+        if not self.busy and self.studies_root is not None:
+            self.push_screen(StudyBrowser(self.studies_root), self._study_selected)
+
+    def _study_selected(self, identifier):
+        if identifier is not None:
+            try:
+                for line in workspace_command(self.workspace, "study", [identifier]):
+                    self._write(Text(line))
+            except (OSError, ValueError, TypeError, KeyError) as exc:
+                self._write(Text(str(exc), style="red"))
+
     def action_new_session(self):
         if not self.busy:
             self.sid = self.store.create_session()
@@ -83,7 +133,7 @@ class GridApp(App):
         event.input.value = ""
         chat = self.query_one("#chat", RichLog)
         if question == "/help":
-            chat.write(Text("/new · new session | /sessions · list | /open ID · reopen | /dsr PATH · screen faults | /dmq · model review | /studies · list | /runs | /study ID | /wave ID CHANNEL | /study-wave ID PATH CHANNEL | /eigen | /sweep BUS DURATIONS | /resume-dsr ID | Ctrl+Q · quit"))
+            chat.write(Text("/new · new session | /sessions · list | /open ID · reopen | /dsr PATH · screen faults | /dmq · model review | /studies · list | /runs | /study ID | /wave ID CHANNEL | /study-wave ID PATH CHANNEL | /eigen | /sweep BUS DURATIONS | /resume-dsr ID | /optimize [BUDGET] | Ctrl+E Studies | Ctrl+Q · quit"))
             return
         if question == "/new":
             self.action_new_session()
@@ -108,7 +158,7 @@ class GridApp(App):
             for row in rows:
                 chat.write(Text(f"{row['id']}  {row['status']}"))
             return
-        if question.split()[0] in {"/runs", "/study", "/wave", "/study-wave", "/eigen", "/sweep", "/resume-dsr"}:
+        if question.split()[0] in {"/runs", "/study", "/wave", "/study-wave", "/eigen", "/sweep", "/resume-dsr", "/optimize"}:
             try:
                 parts = shlex.split(question)
             except ValueError:

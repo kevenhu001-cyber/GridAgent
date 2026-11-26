@@ -1,8 +1,28 @@
 import pytest
 
-from gridagent.dsr import Study, build_dsr, resume_dsr
+from gridagent.domain import FaultRequest
+from gridagent.dsr import Candidate, Manifest, Study, build_dsr, resume_dsr
 
-from test_dsr import FakeSimulator, estimate, manifest
+
+def manifest():
+    return Manifest(candidates=[Candidate(id=f"K{i}", fault=FaultRequest(bus=5 + i % 5,
+                     duration_s=0.08 if i < 5 else 0.16)) for i in range(10)])
+
+
+def estimate(evidence):
+    return {"predictions": [{"id": cid, "score": i / 10, "v_min_pu": 0.7,
+                             "v_max_pu": 1.1, "rationale": "test estimate"}
+                            for i, cid in enumerate(evidence)]}
+
+
+class FakeSimulator:
+    def __init__(self, study):
+        self.study = study
+        self.calls = []
+
+    def run(self, operation, request):
+        self.calls.append(request)
+        return {"status": "ok", "metrics": {"voltage_severity_proxy": 0.2}}
 
 
 def test_resume_charges_unknown_and_does_not_repeat(tmp_path):

@@ -12,7 +12,7 @@ TEST_NAMES = ("flat_start", "q_step_up", "q_step_down", "v_step_up",
               "v_step_down", "combined_step", "voltage_dip", "weak_grid_step")
 
 
-def run_suite(gains: dict, output: Path):
+def run_suite(gains: dict, output: Path | None):
     kp = np.array([gains["kqp"], gains["kvp"]])
     ki = np.array([gains["kqi"], gains["kvi"]])
     omega = 2.0
@@ -49,7 +49,8 @@ def run_suite(gains: dict, output: Path):
         state += dt * (a + 2 * b + 2 * c + d) / 6
         values[i + 1] = state[:, :, 0]
 
-    output.mkdir(parents=True, exist_ok=False)
+    if output is not None:
+        output.mkdir(parents=True, exist_ok=False)
     results = []
     for i, name in enumerate(TEST_NAMES):
         y = values[:, i, :]
@@ -61,8 +62,11 @@ def run_suite(gains: dict, output: Path):
         peak = float(np.max(np.abs(y)))
         # Thresholds are synthetic benchmark criteria, not a grid code.
         passed = tail_error <= 0.025 and peak <= 0.3
-        np.savetxt(output / f"{name}.csv", np.column_stack((times, y)), delimiter=",",
-                   header="time_s,q_deviation_pu,v_deviation_pu", comments="")
-        results.append({"name": name, "passed": bool(passed), "tail_error_pu": tail_error,
-                        "peak_deviation_pu": peak, "waveform": f"{output.name}/{name}.csv"})
+        record = {"name": name, "passed": bool(passed), "tail_error_pu": tail_error,
+                  "peak_deviation_pu": peak}
+        if output is not None:
+            np.savetxt(output / f"{name}.csv", np.column_stack((times, y)), delimiter=",",
+                       header="time_s,q_deviation_pu,v_deviation_pu", comments="")
+            record["waveform"] = f"{output.name}/{name}.csv"
+        results.append(record)
     return results

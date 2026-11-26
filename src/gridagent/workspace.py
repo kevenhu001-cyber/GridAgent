@@ -51,7 +51,10 @@ def study_summary(root: Path, identifier: str):
         lines.append("Unfinished · partial artifacts preserved")
     elif "tests_passed" in report:
         lines.append(f"Model quality: {report['tests_passed']}/{report['tests_total']} tests passed")
-        lines.append(f"Attempts: {report['attempts']} · applied edits: {report['accepted_edits']}")
+        if "objective_evaluations" in report:
+            lines.append(f"Objective evaluations: {report['objective_evaluations']}/{report['objective_budget']}")
+        else:
+            lines.append(f"Attempts: {report['attempts']} · applied edits: {report['accepted_edits']}")
         for key, value in report["final_gains"].items():
             lines.append(f"{key}: {report['initial_gains'][key]:g} → {value:g}")
     elif "observed" in report:

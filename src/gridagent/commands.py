@@ -8,7 +8,13 @@ from .workspace import list_runs, study_summary, waveform, waveform_text
 
 def workspace_command(root, command, args):
     root = Path(root)
-    if command == "resume-dsr" and len(args) == 1:
+    if command == "optimize" and len(args) <= 1:
+        from .optimization import format_update as format_optimization
+        from .optimization import optimize_updates
+
+        for node, data in optimize_updates(root / "studies", int(args[0]) if args else 24):
+            yield format_optimization(node, data)
+    elif command == "resume-dsr" and len(args) == 1:
         from filelock import Timeout
 
         from .dsr import format_update as format_dsr

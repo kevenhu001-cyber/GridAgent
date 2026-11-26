@@ -56,6 +56,7 @@ the original WECC/DMView benchmark.
 ## Scientific workspace
 
     gridagent --eigen
+    gridagent --optimize 24
     gridagent --sweep 5 0.04 0.08 0.12
     gridagent --runs
     gridagent --study STUDY_ID
