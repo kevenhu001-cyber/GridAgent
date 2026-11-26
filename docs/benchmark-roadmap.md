@@ -58,4 +58,4 @@ interrupted-task recovery and checkpointed mid-task resume are next.
 Add projects, experiment manifests, typed artifacts, budget reservations,
 LangGraph checkpointing, structured retrieval and evaluator runs. The TUI
 should show short human-readable tool summaries and budgets, with opt-in
-details and waveform exports. Web GUI can consume the same event service.
+details and waveform exports. The native Windows client uses the same engine and workspace via local process events.

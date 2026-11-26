@@ -15,7 +15,7 @@ The DSR paper protocol selects three of ten candidates and evaluates authorized 
 
 ## Next interface
 
-Use one transport-independent event contract (task ID, tool start/end, result artifact, budget, final report, error) for TUI and a future local FastAPI + React interface. Do not display raw tool JSON or model chain-of-thought by default. User-visible diagnostic explanations must be grounded in recorded artifacts.
+Use one transport-independent event contract (task ID, tool start/end, result artifact, budget, final report, error) for TUI and a native Windows WPF client over a local JSON-lines protocol. Do not display raw tool JSON or model chain-of-thought by default. User-visible diagnostic explanations must be grounded in recorded artifacts.
 
 ## References
 

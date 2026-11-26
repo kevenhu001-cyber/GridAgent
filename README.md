@@ -64,16 +64,22 @@ the original WECC/DMView benchmark.
 
 See [workspace commands](docs/workspace.md) for TUI and offline result inspection.
 
+## Native Windows desktop
+
+GridAgent also has a native WPF/.NET 10 client (no Web UI, Electron or browser
+server). See [Windows setup and build](docs/windows.md). TUI and Windows use
+the same Python engine and can share a local workspace.
+
 ## Architecture
 
-Textual TUI or CLI → LangGraph decision loop → validated tools and budget guard → isolated ANDES solver → waveform CSV and deterministic voltage metrics.
+Native Windows WPF / Textual TUI / CLI → LangGraph decision loop → validated tools and budget guard → isolated ANDES solver → waveform CSV and deterministic voltage metrics.
 
 - Only packaged Kundur research system and bounded fault parameters are allowed.
 - Solver runs in a separate process with a timeout and per-run working directory.
 - Tool calls are executed sequentially. Attempted power flow and fault simulations consume budget.
 - Each run stores solver logs and result files under .gridagent/runs.
 - Solver non-convergence is not evidence of physical instability. The normalized voltage metric is a proxy, not the full paper evaluator.
-- TUI and CLI persist local sessions, tasks and audit events in SQLite. Mid-task checkpoint recovery, API and graphical UI are planned.
+- TUI and CLI persist local sessions, tasks and audit events in SQLite. DSR stage recovery is supported; general checkpoint recovery remains planned.
 
 ## Roadmap
 
@@ -81,7 +87,7 @@ Textual TUI or CLI → LangGraph decision loop → validated tools and budget gu
 2. Add project configuration, audit records and persistent sessions.
 3. Add DSR case retrieval, explicit candidate budgets and hidden offline evaluator.
 4. Implement DMQ with model-specific parameter whitelist, baseline tests and rollback.
-5. Add FastAPI event API, interactive waveform viewer and graphical research workspace.
+5. Develop native Windows desktop workspace and interactive scientific charts (no Web frontend).
 6. Add native provider adapters, MCP and optional licensed simulators.
 
 ## Development
