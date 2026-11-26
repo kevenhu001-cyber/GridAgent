@@ -15,6 +15,7 @@ from .dsr import digest
 from .knowledge import QueryPlan, workspace_knowledge
 from .model_quality import check
 from .model_repair import Proposal, apply, leaf, model_proposer
+from .model_runtime import ScheduledModel
 from .native_backends import run_program
 from .research_lifecycle import ResearchLifecycle
 from .research_spec import PROTOCOL, PlanDraft, ResearchManifest, evaluate, model_fidelity
@@ -187,6 +188,7 @@ class ResearchTasks(ResearchStore):
             if planner is None:
                 raise ValueError("Configure a model to create the research plan")
             draft = PlanDraft.model_validate(planner(task["prompt"], state["clarifications"], task["mode"]))
+            record_model_metrics(state, planner)
             if draft.questions:
                 state["questions"] = draft.questions
                 self.save(identifier, state, "awaiting_input")
@@ -283,6 +285,7 @@ class ResearchTasks(ResearchStore):
             self.save(identifier, state, "repairing")
             try:
                 proposal = Proposal.model_validate(proposer(observation))
+                record_model_metrics(state, proposer)
                 program = apply_repair(manifest, best["program"], proposal)
                 if any(item["program_sha256"] == digest(program) for item in attempts):
                     raise ValueError("Repeated candidate")
@@ -293,6 +296,7 @@ class ResearchTasks(ResearchStore):
                 self.save(identifier, state, "repairing")
                 raise
             except (ValidationError, ValueError, TypeError, KeyError, IndexError) as exc:
+                record_model_metrics(state, proposer)
                 state["rejected_repairs"].append(str(exc).splitlines()[0][:240])
                 if use is not None:
                     use["status"] = "rejected"
@@ -349,6 +353,8 @@ class ResearchTasks(ResearchStore):
                     max_repairs=manifest.get("max_repairs"), termination=state.get("termination"),
                     best_runs=best["runs"] if best else [],
                     proposed_repairs=manifest.get("editable", []) if item["stage"] == "awaiting_approval" else [])
+        if "model_client_metrics" in state:
+            item["model_client_metrics"] = state["model_client_metrics"]
         if full:
             item["record"] = state
         return item
@@ -481,6 +487,15 @@ def research_planner(root, model):
         {"prompt": prompt, "clarifications": clarifications, "mode": mode, "references": []})["draft"]
 
 
+def record_model_metrics(state, adapter):
+    """Record a cumulative client snapshot, not an inferred per-task token total."""
+    getter = getattr(adapter, "model_metrics", None)
+    if getter is not None:
+        metrics = getter()
+        if metrics is not None:
+            state["model_client_metrics"] = metrics
+
+
 def configured_adapters(root, model_factory=None):
     from .agent import model_from_env
 
@@ -509,6 +524,11 @@ def configured_adapters(root, model_factory=None):
             proposer = model_proposer(get_model())
         return proposer(observation)
 
+    def metrics():
+        return model.metrics() if isinstance(model, ScheduledModel) else None
+
+    plan.model_metrics = metrics
+    propose.model_metrics = metrics
     return {"planner": plan, "proposer": propose}
 
 

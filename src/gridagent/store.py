@@ -93,7 +93,7 @@ class ResearchStore:
                                    (isinstance(block, dict) and block.get("type") == "text")]
             safe.append(item)
         payload = {"messages": safe}
-        for key in ("used", "calls", "rounds"):
+        for key in ("used", "calls", "rounds", "model_metrics"):
             if key in update:
                 payload[key] = update[key]
         with self.connect() as db:

@@ -94,3 +94,29 @@ def test_plugins_are_bound_with_corresponding_guidance(tmp_path, monkeypatch):
     assert "Chen2020" in after.prompt
     assert "pypsa_dispatch" not in after.names
     assert "plugin-install" not in after.names
+
+
+def test_prompt_prefix_is_stable_and_budget_notice_is_not_replayed():
+    class Model(ScriptedModel):
+        def __init__(self):
+            super().__init__()
+            self.requests = []
+
+        def bind_tools(self, tools):
+            self.tool_names = [tool.name for tool in tools]
+            return self
+
+        def invoke(self, messages):
+            self.requests.append(messages)
+            return super().invoke(messages)
+
+    model = Model()
+    result = build_agent(model, FakeSimulator(), budget=1).invoke(
+        {"messages": [HumanMessage(content="Compare faults")], "used": 0, "calls": 0, "rounds": 0})
+    assert len(model.requests) == 2
+    assert model.requests[0][0].content == model.requests[1][0].content
+    assert "budget: 1" in model.requests[0][-1].content
+    assert "budget: 0" in model.requests[1][-1].content
+    assert model.tool_names == sorted(model.tool_names)
+    assert not any("runtime budget notice" in message.content
+                   for message in result["messages"] if isinstance(message.content, str))

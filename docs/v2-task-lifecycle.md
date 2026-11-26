@@ -84,3 +84,16 @@ The repository allows direct reads of research-managed tasks, but mutations must
 This integrates the existing verified AC research path with the canonical lifecycle. Ordinary chat, CLI/TUI presentation and desktop IPC are not rewritten. The single-agent and multi-agent research benchmark variants still use their original planners; their deterministic execution and validation share the same lifecycle.
 
 Next: factor a common orchestration service for ordinary chat and research, introduce typed plan and evidence contracts, and migrate the default path incrementally. No roadmap gate is complete solely because this adapter exists.
+
+
+## Shared model runtime
+
+Configured OpenAI-compatible clients now use the synchronous ScheduledModel adapter. Tool-bound and structured-output calls share one scheduler and bounded concurrency. Set GRIDAGENT_MODEL_CONCURRENCY (default 1) and GRIDAGENT_MODEL_RPM (default 0, no local RPM restriction). These limits are per client, not global account quotas; the current runtime does not implement TPM reservation, cross-process scheduling or active-call cancellation.
+
+The SDK's automatic retries are disabled for configured clients. Explicit HTTP 429 responses alone may retry once. Retry-After is respected when it fits the admission deadline and delay cap; otherwise the original provider exception is returned. Missing Retry-After uses bounded jitter. Ambiguous network failures, authentication errors and parse failures are not retried automatically. Request timeout is still 60 seconds per provider attempt.
+
+The scheduler reports logical calls, provider attempts, retries, rate limits, queue and model timing, parse failures, provider-reported input/output tokens and cached input tokens. Unsupported usage/cache reports remain null, not invented zeros. Report counts indicate coverage. Structured outputs preserve the previous parsed result contract while observing the raw response's usage metadata. No prompts, credentials or provider response bodies are stored by telemetry.
+
+The chat graph binds tools in deterministic name order and fixes the system prefix and tool schemas for its lifetime. Dynamic budgets and final synthesis instructions are ephemeral context notices, not part of replayed user history. The final synthesis call deliberately removes tools; provider cache hits are not guaranteed. Chat events record cumulative client metrics; configured research adapters record cumulative client metrics at planning/repair checkpoints. These totals may span multiple tasks if a client is reused, and failures between checkpoints may not be persisted. Injected test/benchmark models that bypass the configured client factory retain their original behavior.
+
+This is a shared model-call layer, not yet a complete unified orchestration service. The ordinary conversation path is not a verified engineering task and is not marked as one. TPM accounting, durable per-task attribution, provider-wide scheduling, cancellation of in-flight model requests, and benchmarked latency/cost improvements remain future work.
