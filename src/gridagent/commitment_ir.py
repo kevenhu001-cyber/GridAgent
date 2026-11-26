@@ -1,5 +1,6 @@
-"""Unit-explicit single-area hourly commitment and storage optimization."""
+"""Unit-explicit hourly commitment, storage and optional DC network contracts."""
 
+import math
 from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
@@ -62,6 +63,62 @@ class CommitmentStorage(Contract):
         return self
 
 
+class CommitmentBus(Contract):
+    id: Identifier
+    demand_mw: tuple[Power, ...] = Field(min_length=1, max_length=24)
+
+
+class CommitmentLine(Contract):
+    """Positive flow is from_bus -> to_bus; lossless DC approximation."""
+
+    id: Identifier
+    from_bus: Identifier
+    to_bus: Identifier
+    susceptance_mw_per_rad: float = Field(ge=1e-3, le=1e8)
+    limit_mw: PositivePower
+    max_angle_difference_rad: float = Field(gt=0, le=0.5)
+
+
+class CommitmentNetwork(Contract):
+    schema_version: Literal[1] = 1
+    buses: tuple[CommitmentBus, ...] = Field(min_length=2, max_length=20)
+    lines: tuple[CommitmentLine, ...] = Field(min_length=1, max_length=40)
+    reference_bus: Identifier
+    angle_bound_rad: float = Field(gt=0, le=3.141592653589793)
+    unit_buses: dict[Identifier, Identifier]
+    storage_buses: dict[Identifier, Identifier] = Field(default_factory=dict)
+    reserve_requirement_mw: tuple[Power, ...] = Field(min_length=1, max_length=24)
+    reserve_response_minutes: float = Field(gt=0, le=60)
+    unit_reserve_capability_mw: dict[Identifier, Power]
+
+    @model_validator(mode="after")
+    def topology(self):
+        ids = [b.id for b in self.buses]
+        nodes = set(ids)
+        if len(nodes) != len(ids) or len({line.id for line in self.lines}) != len(self.lines):
+            raise ValueError("Duplicate network component ID")
+        if self.reference_bus not in nodes:
+            raise ValueError("Unknown reference bus")
+        neighbors = {key: set() for key in nodes}
+        for line in self.lines:
+            if line.from_bus not in nodes or line.to_bus not in nodes or line.from_bus == line.to_bus:
+                raise ValueError("Invalid network line endpoints")
+            neighbors[line.from_bus].add(line.to_bus)
+            neighbors[line.to_bus].add(line.from_bus)
+        visited = set()
+        stack = [self.reference_bus]
+        while stack:
+            node = stack.pop()
+            if node not in visited:
+                visited.add(node)
+                stack.extend(neighbors[node] - visited)
+        if visited != nodes:
+            raise ValueError("DC commitment currently requires a connected network")
+        if not (set(self.unit_buses.values()) | set(self.storage_buses.values())) <= nodes:
+            raise ValueError("Unknown equipment connection bus")
+        return self
+
+
 class UnitCommitment(Contract):
     schema_version: Literal[1] = 1
     family: Literal["unit_commitment"] = "unit_commitment"
@@ -70,6 +127,7 @@ class UnitCommitment(Contract):
     demand_mw: tuple[Power, ...] = Field(min_length=1, max_length=24)
     units: tuple[ThermalUnit, ...] = Field(min_length=1, max_length=12)
     storage: tuple[CommitmentStorage, ...] = Field(default=(), max_length=6)
+    network: CommitmentNetwork | None = None
     time_limit_s: int = Field(default=30, ge=1, le=120)
     node_limit: int = Field(default=10000, ge=1, le=100000)
 
@@ -81,9 +139,27 @@ class UnitCommitment(Contract):
         hours = len(self.demand_mw)
         # Exactly four variables per device/hour; the generic solver's limits
         # also bound generated constraint rows.
-        if hours * 4 * (len(self.units) + len(self.storage)) > 200:
-            raise ValueError("Commitment exceeds the mathematical variable budget")
+        variables = hours * 4 * (len(self.units) + len(self.storage))
         rows = hours * (8*len(self.units) + 3*len(self.storage) + 1) + len(self.storage)
+        if self.network is not None:
+            network = self.network
+            unit_ids = {u.id for u in self.units}
+            storage_ids = {b.id for b in self.storage}
+            if set(network.unit_buses) != unit_ids or set(network.storage_buses) != storage_ids:
+                raise ValueError("Network must map every unit and storage device exactly once")
+            if set(network.unit_reserve_capability_mw) != unit_ids:
+                raise ValueError("Declare reserve capability for every unit, including zero")
+            if any(network.unit_reserve_capability_mw[u.id] > u.maximum_mw for u in self.units):
+                raise ValueError("Reserve capability exceeds unit capacity")
+            if any(len(bus.demand_mw) != hours for bus in network.buses) or len(network.reserve_requirement_mw) != hours:
+                raise ValueError("Network profiles must match the commitment horizon")
+            for t, demand in enumerate(self.demand_mw):
+                if abs(math.fsum(bus.demand_mw[t] for bus in network.buses) - demand) > 1e-8:
+                    raise ValueError("Bus demands must sum to the specified system demand")
+            variables += hours * (len(network.buses) + len(network.lines) + len(self.units))
+            rows += hours * (len(network.buses) + 2*len(network.lines) + len(self.units))
+        if variables > 200:
+            raise ValueError("Commitment exceeds the mathematical variable budget")
         if rows > 500:
             raise ValueError("Commitment exceeds the mathematical constraint budget")
         return self
@@ -92,6 +168,11 @@ class UnitCommitment(Contract):
         data = self.model_dump(mode="json")
         for group in ("units", "storage"):
             data[group].sort(key=lambda row: row["id"])
+        if self.network is None:
+            data.pop("network")
+        else:
+            for group in ("buses", "lines"):
+                data["network"][group].sort(key=lambda row: row["id"])
         return data
 
     def sha256(self):

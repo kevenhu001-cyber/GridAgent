@@ -1,6 +1,6 @@
 """Structural routing for versioned mathematical problem families."""
 
-from .commitment_compiler import COMPILER, compile_commitment
+from .commitment_compiler import compile_commitment, compiler_for
 from .commitment_ir import UnitCommitment
 from .commitment_solver import solve_commitment, verify_commitment
 from .math_program_ir import MathematicalProgram
@@ -35,7 +35,7 @@ def reservation_for(spec):
     spec = parse_program(spec)
     reservation = {"program_sha256": spec.sha256(), "route": spec.route(), "time_limit_s": spec.time_limit_s}
     if isinstance(spec, UnitCommitment):
-        reservation.update(node_limit=spec.node_limit, compiler=COMPILER,
+        reservation.update(node_limit=spec.node_limit, compiler=compiler_for(spec),
                            compiled_program_sha256=compile_commitment(spec).sha256())
     elif isinstance(spec, NonlinearProgram):
         reservation.update(max_iterations=spec.max_iterations, max_evaluations=spec.max_evaluations)

@@ -1,9 +1,10 @@
-"""Independent physical checks of a decoded single-area commitment schedule."""
+"""Independent physical checks of a decoded commitment schedule."""
 
 import math
 
-from .commitment_compiler import COMPILER, compile_commitment, ordered, variable
+from .commitment_compiler import compile_commitment, compiler_for, ordered, variable
 from .commitment_ir import UnitCommitment
+from .commitment_network import network_checks
 from .math_program_solver import solve_program, verify_result
 
 TOL = 1e-6
@@ -12,7 +13,7 @@ TOL = 1e-6
 def solve_commitment(spec):
     spec = UnitCommitment.model_validate(spec)
     program = compile_commitment(spec)
-    return {**solve_program(program), "compiler": COMPILER, "compiled_program_sha256": program.sha256()}
+    return {**solve_program(program), "compiler": compiler_for(spec), "compiled_program_sha256": program.sha256()}
 
 
 def physical_checks(spec, values):
@@ -81,6 +82,8 @@ def physical_checks(spec, values):
 
     for t, error in enumerate(residual):
         check(f"balance:{t}", abs(error))
+    if spec.network is not None:
+        schedules["network"] = network_checks(spec, values, variable, check, schedules)
     return {"passed": all(row["passed"] for row in checks), "checks": checks,
             "total_cost": math.fsum(costs), "schedule": schedules,
             "power_balance_residual_mw": residual, "currency": spec.currency}
@@ -93,7 +96,7 @@ def verify_commitment(spec, result):
         if result.get("values") is not None or result.get("objective") is not None:
             raise ValueError("Invalid failed commitment result")
         return verify_result(program, result)
-    if (result.get("compiler") != COMPILER
+    if (result.get("compiler") != compiler_for(spec)
             or result.get("compiled_program_sha256") != program.sha256()):
         raise ValueError("Commitment result differs from compiled program")
     verdict = verify_result(program, result)
@@ -107,8 +110,9 @@ def verify_commitment(spec, result):
         verdict["primal"]["passed"] = physical["passed"]
         if not physical["passed"]:
             verdict["classification"] = "no_verified_candidate"
-    verdict["commitment"] = {"compiler": COMPILER, "source_sha256": spec.sha256(),
+    verdict["commitment"] = {"compiler": compiler_for(spec), "source_sha256": spec.sha256(),
                              "compiled_program_sha256": program.sha256(), "physical": physical,
-                             "network_model": "single_area_no_network_constraints",
+                             "network_model": ("lossless_dc_base_topology" if spec.network is not None
+                                               else "single_area_no_network_constraints"),
                              "horizon_boundary": "carry_remaining_minimum_state_obligations"}
     return verdict

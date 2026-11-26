@@ -1,9 +1,15 @@
 """Deterministic commitment lowering into the existing typed MILP."""
 
 from .commitment_ir import UnitCommitment
+from .commitment_network import add_network
 from .math_program_ir import MathematicalProgram
 
 COMPILER = "single-area-commitment-milp-v1"
+NETWORK_COMPILER = "dc-network-commitment-milp-v1"
+
+
+def compiler_for(spec):
+    return NETWORK_COMPILER if spec.network is not None else COMPILER
 
 
 def variable(prefix, index, hour, field):
@@ -88,12 +94,15 @@ def compile_commitment(spec):
         row(v(hours-1, "terminal"), {v(hours-1, "soc"): 1}, "MWh",
             lower=battery.terminal_mwh, upper=battery.terminal_mwh)
 
-    for t, demand in enumerate(spec.demand_mw):
-        balance = {variable("g", i, t, "p"): 1 for i in range(len(spec.units))}
-        for i in range(len(spec.storage)):
-            balance[variable("b", i, t, "charge")] = -1
-            balance[variable("b", i, t, "discharge")] = 1
-        row(f"balance-h{t:02}", balance, "MW", lower=demand, upper=demand)
+    if spec.network is not None:
+        add_network(spec, add_var, row, variable)
+    else:
+        for t, demand in enumerate(spec.demand_mw):
+            balance = {variable("g", i, t, "p"): 1 for i in range(len(spec.units))}
+            for i in range(len(spec.storage)):
+                balance[variable("b", i, t, "charge")] = -1
+                balance[variable("b", i, t, "discharge")] = 1
+            row(f"balance-h{t:02}", balance, "MW", lower=demand, upper=demand)
 
     return MathematicalProgram.model_validate({
         "description": spec.description, "variables": variables, "constraints": constraints,

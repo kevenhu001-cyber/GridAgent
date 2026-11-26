@@ -60,10 +60,16 @@ def study_summary(root: Path, identifier: str):
         commitment = verification.get("commitment")
         if commitment and commitment["physical"] is not None:
             schedule = commitment["physical"]["schedule"]
-            lines.append(f"Single-area commitment: {len(schedule['units'])} thermal units, "
+            model = "DC network" if "network" in schedule else "Single-area"
+            lines.append(f"{model} commitment: {len(schedule['units'])} thermal units, "
                          f"{len(schedule['storage'])} storage devices")
             lines.append(f"Physical schedule checks: {commitment['physical']['passed']}")
-            lines.append("Network flows and AC feasibility are not established")
+            if "network" in schedule:
+                lines.append(f"DC network: {len(schedule['network']['buses'])} buses, "
+                             f"{len(schedule['network']['lines'])} lines")
+                lines.append("System reserve checked; contingency deliverability and AC feasibility not established")
+            else:
+                lines.append("Network flows and AC feasibility are not established")
         advanced = verification.get("advanced_analysis")
         if advanced:
             lines.append(f"Verified baseline candidates: {advanced['baseline_feasible_starts']}")
