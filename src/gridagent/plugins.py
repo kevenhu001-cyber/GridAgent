@@ -1,5 +1,6 @@
 """First-party opt-in solver extensions. No executable third-party manifests."""
 import importlib.util
+from importlib.metadata import distributions
 import json
 import os
 import shutil
@@ -112,14 +113,12 @@ def install(plugin):
                                    env=clean_env(), cwd=stage, capture_output=True,
                                    text=True, encoding="utf-8", errors="replace", check=True, timeout=180)
             versions = json.loads(probe.stdout.splitlines()[-1])
-            from importlib.metadata import distributions
-
             resolved = sorted((d.metadata["Name"], d.version) for d in distributions(path=[str(target)]))
             (stage / "installed.json").write_text(json.dumps({
                 "plugin": plugin, "python": list(sys.version_info[:2]), "requirements": row["packages"],
                 "versions": versions, "resolved": resolved}, indent=2), encoding="utf-8")
             stage.rename(folder)
-        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        except (OSError, subprocess.SubprocessError, ValueError, IndexError, KeyError, TypeError) as exc:
             if (stage / "install.log").is_file():
                 shutil.copyfile(stage / "install.log", root / (plugin + "-last-install.log"))
             raise ValueError("Plugin install or import check failed; see local plugin install log") from exc

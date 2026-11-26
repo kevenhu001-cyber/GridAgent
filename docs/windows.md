@@ -57,3 +57,9 @@ third-party notice/source compliance review is still required before release.
 The portable distribution also stages pinned PowerAgentBench training assets and original
 solver/evaluator source at build time; it excludes held-out answer data. Commercial
 simulator profiles are optional and separate from the embedded open runtime.
+
+## Optional solver plugins
+
+The default package bundles ANDES, pandapower, Python Control, HiGHS and shared scientific libraries.
+PyPSA, OpenDSS and PyBaMM are installed through Simulation Plugins (internet required).
+The packaged interpreter is used for installation and subprocess execution; system Python is unnecessary.

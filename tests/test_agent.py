@@ -65,3 +65,32 @@ def test_general_agent_plan_and_scenario_budget(tmp_path):
     assert sim.requests[0][0] == "scenario_flow"
     assert result["used"] == 1
     assert json.loads(result["messages"][-2].content)["status"] == "denied"
+
+
+def test_plugins_are_bound_with_corresponding_guidance(tmp_path, monkeypatch):
+    from gridagent import plugins
+
+    class Model:
+        def bind_tools(self, tools):
+            self.names = {t.name for t in tools}
+            return self
+
+        def invoke(self, messages):
+            self.prompt = messages[0].content
+            return AIMessage(content="Done.")
+
+    monkeypatch.setenv("GRIDAGENT_PLUGIN_ROOT", str(tmp_path / "plugins"))
+    monkeypatch.setattr(plugins.importlib.util, "find_spec", lambda name: None)
+    before = Model()
+    build_agent(before, FakeSimulator(), workspace=tmp_path).invoke(
+        {"messages": [HumanMessage(content="test")], "used": 0, "calls": 0, "rounds": 0})
+    assert "battery_discharge" not in before.names
+    assert "Chen2020" not in before.prompt
+    monkeypatch.setattr(plugins.importlib.util, "find_spec", lambda name: object() if name == "pybamm" else None)
+    after = Model()
+    build_agent(after, FakeSimulator(), workspace=tmp_path).invoke(
+        {"messages": [HumanMessage(content="test")], "used": 0, "calls": 0, "rounds": 0})
+    assert "battery_discharge" in after.names
+    assert "Chen2020" in after.prompt
+    assert "pypsa_dispatch" not in after.names
+    assert "plugin-install" not in after.names

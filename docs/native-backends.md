@@ -4,7 +4,8 @@ GridAgent uses mature solver libraries rather than implementing electrical
 equations itself. ANDES remains the dynamic and small-signal backend.
 pandapower uses its native create_* API, element tables, runpp and calc_sc.
 PyPSA uses Network.add and Network.optimize with HiGHS. Install the engineering
-extra; Windows packages all three libraries and verifies them after relocation.
+extra for developer integration tests. Windows Core bundles ANDES and pandapower;
+PyPSA is an optional first-party plugin. See [plugins](plugins.md).
 
     gridagent --backends
     gridagent --native-program examples/pandapower-two-bus.json

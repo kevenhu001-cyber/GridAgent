@@ -124,7 +124,14 @@ original workbook. See [general agent](docs/general-agent.md) for boundaries.
 
 ## Native simulation libraries
 
-Install `.[engineering]` for ANDES, pandapower and PyPSA/HiGHS. The default
-Windows package now builds with all three. The normal agent can compose typed
+Install `.[core]` for the default ANDES/pandapower Windows runtime.
+The full developer extra `.[engineering]` includes PyPSA; production installs it on demand. The normal agent can compose typed
 native simulation programs and read result tables; `--native-program FILE.json`
 also runs them offline. See [native backends](docs/native-backends.md).
+
+### Simulation plugins
+
+Use the native **Simulation Plugins** window or `gridagent --plugins`,
+`gridagent --plugin-install pypsa`, `gridagent --plugin-remove pypsa`.
+Optional managed backends: PyPSA, OpenDSS, PyBaMM. Tools and curated prompts are
+bound on the next chat turn, without restarting the application. See [plugin design](docs/plugins.md).

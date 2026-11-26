@@ -47,6 +47,12 @@ jobs:
       - name: Build and verify portable Windows application
         shell: pwsh
         run: ./desktop/package-windows.ps1 -Output desktop-publish
+      - name: Verify optional plugin install, run and removal
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:SystemRoot\\System32;$env:SystemRoot"
+          & ./desktop-publish/runtime/python.exe -X utf8 ./desktop/smoke_plugins.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         with:
           name: GridAgent-Windows-x64

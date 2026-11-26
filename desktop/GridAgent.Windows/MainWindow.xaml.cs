@@ -11,6 +11,7 @@ public partial class MainWindow : Window
     private string? _session;
     private string? _boundWorkspace;
     private bool _busy;
+    private JsonElement _pluginCatalog;
     private sealed record Entry(string Id, string Label);
 
     public MainWindow()
@@ -76,6 +77,7 @@ public partial class MainWindow : Window
         var data = evt.GetProperty("data");
         switch (kind)
         {
+            case "plugins": _pluginCatalog = data.Clone(); break;
             case "session": _session = data.GetString(); break;
             case "sessions":
                 SessionList.ItemsSource = data.EnumerateArray().Select(x =>
@@ -177,7 +179,16 @@ public partial class MainWindow : Window
         if (picker.ShowDialog(this) == true) await Local("import-model", picker.FileName);
     }
     private async void Models(object sender, RoutedEventArgs e) => await Local("models");
-    private async void Backends(object sender, RoutedEventArgs e) => await Local("backends");
+    private async void PluginCenter(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        _pluginCatalog = default;
+        await Execute(new { action = "plugins" });
+        if (_pluginCatalog.ValueKind != JsonValueKind.Array) return;
+        var dialog = new PluginCenterWindow(_pluginCatalog) { Owner = this };
+        if (dialog.ShowDialog() == true && dialog.SelectedId != null && dialog.Command != null)
+            await Local(dialog.Command, dialog.SelectedId);
+    }
     private void ReviewScript(object sender, RoutedEventArgs e)
     {
         if (_busy) return;

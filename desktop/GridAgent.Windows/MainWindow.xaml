@@ -17,7 +17,7 @@
      <Button Content="Refresh workspace" Click="Refresh"/>
      <Button Content="Import ANDES model…" Click="ImportModel"/>
      <Button Content="Available models" Click="Models"/>
-     <Button Content="Simulation backends" Click="Backends"/>
+     <Button Content="Simulation Plugins…" Click="PluginCenter"/>
      <Button Content="Run simulation program…" Click="NativeProgram"/>
      <Button Content="Benchmark and repair…" Click="ModelRepair"/>
      <Button Content="Engineering experience" Click="Experience"/>

@@ -47,7 +47,11 @@ def dispatch(root, request, emit):
         emit("studies", list_studies(root / "studies"))
         emit("runs", list_runs(root))
 
-    if action == "refresh":
+    if action == "plugins":
+        from .plugins import status
+
+        emit("plugins", status())
+    elif action == "refresh":
         refresh()
     elif action == "new":
         emit("session", store.create_session())
