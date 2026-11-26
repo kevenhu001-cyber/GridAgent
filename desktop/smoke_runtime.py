@@ -8,8 +8,12 @@ from pathlib import Path
 
 import andes
 import numpy
+import pandapower
+import pypsa
+import highspy
 import scipy
 
+from gridagent.native_backends import run_program
 from gridagent.paper import asset, training_evidence
 from gridagent.simulator import AndesSimulator
 
@@ -22,7 +26,7 @@ def main():
     assert len(evidence) == 10 and total >= eligible > 0
     assert asset("cases/solar_wecc/psse/Solar.sav").is_file()
     assert not (root.parent / "benchmark-assets/benchmarks/dynamic/level2/test_memory.json").exists()
-    for module in (andes, numpy, scipy):
+    for module in (andes, numpy, scipy, pandapower, pypsa, highspy):
         assert Path(module.__file__).resolve().is_relative_to(root), module.__file__
     with tempfile.TemporaryDirectory(prefix="GridAgent smoke ") as temp:
         workspace = Path(temp)
@@ -40,6 +44,12 @@ def main():
         assert (workspace / "runs" / fault["run_id"] / "voltage.csv").is_file()
         eigen = simulator.run("eigen", {"case": "kundur"})
         assert eigen["status"] == "ok", eigen
+        pp = run_program(workspace, {"backend": "pandapower", "base": "case14"})
+        assert pp["status"] == "ok", pp
+        dispatch = run_program(workspace, {"backend": "pypsa", "hours": 2, "buses": [{"name": "b"}],
+            "loads": [{"name": "load", "bus": "b", "p_set_mw": [1, 2]}],
+            "generators": [{"name": "gen", "bus": "b", "p_nom_mw": 3, "marginal_cost": 20}]})
+        assert dispatch["status"] == "ok", dispatch
     print("Private interpreter, native dependencies, desktop bridge, fault and eigenanalysis: OK")
 
 

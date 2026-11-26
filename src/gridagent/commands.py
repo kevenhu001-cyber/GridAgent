@@ -8,7 +8,30 @@ from .workspace import list_runs, study_summary, waveform, waveform_text
 
 def workspace_command(root, command, args):
     root = Path(root)
-    if command == "import-knowledge" and len(args) == 1:
+    if command == "backends" and not args:
+        from .native_backends import available_backends
+
+        for row in available_backends():
+            yield f"{row['name']} · {'installed' if row['installed'] else 'not installed'}"
+    elif command == "native-program" and len(args) == 1:
+        import json
+
+        from .native_backends import ADAPTER, run_program
+
+        source = Path(args[0])
+        if source.stat().st_size > 1024 * 1024:
+            raise ValueError("Program file exceeds 1 MiB")
+        program = ADAPTER.validate_json(source.read_bytes())
+        result = run_program(root, program)
+        yield json.dumps(result, ensure_ascii=False, indent=2)
+    elif command == "native-table" and len(args) in (2, 3, 4):
+        import json
+
+        from .native_results import read_table
+
+        yield json.dumps(read_table(root, args[0], args[1], int(args[2]) if len(args)>2 else 0,
+                                    int(args[3]) if len(args)>3 else 20), ensure_ascii=False, indent=2)
+    elif command == "import-knowledge" and len(args) == 1:
         from .knowledge_store import import_pack
 
         identifier, count = import_pack(root, args[0])

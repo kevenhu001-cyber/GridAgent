@@ -113,6 +113,7 @@ Step = Annotated[Bus | Grid | Line | Load | Generator | StaticGenerator | Storag
 class PPProgram(Strict):
     backend: Literal["pandapower"] = "pandapower"
     base: Literal["empty", "case14", "case39", "case118"] = "empty"
+    parent_run: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
     steps: list[Step] = Field(default_factory=list, max_length=200)
     analysis: Literal["inspect", "power_flow", "short_circuit"] = "power_flow"
     fault_bus: Index | None = None

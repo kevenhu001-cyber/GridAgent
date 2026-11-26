@@ -60,6 +60,9 @@ def main():
     parser.add_argument("--wave", nargs="+", metavar="ID_OR_CHANNEL", help="View a saved run waveform")
     parser.add_argument("--study-wave", nargs="+", metavar="ID_PATH_CHANNEL", help="View a study waveform")
     parser.add_argument("--paper-dmq", metavar="PROFILE", help="Run original licensed DMQ")
+    parser.add_argument("--backends", action="store_true")
+    parser.add_argument("--native-program", type=Path, metavar="JSON")
+    parser.add_argument("--native-table", nargs="+", metavar="RUN_TABLE_PAGE")
     parser.add_argument("--import-knowledge", type=Path, metavar="JSON")
     parser.add_argument("--knowledge", action="store_true")
     parser.add_argument("--import-model", type=Path, metavar="XLSX")
@@ -74,6 +77,9 @@ def main():
     store = ResearchStore(args.workspace / "research.sqlite3")
     console = Console()
     local_commands = [
+        ("backends", [] if args.backends else None),
+        ("native-program", [str(args.native_program)] if args.native_program else None),
+        ("native-table", args.native_table),
         ("import-knowledge", [str(args.import_knowledge)] if args.import_knowledge else None),
         ("knowledge", [] if args.knowledge else None),
         ("import-model", [str(args.import_model)] if args.import_model else None),

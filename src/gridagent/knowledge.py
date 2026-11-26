@@ -11,6 +11,9 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field
 
 ALIASES = {
+    "pandapower_program": "pandapower create_bus create_line runpp calc_sc AC power flow short circuit 建模 潮流 短路 线路 变压器",
+    "pypsa_dispatch": "PyPSA Network add optimize HiGHS energy storage dispatch battery renewable 储能 调度 优化 新能源 电池",
+    "read_native_table": "result CSV table dispatch voltage SOC 结果 表格 电压 荷电状态",
     "inspect_case": "model topology bus network 模型 拓扑 母线 检查",
     "power_flow": "power flow load flow baseline 潮流 基准 电压",
     "scenario_power_flow": "load scaling outage contingency PQ loading 负荷 线路 退出 潮流",
@@ -35,6 +38,9 @@ OPTION_HINTS = {
     "run_id": "Full stored run identifier, not a filesystem path.",
 }
 DEPENDENCIES = {
+    "pandapower_program": ["list_simulation_backends"],
+    "pypsa_dispatch": ["list_simulation_backends"],
+    "read_native_table": ["pandapower_program", "pypsa_dispatch"],
     "simulate_fault": ["inspect_case"],
     "scenario_power_flow": ["inspect_case", "list_network_branches", "list_model_devices"],
     "network_path": ["inspect_case"],

@@ -177,6 +177,13 @@ public partial class MainWindow : Window
         if (picker.ShowDialog(this) == true) await Local("import-model", picker.FileName);
     }
     private async void Models(object sender, RoutedEventArgs e) => await Local("models");
+    private async void Backends(object sender, RoutedEventArgs e) => await Local("backends");
+    private async void NativeProgram(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        var picker = new OpenFileDialog { Filter = "Simulation program (*.json)|*.json", CheckFileExists = true };
+        if (picker.ShowDialog(this) == true) await Local("native-program", picker.FileName);
+    }
     private async void ImportKnowledge(object sender, RoutedEventArgs e)
     {
         if (_busy) return;

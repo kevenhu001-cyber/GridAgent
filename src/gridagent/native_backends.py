@@ -13,7 +13,8 @@ from uuid import uuid4
 
 from pydantic import TypeAdapter
 
-from .native_program import Program
+from .native_program import PPProgram, Program
+from .workspace import artifact_folder, load_object
 
 ADAPTER = TypeAdapter(Program)
 
@@ -26,6 +27,19 @@ def available_backends():
 def run_program(root, program, timeout_s=300):
     program = ADAPTER.validate_python(program)
     request = program.model_dump(mode="json")
+    parent = None
+    if isinstance(program, PPProgram) and program.parent_run:
+        prior = artifact_folder(Path(root), "runs", program.parent_run)
+        if load_object(prior / "result.json").get("backend") != "pandapower":
+            raise ValueError("Parent must be a pandapower run")
+        previous = PPProgram.model_validate(load_object(prior / "request.json"))
+        if previous.parent_run is not None:
+            raise ValueError("Parent program must have been flattened")
+        parent = program.parent_run
+        request["base"] = previous.base
+        request["steps"] = [*previous.model_dump(mode="json")["steps"], *request["steps"]]
+        request["parent_run"] = None
+        request = PPProgram.model_validate(request).model_dump(mode="json")
     folder = Path(root).resolve() / "runs" / uuid4().hex
     folder.mkdir(parents=True)
     (folder / "request.json").write_text(json.dumps(request, allow_nan=False), encoding="utf-8")
@@ -50,5 +64,7 @@ def run_program(root, program, timeout_s=300):
     except OSError:
         result["reason"] = "Native solver could not start"
     result["run_id"] = folder.name
+    if parent:
+        result["parent_run"] = parent
     result_path.write_text(json.dumps(result, allow_nan=False), encoding="utf-8")
     return result

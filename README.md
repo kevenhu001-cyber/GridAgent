@@ -121,3 +121,10 @@ research question in chat. The Windows file picker and TUI share the registry.
 General chat can also compare hypothetical steady-state scenarios with bounded
 uniform PQ load scaling and one in-service branch outage, without modifying the
 original workbook. See [general agent](docs/general-agent.md) for boundaries.
+
+## Native simulation libraries
+
+Install `.[engineering]` for ANDES, pandapower and PyPSA/HiGHS. The default
+Windows package now builds with all three. The normal agent can compose typed
+native simulation programs and read result tables; `--native-program FILE.json`
+also runs them offline. See [native backends](docs/native-backends.md).

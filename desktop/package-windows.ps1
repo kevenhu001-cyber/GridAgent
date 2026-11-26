@@ -31,7 +31,7 @@ New-Item -ItemType Directory -Force $Packages | Out-Null
 # A normal wheel installation preserves ANDES packaged cases and native DLLs.
 Push-Location $Repo
 try {
-    Invoke-Checked $Python @("-m", "pip", "install", "--disable-pip-version-check", "--target", $Packages, ".[andes]")
+    Invoke-Checked $Python @("-m", "pip", "install", "--disable-pip-version-check", "--target", $Packages, ".[engineering]")
 } finally { Pop-Location }
 # A private path file isolates imports from system Python, registry and user site.
 @(".", "DLLs", "Lib", "Lib/site-packages", "import site") | Set-Content -Encoding ascii (Join-Path $Runtime "python311._pth")
