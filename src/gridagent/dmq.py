@@ -15,15 +15,19 @@ Gain = Annotated[float, Field(ge=0.05, le=100, allow_inf_nan=False)]
 
 class Gains(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    kqp: Gain = 10
-    kqi: Gain = 50
-    kvp: Gain = 10
-    kvi: Gain = 50
+    kqp: Gain
+    kqi: Gain
+    kvp: Gain
+    kvi: Gain
+
+
+def initial_gains():
+    return Gains(kqp=10, kqi=50, kvp=10, kvi=50)
 
 
 class Manifest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    initial: Gains = Field(default_factory=Gains)
+    initial: Gains = Field(default_factory=initial_gains)
     max_iterations: int = Field(default=5, ge=1, le=5)
 
 
@@ -129,9 +133,19 @@ def llm_proposer(model):
     return propose
 
 
-def study_updates(workspace, model, manifest=None):
+def reference_proposer(_observation):
+    # Fixed deterministic comparison, not an LLM or an optimization claim.
+    return Proposal(gains=Gains(kqp=1, kqi=0.5, kvp=1, kvi=0.5),
+                    rationale="Fixed reference controller for the synthetic benchmark")
+
+
+def study_updates(workspace, model=None, manifest=None, reference=False):
     study = Study(Path(workspace) / "studies")
-    graph = build_dmq(manifest or Manifest(), llm_proposer(model), study)
+    if not reference and model is None:
+        raise ValueError("DMQ requires a configured model or explicit reference mode")
+    policy = reference_proposer if reference else llm_proposer(model)
+    study.write("policy", {"type": "fixed_reference" if reference else "llm"})
+    graph = build_dmq(manifest or Manifest(), policy, study)
     yield "study", {"id": study.id}
     for event in graph.stream({}, stream_mode="updates"):
         yield from event.items()

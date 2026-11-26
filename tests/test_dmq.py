@@ -1,10 +1,13 @@
-from gridagent.dmq import Gains, Manifest, build_dmq
+import pytest
+from pydantic import ValidationError
+
+from gridagent.dmq import Gains, Manifest, Proposal, build_dmq, initial_gains
 from gridagent.dmq_model import run_suite
 from gridagent.dsr import Study
 
 
 def test_numerical_suite_has_repairable_case(tmp_path):
-    initial = run_suite(Gains().model_dump(), tmp_path / "initial")
+    initial = run_suite(initial_gains().model_dump(), tmp_path / "initial")
     repaired = run_suite(Gains(kqp=1, kqi=0.5, kvp=1, kvi=0.5).model_dump(), tmp_path / "fixed")
     assert len(initial) == len(repaired) == 8
     assert not all(t["passed"] for t in initial)
@@ -31,5 +34,10 @@ def test_rejects_unlisted_parameter_and_enforces_budget(tmp_path):
     result = build_dmq(Manifest(max_iterations=2), propose, study).invoke({})
     assert result["report"]["attempts"] == 2
     assert result["report"]["accepted_edits"] == 0
-    assert result["report"]["final_gains"] == Gains().model_dump()
+    assert result["report"]["final_gains"] == initial_gains().model_dump()
     assert not (study.path / "iteration-1.json").exists()
+
+
+def test_proposal_requires_all_four_gains():
+    with pytest.raises(ValidationError):
+        Proposal.model_validate({"gains": {"kqp": 1}, "rationale": "partial"})

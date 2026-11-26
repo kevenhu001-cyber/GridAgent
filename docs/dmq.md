@@ -39,3 +39,12 @@ A PSS/E/DMView adapter still requires the actual case, model identity and
 field mapping, original eight test configurations, licensed PSS/E, and an
 independent evaluator. Do not report results from this surrogate as a
 reproduction of the WECC case.
+
+## Deterministic comparison
+
+    gridagent --dmq-reference
+
+This mode requires no LLM credentials. It applies one fixed reference gain
+set after observing a failed baseline, and uses the identical numerical
+suite and constraints. It is a smoke test and comparison baseline, not an
+Agent success result. The policy type is recorded in policy.json.

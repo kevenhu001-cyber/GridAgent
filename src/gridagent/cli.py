@@ -40,6 +40,7 @@ def main():
     parser.add_argument("--workspace", type=Path, default=Path(".gridagent"))
     parser.add_argument("--session", help="Reopen a session using its full ID")
     parser.add_argument("--sessions", action="store_true", help="List local sessions without an API key")
+    parser.add_argument("--dmq-reference", action="store_true", help="Run deterministic DMQ reference without API key")
     parser.add_argument("--dmq", action="store_true", help="Run the open Q/V model quality study")
     parser.add_argument("--dsr", type=Path, help="Run a bounded DSR candidate manifest")
     parser.add_argument("--memory", type=Path, help="Use a fixed DSR history snapshot")
@@ -49,6 +50,12 @@ def main():
     args = parser.parse_args()
     store = ResearchStore(args.workspace / "research.sqlite3")
     console = Console()
+    if args.dmq_reference:
+        from .dmq import format_update, study_updates
+
+        for node, value in study_updates(args.workspace, reference=True):
+            console.print(format_update(node, value), markup=False)
+        return
     if args.snapshot_memory:
         from .dsr import save_memory_snapshot
         n = save_memory_snapshot(args.workspace / "runs", args.snapshot_memory)
