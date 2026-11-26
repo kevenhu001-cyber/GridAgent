@@ -49,6 +49,14 @@ def study_summary(root: Path, identifier: str):
     lines = [f"Study {identifier}", f"Protocol: {manifest.get('protocol', 'unknown')}"]
     if report is None:
         lines.append("Unfinished · partial artifacts preserved")
+    elif report.get("phase") == "mathematical_program_finished":
+        verification = report["verification"]
+        lines.append(f"Mathematical program · {verification['classification']}")
+        lines.append(f"Solver: {report['solver_result']['route']} · {report['solver_result']['status']}")
+        if verification["primal"]["passed"]:
+            lines.append(f"Verified objective: {verification['primal']['objective']:.6g} {report['objective_unit']}")
+        if not verification["optimality_independently_checked"]:
+            lines.append("Independent optimality not established")
     elif report.get("phase") == "optimization_finished":
         lines.append(f"AC optimization · {report['termination']}")
         lines.append(f"Reserved runs: {report['reserved_solver_runs']}/{report['budget']}")

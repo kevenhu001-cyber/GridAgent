@@ -202,6 +202,28 @@ def workspace_command(root, command, args, *, model_factory=None):
         from .paper import model_estimator, paper_rank
 
         yield from paper_rank(root, model_estimator(create_model()))
+    elif command in {"math-program", "math-resume"} and len(args) == 1:
+        import json
+
+        from filelock import Timeout
+
+        from .math_program_ir import MathematicalProgram
+        from .math_program_tasks import resume_program, start_program
+
+        if command == "math-program":
+            with Path(args[0]).open("rb") as handle:
+                payload = handle.read(1024 * 1024 + 1)
+            if len(payload) > 1024 * 1024:
+                raise ValueError("Mathematical program exceeds 1 MiB")
+            identifier = start_program(root, MathematicalProgram.model_validate_json(payload))
+            yield "Mathematical program study: " + identifier
+        else:
+            identifier = args[0]
+        try:
+            report = resume_program(root, identifier)
+        except Timeout as exc:
+            raise ValueError("Mathematical program is already running") from exc
+        yield json.dumps(report, ensure_ascii=False, allow_nan=False)
     elif command in {"optimize-ir", "optimize-resume"} and len(args) == 1:
         import json
 
