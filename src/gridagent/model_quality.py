@@ -61,6 +61,8 @@ def dispatch_checks(folder, request):
     frames = {name: table(folder, name) for name in
               ("generation_mw", "load_mw", "storage_soc_mwh", "storage_charge_mw",
                "storage_discharge_mw", "link_mw", "link_destination_mw")}
+    if request.get("lines"):
+        frames.update({name: table(folder, name) for name in ("line_mw", "line_destination_mw")})
     aligned = all(len(f)==hours and finite(f) and f.index.equals(frames["generation_mw"].index)
                   for f in frames.values())
     result = [check("complete_hourly_results", aligned, hours, "Finite aligned hourly results")]
@@ -99,6 +101,12 @@ def dispatch_checks(folder, request):
         residual[item["bus1"]] -= p1
         violation = max(violation, float(np.max(-p0)), float(np.max(p0-item["p_nom_mw"])),
                         float(np.max(np.abs(p1+p0*item["efficiency"]))))
+    for item in request.get("lines", []):
+        p0 = frames["line_mw"][item["name"]].to_numpy()
+        p1 = frames["line_destination_mw"][item["name"]].to_numpy()
+        residual[item["bus0"]] -= p0
+        residual[item["bus1"]] -= p1
+        violation = max(violation, float(np.max(np.abs(p0)-item["s_nom_mva"])), float(np.max(np.abs(p0+p1))))
     balance = max(float(np.max(np.abs(v))) for v in residual.values())
     scale = max(1.0, sum(max(x["p_set_mw"]) for x in request["loads"]),
                 sum(x["p_nom_mw"] for x in request["generators"]))

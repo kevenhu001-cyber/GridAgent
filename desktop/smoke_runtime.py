@@ -18,6 +18,8 @@ import scipy
 from gridagent.extension_runner import run_extension
 from gridagent.native_backends import run_program
 from gridagent.paper import asset, training_evidence
+from gridagent.research import ResearchTasks
+from gridagent.research_spec import ResearchManifest
 from gridagent.simulator import AndesSimulator
 
 
@@ -49,13 +51,19 @@ def main():
         assert eigen["status"] == "ok", eigen
         pp = run_program(workspace, {"backend": "pandapower", "base": "case14"})
         assert pp["status"] == "ok", pp
+        example = root.parent / "examples" / "power-flow-research.json"
+        specification = ResearchManifest.model_validate_json(example.read_bytes())
+        tasks = ResearchTasks(workspace)
+        task_id = tasks.start(specification.objective, manifest=specification)
+        task = list(tasks.resume(task_id))[-1]
+        assert task["stage"] == "passed" and task["runs_used"] == 2, task
         response = run_extension(workspace, "control", {"numerator": [1], "denominator": [1, 1], "duration_s": 5})
         assert response["status"] == "ok", response
         assert abs(response["metrics"]["final_sample"] - (1-__import__("math").exp(-5))) < 1e-6
         import importlib.util
         assert importlib.util.find_spec("pypsa") is None, "PyPSA must not ship in Core"
         assert importlib.util.find_spec("pip") is not None
-    print("Private interpreter, native dependencies, desktop bridge, fault and eigenanalysis: OK")
+    print("Private interpreter, native dependencies, desktop bridge and verified AC research: OK")
 
 
 if __name__ == "__main__":

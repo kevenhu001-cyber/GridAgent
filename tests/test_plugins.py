@@ -1,4 +1,5 @@
 import json
+import subprocess
 import sys
 
 import pytest
@@ -29,3 +30,37 @@ def test_no_provider_secrets(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "secret")
     assert "GRIDAGENT_API_KEY" not in plugins.clean_env()
     assert "OPENAI_API_KEY" not in plugins.clean_env()
+
+
+def test_plugin_probe_precedes_switch_and_rollback(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setenv("GRIDAGENT_PLUGIN_ROOT", str(tmp_path))
+    resolved = ["3.2"]
+    probe_fails = [False]
+
+    def run(args, **kwargs):
+        if "--target" in args:
+            (kwargs["cwd"] / "packages").mkdir()
+            return SimpleNamespace(stdout="")
+        if probe_fails[0]:
+            raise subprocess.CalledProcessError(1, args)
+        return SimpleNamespace(stdout=json.dumps({"rainflow": resolved[0]}))
+
+    monkeypatch.setattr(plugins.subprocess, "run", run)
+    monkeypatch.setattr(plugins, "distributions", lambda **_: [
+        SimpleNamespace(metadata={"Name": "rainflow"}, version=resolved[0])])
+    plugins.install("rainflow")
+    first = plugins.installed_target("rainflow")
+    resolved[0] = "3.3"
+    probe_fails[0] = True
+    with pytest.raises(ValueError, match="install or import check failed"):
+        plugins.install("rainflow", update=True)
+    assert plugins.installed_target("rainflow") == first
+    probe_fails[0] = False
+    plugins.install("rainflow", update=True)
+    assert plugins.installed_metadata("rainflow")["versions"] == {"rainflow": "3.3"}
+    assert plugins.installed_target("rainflow") != first
+    plugins.rollback("rainflow")
+    assert plugins.installed_target("rainflow") == first
+    assert plugins.installed_metadata("rainflow")["versions"] == {"rainflow": "3.2"}

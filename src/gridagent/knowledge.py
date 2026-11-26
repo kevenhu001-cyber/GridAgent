@@ -4,8 +4,11 @@ Inspired by Jia, Cui and Hug, IEEE TSG 2025, DOI 10.1109/TSG.2025.3589114.
 Independent implementation; no upstream supplemental material is redistributed.
 """
 import json
+import os
 import re
 import sqlite3
+from functools import lru_cache
+from pathlib import Path
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -116,6 +119,39 @@ def search_text(row):
                      ALIASES.get(row["function"], ""), json.dumps(row.get("schema", {}), ensure_ascii=False)])
 
 
+@lru_cache(maxsize=2)
+def embedding_model(path):
+    from sentence_transformers import SentenceTransformer
+
+    return SentenceTransformer(path, device="cpu", local_files_only=True, trust_remote_code=False)
+
+
+@lru_cache(maxsize=8)
+def reference_vectors(path, texts):
+    return embedding_model(path).encode(["passage: " + text for text in texts], normalize_embeddings=True)
+
+
+def semantic_ranks(query, rows, limit):
+    raw = os.getenv("GRIDAGENT_EMBEDDINGS_PATH")
+    if not raw or not Path(raw).is_dir():
+        return []
+    path = str(Path(raw).resolve())
+    try:
+        texts = tuple(search_text(row) for row in rows)
+        vectors = reference_vectors(path, texts)
+        embedding = embedding_model(path).encode(["query: " + query], normalize_embeddings=True)[0]
+    except (ImportError, OSError, ValueError, RuntimeError):
+        return []
+    return [rows[index]["id"] for index in sorted(range(len(rows)), key=lambda n: -float(vectors[n] @ embedding))[:limit]]
+
+
+def workspace_knowledge(root, contracts=()):
+    from .knowledge_store import reference_rows
+    from .official_knowledge import official_rows
+
+    return KnowledgeIndex([*contracts, *official_rows(), *(reference_rows(root) if root is not None else [])])
+
+
 class KnowledgeIndex:
     def __init__(self, rows):
         self.rows = {row["id"]: row for row in rows}
@@ -127,9 +163,11 @@ class KnowledgeIndex:
             return []
         exact = [row for row in candidates if query.casefold() in {
             row["id"].casefold(), (row.get("option") or "").casefold()}]
+        semantic = semantic_ranks(query, candidates, 12) if kind == "reference" else []
+        lexical_limit = max(12, limit) if semantic else limit
         words = tokens(query)
         if not words:
-            return exact[:limit]
+            return [self.rows[key] for key in dict.fromkeys([r["id"] for r in exact] + semantic)][:limit]
         with sqlite3.connect(":memory:") as db:
             try:
                 db.execute("CREATE VIRTUAL TABLE docs USING fts5(id UNINDEXED, terms)")
@@ -137,12 +175,18 @@ class KnowledgeIndex:
                                [(r["id"], " ".join(tokens(search_text(r)))) for r in candidates])
                 expr = " OR ".join('"' + word + '"' for word in words)
                 ids = [r[0] for r in db.execute(
-                    "SELECT id FROM docs WHERE docs MATCH ? ORDER BY bm25(docs), id LIMIT ?", (expr, limit))]
+                    "SELECT id FROM docs WHERE docs MATCH ? ORDER BY bm25(docs), id LIMIT ?", (expr, lexical_limit))]
             except sqlite3.OperationalError:
                 # Standard-library fallback for Python builds without FTS5.
                 query_words = set(words)
                 ranks = [(len(query_words & set(tokens(search_text(row)))), row["id"]) for row in candidates]
-                ids = [key for score, key in sorted(ranks, key=lambda x: (-x[0], x[1])) if score][:limit]
+                ids = [key for score, key in sorted(ranks, key=lambda x: (-x[0], x[1])) if score][:lexical_limit]
+        if semantic:
+            scores = {}
+            for ranking in (ids, semantic):
+                for position, key in enumerate(ranking, 1):
+                    scores[key] = scores.get(key, 0) + 1/(60+position)
+            ids = sorted(scores, key=lambda key: (-scores[key], key))
         return [self.rows[key] for key in dict.fromkeys([r["id"] for r in exact] + ids)][:limit]
 
     def retrieve(self, plan):
@@ -168,7 +212,8 @@ class KnowledgeIndex:
                 if name in self.rows:
                     dependencies[name] = self.rows[name]["description"]
         return {"functions": list(functions.values())[:12], "options": list(options.values())[:18],
-                "dependencies": dependencies, "references": list(references.values())[:6], "method": "separate function/option lexical retrieval",
+                "dependencies": dependencies, "references": list(references.values())[:6],
+                "method": "lexical and dependency retrieval; optional local semantic ranking for references",
                 "note": "Contracts are authoritative for syntax; requested values are not validated by retrieval."}
 
     def feedback(self, name, fields):

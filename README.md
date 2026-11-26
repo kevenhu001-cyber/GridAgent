@@ -64,6 +64,28 @@ the original WECC/DMView benchmark.
 
 See [workspace commands](docs/workspace.md) for TUI and offline result inspection.
 
+## Verified research tasks
+
+In Windows, expand **Workspace and model settings** to save a model name and
+OpenAI-compatible base URL and test the connection. The key stays in the running
+application session. In the TUI, type `/model` or press `Ctrl+P`, including when
+starting offline.
+
+```text
+gridagent --research "Check AC bus voltages for the IEEE14 base case and a 10% load increase"
+gridagent --research-manifest examples/power-flow-research.json
+gridagent --research-tasks
+gridagent --research-resume TASK_ID
+gridagent --research-report TASK_ID report.json
+```
+
+The Windows **Run research task** button and TUI `/research` command use the same
+engine. Choose **Run with multiple agents**, `/research-multi`, or
+`--research-mode multi` for the specialist workflow. The Tasks view can resume,
+cancel, submit clarifications, approve proposed repair ranges and export JSON.
+See [verified workflow and experiments](docs/research-tasks.md) for the model
+contract, references, sandbox, external runtimes and public benchmarks.
+
 ## Native Windows desktop
 
 GridAgent also has a native WPF/.NET 10 client (no Web UI, Electron or browser
@@ -80,7 +102,7 @@ Native Windows WPF / Textual TUI / CLI → LangGraph decision loop → validated
 - Tool calls are executed sequentially. Attempted power flow and fault simulations consume budget.
 - Each run stores solver logs and result files under .gridagent/runs.
 - Solver non-convergence is not evidence of physical instability. The normalized voltage metric is a proxy, not the full paper evaluator.
-- TUI and CLI persist local sessions, tasks and audit events in SQLite. DSR stage recovery is supported; general checkpoint recovery remains planned.
+- SQLite retains local sessions, task attempts and audit events. DSR and verified AC research tasks can resume from their saved stages.
 
 ## Roadmap
 

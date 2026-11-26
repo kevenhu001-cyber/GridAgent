@@ -25,6 +25,7 @@ internal sealed class PluginCenterWindow : Window
             var managed = item.GetProperty("managed").GetBoolean();
             var requirements = string.Join(", ", item.GetProperty("requirements").EnumerateArray().Select(x => x.GetString()));
             var tools = string.Join(", ", item.GetProperty("tools").EnumerateArray().Select(x => x.GetString()));
+            var versions = string.Join(", ", item.GetProperty("versions").EnumerateObject().Select(x => x.Name + " " + x.Value.GetString()));
             var panel = new DockPanel { Margin = new Thickness(0, 0, 0, 16) };
             var button = new Button { Content = managed ? "Uninstall" : installed ? "Available" : "Install",
                                       IsEnabled = managed || !installed, MinWidth = 90, Margin = new Thickness(10, 0, 0, 0) };
@@ -39,7 +40,26 @@ internal sealed class PluginCenterWindow : Window
             var details = new StackPanel();
             details.Children.Add(new TextBlock { Text = title, FontWeight = FontWeights.SemiBold });
             details.Children.Add(new TextBlock { Text = (installed ? "Available" : "Not installed") + " · " + tools, TextWrapping = TextWrapping.Wrap });
+            if (versions.Length > 0) details.Children.Add(new TextBlock { Text = versions, TextWrapping = TextWrapping.Wrap });
             details.Children.Add(new TextBlock { Text = requirements, TextWrapping = TextWrapping.Wrap, FontSize = 11, Margin = new Thickness(0, 3, 0, 0) });
+            if (managed && installed)
+            {
+                var actions = new WrapPanel();
+                foreach (var (label, command, enabled) in new[] {
+                    ("Check update", "plugin-check", true), ("Update", "plugin-update", true),
+                    ("Rollback", "plugin-rollback", item.GetProperty("rollback_available").GetBoolean()) })
+                {
+                    var action = new Button { Content = label, IsEnabled = enabled };
+                    action.Click += (_, _) =>
+                    {
+                        if (command == "plugin-update" && MessageBox.Show(this, "Download and probe an updated plugin from PyPI?",
+                            "Update plugin", MessageBoxButton.OKCancel) != MessageBoxResult.OK) return;
+                        SelectedId = id; Command = command; DialogResult = true;
+                    };
+                    actions.Children.Add(action);
+                }
+                details.Children.Add(actions);
+            }
             panel.Children.Add(details); stack.Children.Add(panel);
         }
         Content = new ScrollViewer { Content = stack, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };

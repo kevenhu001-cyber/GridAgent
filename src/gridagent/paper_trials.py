@@ -63,9 +63,12 @@ def run_trials(root, task, factory, count=10, model_id="unspecified"):
         yield f"Batch {batch.id} · {summary['outcome_count']}/{count} {success} · median {summary['median_elapsed_all_s']:.1f} s"
 
 
-def configured_trials(root, task, count, profile=None):
+def configured_trials(root, task, count, profile=None, *, model_factory=None):
     from .agent import model_from_env
     from .paper import model_estimator, paper_rank
+
+    def create_model():
+        return model_factory() if model_factory else model_from_env(root)
 
     if task != "rank" and not profile:
         raise ValueError("Licensed trials require an explicit dedicated simulator profile")
@@ -74,19 +77,19 @@ def configured_trials(root, task, count, profile=None):
 
         runner = profile_runner(profile)
         def factory(workspace):
-            return original_dmq(workspace, model_proposer(model_from_env()), runner)
+            return original_dmq(workspace, model_proposer(create_model()), runner)
     elif task in {"dsr", "mitigate"}:
         from .paper_dsr import mitigation_runner, profile_runner
         from .paper_mitigation import model_proposer
 
         runner, budget = mitigation_runner(profile) if task == "mitigate" else (profile_runner(profile), 0)
         def factory(workspace):
-            model = model_from_env()
+            model = create_model()
             return paper_rank(workspace, model_estimator(model), runner,
                               model_proposer(model) if task == "mitigate" else None, budget)
     elif task == "rank":
         def factory(workspace):
-            return paper_rank(workspace, model_estimator(model_from_env()))
+            return paper_rank(workspace, model_estimator(create_model()))
     else:
         raise ValueError("Unknown trial type")
     yield from run_trials(root, task, factory, count, os.getenv("GRIDAGENT_MODEL", "unspecified"))

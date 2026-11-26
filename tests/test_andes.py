@@ -4,6 +4,22 @@ from gridagent.simulator import AndesSimulator
 
 
 @pytest.mark.integration
+def test_governor_eigen_batch_pins_model_and_setting(tmp_path):
+    pytest.importorskip("andes")
+    from gridagent.andes_batch import verdict
+    from gridagent.scientific_charts import chart_data
+
+    simulator = AndesSimulator(tmp_path / "runs")
+    case = {"case": "kundur", "governor": {"device": "1", "parameter": "R", "value": 0.08}}
+    result = simulator.run("governor_eigen", case)
+    assert result["status"] == "ok", result
+    assert result["governor_change"]["value"] == 0.08
+    assert result["model_sha256"]
+    assert verdict(tmp_path, "governor_eigen", result)[0]["id"] == "no_growing_small_signal_modes"
+    assert chart_data(tmp_path, result["run_id"])[0]["scatter"]
+
+
+@pytest.mark.integration
 def test_real_andes_fault(tmp_path):
     pytest.importorskip("andes")
     sim = AndesSimulator(tmp_path, timeout_s=300)

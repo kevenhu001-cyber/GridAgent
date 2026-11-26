@@ -6,18 +6,41 @@ from .sweep import SweepRequest, format_update, sweep_updates
 from .workspace import list_runs, study_summary, waveform, waveform_text
 
 
-def workspace_command(root, command, args):
+def workspace_command(root, command, args, *, model_factory=None):
+    from .agent import model_from_env
+
     root = Path(root)
-    if command == "plugins" and not args:
+    def create_model(*, settings=None):
+        return model_factory(settings=settings) if model_factory else model_from_env(root, settings=settings)
+
+    if command == "research" or command.startswith("research-"):
+        from .research import format_status, task_command
+
+        for row in task_command(root, command, args, model_factory=create_model):
+            yield format_status(row) if isinstance(row, dict) else row
+    elif command == "plugins" and not args:
         from .plugins import status
 
         for row in status():
-            yield f"{row['id']} · {row['title']} · {'installed' if row['installed'] else 'not installed'}"
+            versions = ", ".join(f"{name} {version}" for name, version in row["versions"].items())
+            yield f"{row['id']} · {row['title']} · {'installed' if row['installed'] else 'not installed'} {versions}"
     elif command in {"plugin-install", "plugin-remove"} and len(args) == 1:
         from .plugins import install, uninstall
 
         yield f"{command} · {args[0]} · started"
         yield (install if command == "plugin-install" else uninstall)(args[0])
+    elif command in {"plugin-check", "plugin-update", "plugin-rollback"} and len(args) == 1:
+        from .plugins import install, rollback, updates
+
+        plugin = args[0]
+        if command == "plugin-check":
+            changes = updates(plugin)
+            yield ("\n".join(f"{name} · {row['installed']} → {row['available']}" for name, row in changes.items())
+                   if changes else "The plugin is at the currently resolved versions")
+        elif command == "plugin-update":
+            yield install(plugin, update=True)
+        else:
+            yield rollback(plugin)
     elif command == "experience" and not args:
         from .experience import list_experience
 
@@ -28,13 +51,11 @@ def workspace_command(root, command, args):
             changes = ", ".join(f"{c['component']}.{c['parameter']} {c['direction']}" for c in row["changes"])
             yield f"{row['backend']} · {row['study_id']} · {', '.join(row['failed_checks'])} · {changes}"
     elif command == "modeling-benchmark" and len(args) == 1:
-        from .agent import model_from_env
         from .modeling_benchmark import benchmark_updates, model_candidate
 
-        for row in benchmark_updates(root, args[0], model_candidate(model_from_env(), args[0])):
+        for row in benchmark_updates(root, args[0], model_candidate(create_model(), args[0])):
             yield row
     elif command == "model-repair" and len(args) == 1:
-        from .agent import model_from_env
         from .model_repair import Manifest, model_proposer, repair_updates
         from .model_repair import format_update as format_repair
 
@@ -42,18 +63,43 @@ def workspace_command(root, command, args):
         if source.stat().st_size > 1024 * 1024:
             raise ValueError("Manifest exceeds 1 MiB")
         manifest = Manifest.model_validate_json(source.read_bytes())
-        for row in repair_updates(root, manifest, model_proposer(model_from_env())):
+        for row in repair_updates(root, manifest, model_proposer(create_model())):
             yield format_repair(row)
     elif command == "drafts" and not args:
         from .script_drafts import list_drafts
 
         for row in list_drafts(root):
             yield f"{row['title']} · {row['id']} · {row['status']}"
+    elif command == "register-ngspice" and len(args) == 1:
+        import subprocess
+
+        from .external_runtime import register_ngspice
+
+        try:
+            info = register_ngspice(root, args[0])
+        except subprocess.SubprocessError as exc:
+            raise ValueError("ngspice version probe failed") from exc
+        yield f"Registered ngspice {info['version']}"
+    elif command == "ngspice-rc" and len(args) == 3:
+        import json
+
+        from .external_runtime import run_rc
+
+        summary = run_rc(root, {"analysis": args[0], "resistance_ohm": args[1], "capacitance_f": args[2]})
+        yield json.dumps(summary, ensure_ascii=False)
+    elif command == "andes-batch" and len(args) == 1:
+        from .andes_batch import AndesBatch, run_batch
+
+        source = Path(args[0])
+        if source.stat().st_size > 1024 * 1024:
+            raise ValueError("ANDES batch exceeds 1 MiB")
+        yield from run_batch(root, AndesBatch.model_validate_json(source.read_bytes()))
     elif command == "backends" and not args:
         from .native_backends import available_backends
 
-        for row in available_backends():
-            yield f"{row['name']} · {'installed' if row['installed'] else 'not installed'}"
+        for row in available_backends(root):
+            details = row["version"] or ("available" if row["installed"] else "unavailable")
+            yield f"{row['name']} · {details} · {row['capabilities']}"
     elif command == "native-program" and len(args) == 1:
         import json
 
@@ -95,7 +141,8 @@ def workspace_command(root, command, args):
     elif command == "paper-trials" and 2 <= len(args) <= 3:
         from .paper_trials import configured_trials
 
-        yield from configured_trials(root, args[0], int(args[1]), args[2] if len(args) == 3 else None)
+        yield from configured_trials(root, args[0], int(args[1]), args[2] if len(args) == 3 else None,
+                                     model_factory=create_model)
     elif command == "paper-kpi" and len(args) == 2:
         import json
 
@@ -108,30 +155,26 @@ def workspace_command(root, command, args):
         identifier, report = edit_original_model(root, dict(zip(("Kqp", "Kqi", "Kvp", "Kvi"), map(float, args))))
         yield f"Original WECC model edit verified · {identifier} · {report['new']} · not simulated"
     elif command == "paper-dmq" and len(args) == 1:
-        from .agent import model_from_env
         from .paper_dmq import model_proposer, original_dmq, profile_runner
 
-        yield from original_dmq(root, model_proposer(model_from_env()), profile_runner(args[0]))
+        yield from original_dmq(root, model_proposer(create_model()), profile_runner(args[0]))
     elif command == "paper-dsr" and len(args) == 1:
-        from .agent import model_from_env
         from .paper import model_estimator, paper_rank
         from .paper_dsr import profile_runner
 
-        yield from paper_rank(root, model_estimator(model_from_env()), profile_runner(args[0]))
+        yield from paper_rank(root, model_estimator(create_model()), profile_runner(args[0]))
     elif command == "paper-mitigate" and len(args) == 1:
-        from .agent import model_from_env
         from .paper import model_estimator, paper_rank
         from .paper_dsr import mitigation_runner
         from .paper_mitigation import model_proposer
 
         runner, budget = mitigation_runner(args[0])
-        model = model_from_env()
+        model = create_model()
         yield from paper_rank(root, model_estimator(model), runner, model_proposer(model), budget)
     elif command == "paper-rank" and not args:
-        from .agent import model_from_env
         from .paper import model_estimator, paper_rank
 
-        yield from paper_rank(root, model_estimator(model_from_env()))
+        yield from paper_rank(root, model_estimator(create_model()))
     elif command == "optimize" and len(args) <= 1:
         from .optimization import format_update as format_optimization
         from .optimization import optimize_updates

@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -87,22 +88,60 @@ def clean_env():
     return env
 
 
-def installed_target(plugin):
+def _generation(folder, identifier):
+    if identifier == "base":
+        return folder
+    if not isinstance(identifier, str) or not re.fullmatch(r"[a-f0-9]{32}", identifier):
+        raise ValueError("Invalid plugin generation")
+    path = folder / (".version-" + identifier)
+    if path.is_symlink() or path.resolve().parent != folder:
+        raise ValueError("Invalid plugin generation directory")
+    return path
+
+
+def _active(folder):
+    try:
+        return json.loads((folder / "active.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {"current": "base", "previous": None}
+
+
+def _activate(folder, current, previous):
+    stage = folder / (".active-" + uuid4().hex)
+    try:
+        stage.write_text(json.dumps({"current": current, "previous": previous}), encoding="utf-8")
+        stage.replace(folder / "active.json")
+    finally:
+        stage.unlink(missing_ok=True)
+
+
+def _installed(plugin, identifier=None):
     spec(plugin)
     root = plugin_root()
     folder = root / plugin
     if folder.resolve().parent != root or folder.is_symlink():
         return None
     try:
-        data = json.loads((folder / "installed.json").read_text(encoding="utf-8"))
-        target = (folder / "packages").resolve()
+        generation = _generation(folder, identifier or _active(folder)["current"])
+        data = json.loads((generation / "installed.json").read_text(encoding="utf-8"))
+        target = (generation / "packages").resolve()
         if (data["plugin"] == plugin and data["python"] == list(sys.version_info[:2])
                 and data["requirements"] == spec(plugin)["packages"]
-                and target.parent == folder and target.is_dir()):
-            return target
+                and target.parent == generation and target.is_dir()):
+            return target, data
     except (OSError, ValueError, KeyError, TypeError):
         pass
     return None
+
+
+def installed_target(plugin):
+    entry = _installed(plugin)
+    return entry[0] if entry else None
+
+
+def installed_metadata(plugin):
+    entry = _installed(plugin)
+    return entry[1] if entry else {}
 
 
 def available(plugin):
@@ -111,24 +150,33 @@ def available(plugin):
 
 
 def status():
-    return [{"id": key, "title": row["title"], "requirements": row["packages"],
-             "installed": available(key), "managed": (plugin_root() / key).is_dir() and not (plugin_root() / key).is_symlink(),
-             "tools": row["tools"]} for key, row in CATALOG.items()]
+    rows = []
+    for key, row in CATALOG.items():
+        metadata = installed_metadata(key)
+        previous = _active(plugin_root() / key)["previous"] if metadata else None
+        folder = plugin_root() / key
+        rows.append({"id": key, "title": row["title"], "requirements": row["packages"],
+                     "installed": available(key), "managed": folder.is_dir() and not folder.is_symlink(), "tools": row["tools"],
+                     "versions": metadata.get("versions", {}), "rollback_available": previous is not None})
+    return rows
 
 
 def guidance():
     return "\n".join(row["prompt"] for key, row in CATALOG.items() if available(key))
 
 
-def install(plugin):
+def install(plugin, *, update=False):
     row = spec(plugin)
     root = plugin_root()
     root.mkdir(parents=True, exist_ok=True)
     with FileLock(str(root / (plugin + ".lock")), timeout=0):
-        if installed_target(plugin) is not None:
+        entry = _installed(plugin)
+        if entry is not None and not update:
             return "Already installed"
         folder = root / plugin
-        if folder.exists():
+        if update and entry is None:
+            raise ValueError("Updates require a managed plugin installation")
+        if not update and folder.exists():
             raise ValueError("Existing incompatible installation; remove it first")
         stage = root / (".stage-" + uuid4().hex)
         stage.mkdir()
@@ -149,6 +197,14 @@ def install(plugin):
             (stage / "installed.json").write_text(json.dumps({
                 "plugin": plugin, "python": list(sys.version_info[:2]), "requirements": row["packages"],
                 "versions": versions, "resolved": resolved}, indent=2), encoding="utf-8")
+            if update:
+                if entry[1].get("resolved") == [list(pair) for pair in resolved]:
+                    return "Already at the currently resolved versions"
+                previous = _active(folder)["current"]
+                generation = uuid4().hex
+                stage.rename(_generation(folder, generation))
+                _activate(folder, generation, previous)
+                return "Updated and import-checked; previous version retained"
             stage.rename(folder)
         except (OSError, subprocess.SubprocessError, ValueError, IndexError, KeyError, TypeError) as exc:
             if (stage / "install.log").is_file():
@@ -158,6 +214,53 @@ def install(plugin):
             if stage.exists():
                 shutil.rmtree(stage)
     return "Installed and import-checked"
+
+
+def rollback(plugin):
+    spec(plugin)
+    root = plugin_root()
+    with FileLock(str(root / (plugin + ".lock")), timeout=0):
+        if _installed(plugin) is None:
+            raise ValueError("Rollback requires a managed plugin installation")
+        folder = root / plugin
+        active = _active(folder)
+        previous = active["previous"]
+        if previous is None or _installed(plugin, previous) is None:
+            raise ValueError("No compatible previous installation is available")
+        _activate(folder, previous, active["current"])
+    return "Restored the previous plugin generation"
+
+
+def updates(plugin):
+    from tempfile import TemporaryDirectory
+
+    metadata = installed_metadata(plugin)
+    if not metadata:
+        raise ValueError("Update checks require a managed plugin installation")
+    requirements = spec(plugin)["packages"]
+    with TemporaryDirectory(prefix="gridagent-plugin-update-") as tmp:
+        report = Path(tmp) / "report.json"
+        try:
+            subprocess.run([sys.executable, "-I", "-m", "pip", "--isolated", "install", "--dry-run",
+                            "--report", str(report), "--disable-pip-version-check", "--no-input", "--only-binary=:all:",
+                            "--ignore-installed", "--index-url", "https://pypi.org/simple", *requirements],
+                           env=clean_env(), cwd=tmp, capture_output=True, timeout=180, check=True)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ValueError("Could not resolve compatible plugin updates") from exc
+        resolved = json.loads(report.read_text(encoding="utf-8"))["install"]
+    def canonical(name):
+        return re.sub(r"[-_.]+", "-", name.casefold())
+
+    installed = {canonical(name): version for name, version in metadata.get("resolved", [])}
+    changes = {}
+    for row in resolved:
+        if not row.get("requested"):
+            continue
+        name, version = row["metadata"]["name"], row["metadata"]["version"]
+        previous = installed.get(canonical(name))
+        if previous != version:
+            changes[name] = {"installed": previous, "available": version}
+    return changes
 
 
 def uninstall(plugin):

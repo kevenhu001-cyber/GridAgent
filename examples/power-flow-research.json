@@ -1,0 +1,27 @@
+{
+  "objective": "Check a 110 kV feeder in the base scenario and at 125% load",
+  "program": {
+    "steps": [
+      {"op": "create_bus", "index": 0, "vn_kv": 110},
+      {"op": "create_bus", "index": 1, "vn_kv": 110},
+      {"op": "create_ext_grid", "bus": 0, "vm_pu": 1.0},
+      {
+        "op": "create_line_from_parameters",
+        "index": 0,
+        "from_bus": 0,
+        "to_bus": 1,
+        "length_km": 10,
+        "r_ohm_per_km": 0.1,
+        "x_ohm_per_km": 0.4,
+        "max_i_ka": 0.5
+      },
+      {"op": "create_load", "index": 0, "bus": 1, "p_mw": 20, "q_mvar": 5}
+    ]
+  },
+  "scenarios": [
+    {"name": "base"},
+    {"name": "peak", "load_scale": 1.25}
+  ],
+  "max_runs": 2,
+  "max_repairs": 0
+}

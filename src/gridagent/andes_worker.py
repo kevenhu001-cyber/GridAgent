@@ -4,7 +4,14 @@ import sys
 from pathlib import Path
 
 from .device_edits import apply_edits, catalog
-from .domain import CASES, FaultRequest, ScenarioRequest, voltage_metrics
+from .domain import (
+    CASES,
+    FaultRequest,
+    GovernorEigenRequest,
+    GovernorFaultRequest,
+    ScenarioRequest,
+    voltage_metrics,
+)
 from .modal import summarize_modes
 from .models import MODEL_ID, file_digest, validate_workbook
 from .topology import topology_summary
@@ -17,9 +24,17 @@ def execute(operation: str, request: dict, folder: Path) -> dict:
     case = request.get("case", "kundur")
     if case not in CASES and not MODEL_ID.fullmatch(case):
         raise ValueError("Unknown case")
-    if operation not in {"inspect", "power_flow", "fault", "eigen", "scenario_flow"}:
+    if operation not in {"inspect", "power_flow", "fault", "eigen", "scenario_flow", "governor_eigen", "governor_fault"}:
         raise ValueError("Unknown operation")
-    spec = FaultRequest.model_validate(request) if operation == "fault" else None
+    spec = None
+    governor = None
+    if operation == "governor_fault":
+        spec = GovernorFaultRequest.model_validate(request)
+        governor = spec.governor
+    elif operation == "governor_eigen":
+        governor = GovernorEigenRequest.model_validate(request).governor
+    elif operation == "fault":
+        spec = FaultRequest.model_validate(request)
     source = Path(andes.get_case(CASES[case])) if case in CASES else folder / "case.xlsx"
     fingerprint = file_digest(source)
     if case not in CASES:
@@ -27,7 +42,16 @@ def execute(operation: str, request: dict, folder: Path) -> dict:
         if fingerprint != case[6:]:
             raise ValueError("Model snapshot hash mismatch")
     ss = andes.load(str(source), setup=False, no_output=True)
-    if operation == "fault":
+    governor_change = None
+    if governor is not None:
+        matches = [idx for idx, active in zip(ss.TGOV1.idx.v, ss.TGOV1.u.v) if str(idx) == governor.device and active]
+        if len(matches) != 1:
+            raise ValueError("TGOV1 device must uniquely exist and be in service")
+        idx = matches[0]
+        original = float(ss.TGOV1.get(governor.parameter, idx, "v"))
+        ss.TGOV1.set(governor.parameter, idx, governor.value)
+        governor_change = {**governor.model_dump(), "before": original}
+    if spec is not None:
         if spec.bus not in ss.Bus.idx.v:
             raise ValueError("Fault bus is not in model")
         # Remove preconfigured disturbances to isolate the requested fault.
@@ -52,8 +76,10 @@ def execute(operation: str, request: dict, folder: Path) -> dict:
                 raise ValueError("Outage branch must uniquely exist and be in service")
             ss.Line.set("u", matches[0], 0)
     ss.setup()
-    result = {"backend": "andes", "case": case, "operation": operation,
+    result = {"backend": "andes", "case": case, "operation": operation, "version": andes.__version__,
               "bus_ids": [str(i) for i in ss.Bus.idx.v], "model_sha256": fingerprint}
+    if governor_change:
+        result["governor_change"] = governor_change
     if scenario is not None:
         result["scenario"] = scenario.model_dump()
         result["device_changes"] = changes
@@ -69,7 +95,7 @@ def execute(operation: str, request: dict, folder: Path) -> dict:
         return {**result, "status": "ok", "voltages_pu": {
             str(i): float(v) for i, v in zip(ss.Bus.idx.v, ss.Bus.v.v)},
             "angles_rad": {str(i): float(a) for i, a in zip(ss.Bus.idx.v, ss.Bus.a.v)}}
-    if operation == "eigen":
+    if operation in {"eigen", "governor_eigen"}:
         if not ss.EIG.run():
             return {**result, "status": "failed", "reason": "Eigenanalysis failed"}
         summary = summarize_modes(ss.EIG.mu)

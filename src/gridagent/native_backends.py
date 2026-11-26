@@ -6,27 +6,56 @@ native API calls are exposed; no eval, exec, imports or arbitrary paths.
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from uuid import uuid4
 
 from pydantic import TypeAdapter
 
 from .native_program import PPProgram, Program
-from .plugins import CATALOG, available, launch
+from .plugins import CATALOG, available, installed_metadata, launch
 from .workspace import artifact_folder, load_object
 
 ADAPTER = TypeAdapter(Program)
 
 
-def available_backends():
-    return [{"name": name, "installed": available(name) if name in CATALOG
-             else importlib.util.find_spec(name) is not None}
-            for name in ("andes", "pandapower", "highspy", "control", *CATALOG)]
+def available_backends(root=None):
+    from importlib.metadata import PackageNotFoundError, version
+
+    capabilities = {
+        "andes": {"operations": ["power_flow", "fault", "eigen", "scenario_flow", "governor_eigen", "governor_fault"],
+                  "units": ["s", "p.u.", "rad"], "evaluator": "modal and voltage metrics"},
+        "pandapower": {"operations": ["power_flow", "short_circuit", "scenario_outage"],
+                       "units": ["kV", "MW", "Mvar", "kA"], "evaluator": "independent numerical checks"},
+        "pypsa": {"operations": ["dispatch"], "units": ["MW", "MWh", "hour"],
+                  "evaluator": "nodal and storage balance and transmission limits"},
+    }
+    rows = []
+    for name in ("andes", "pandapower", "highspy", "control", *CATALOG):
+        installed = available(name) if name in CATALOG else importlib.util.find_spec(name) is not None
+        managed = installed_metadata(name) if name in CATALOG else {}
+        plugin_versions = managed.get("versions", {})
+        try:
+            installed_version = version(name) if installed else None
+        except PackageNotFoundError:
+            installed_version = next(iter(plugin_versions.values()), None)
+        if plugin_versions:
+            installed_version = plugin_versions.get(CATALOG[name]["modules"][0], installed_version)
+        rows.append({"name": name, "installed": installed, "version": installed_version,
+                     "capabilities": capabilities.get(name, {"operations": CATALOG.get(name, {}).get("tools", [])})})
+    if root is not None:
+        from .external_runtime import CAPABILITY, runtime_status
+
+        runtime = runtime_status(root)
+        rows.append({"name": "ngspice", "installed": runtime is not None,
+                     "version": runtime["version"] if runtime else None, "capabilities": CAPABILITY})
+    return rows
 
 
-def run_program(root, program, timeout_s=300):
+def run_program(root, program, timeout_s=300, *, run_id=None, cancelled=None):
     program = ADAPTER.validate_python(program)
     request = program.model_dump(mode="json")
     parent = None
@@ -43,7 +72,9 @@ def run_program(root, program, timeout_s=300):
         request["steps"] = [*previous.model_dump(mode="json")["steps"], *request["steps"]]
         request["parent_run"] = None
         request = PPProgram.model_validate(request).model_dump(mode="json")
-    folder = Path(root).resolve() / "runs" / uuid4().hex
+    if run_id is not None and not re.fullmatch(r"[a-f0-9]{32}", run_id):
+        raise ValueError("Invalid run ID")
+    folder = Path(root).resolve() / "runs" / (run_id or uuid4().hex)
     folder.mkdir(parents=True)
     (folder / "request.json").write_text(json.dumps(request, allow_nan=False), encoding="utf-8")
     env = {k: v for k, v in os.environ.items() if k.upper() in {
@@ -62,9 +93,24 @@ def run_program(root, program, timeout_s=300):
             proc = launch("pypsa", "gridagent.native_worker", folder, timeout_s)
         else:
             with (folder / "solver.log").open("w", encoding="utf-8") as log:
-                proc = subprocess.run([sys.executable, "-m", "gridagent.native_worker"],
-                                      cwd=folder, env=env, stdout=log, stderr=subprocess.STDOUT,
-                                      timeout=timeout_s, check=False)
+                args = [sys.executable, "-m", "gridagent.native_worker"]
+                with subprocess.Popen(args, cwd=folder, env=env, stdout=log, stderr=subprocess.STDOUT) as proc:
+                    try:
+                        deadline = time.monotonic() + timeout_s
+                        while proc.poll() is None:
+                            if cancelled is not None and cancelled():
+                                result["reason"] = "cancelled"
+                                break
+                            if time.monotonic() >= deadline:
+                                raise subprocess.TimeoutExpired(args, timeout_s)
+                            try:
+                                proc.wait(timeout=0.25)
+                            except subprocess.TimeoutExpired:
+                                continue
+                    finally:
+                        if proc.poll() is None:
+                            proc.kill()
+                            proc.wait()
         if proc.returncode == 0 and result_path.is_file():
             result = json.loads(result_path.read_text(encoding="utf-8"))
     except subprocess.TimeoutExpired:
@@ -81,5 +127,7 @@ def run_program(root, program, timeout_s=300):
     result["run_id"] = folder.name
     if parent:
         result["parent_run"] = parent
-    result_path.write_text(json.dumps(result, allow_nan=False), encoding="utf-8")
+    final = folder / "result.final.tmp"
+    final.write_text(json.dumps(result, allow_nan=False), encoding="utf-8")
+    final.replace(result_path)
     return result

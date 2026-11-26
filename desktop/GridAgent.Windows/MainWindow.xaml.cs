@@ -11,8 +11,12 @@ public partial class MainWindow : Window
     private string? _session;
     private string? _boundWorkspace;
     private bool _busy;
+    private EngineSettings? _activeEngine;
+    private string? _activeResearch;
+    private bool _cancellingResearch;
     private JsonElement _pluginCatalog;
-    private sealed record Entry(string Id, string Label);
+    private JsonElement _topology;
+    private sealed record Entry(string Id, string Label, string? Info = null);
 
     public MainWindow()
     {
@@ -22,7 +26,12 @@ public partial class MainWindow : Window
         ModelName.Text = Environment.GetEnvironmentVariable("GRIDAGENT_MODEL") ?? "";
         BaseUrl.Text = Environment.GetEnvironmentVariable("GRIDAGENT_BASE_URL") ?? "";
         Transcript.Text = "Start a research session, open a saved study, or run an offline numerical experiment.\n";
-        Loaded += async (_, _) => await Execute(new { action = "refresh" });
+        Loaded += async (_, _) =>
+        {
+            if (string.IsNullOrWhiteSpace(ModelName.Text)) await Execute(new { action = "model-settings" });
+            ModelConfiguration.IsExpanded = string.IsNullOrWhiteSpace(ModelName.Text);
+            await Execute(new { action = "refresh" });
+        };
     }
 
     private static string BundledPython => Path.Combine(AppContext.BaseDirectory, "runtime", "python.exe");
@@ -57,8 +66,11 @@ public partial class MainWindow : Window
                 SessionList.ItemsSource = null;
                 StudyList.ItemsSource = null;
                 RunList.ItemsSource = null;
+                ResearchList.ItemsSource = null;
+                ModelRevisions.ItemsSource = null;
             }
             var settings = new EngineSettings(ResolvePython(), root, ModelName.Text.Trim(), BaseUrl.Text.Trim(), ApiKey.Password);
+            _activeEngine = settings;
             await LocalEngine.RunAsync(settings, request, Handle);
             StatusText.Text = "Ready";
         }
@@ -68,7 +80,7 @@ public partial class MainWindow : Window
             Append("Operation could not complete (" + ex.GetType().Name + "). Check application installation, workspace and model settings.");
             StatusText.Text = "Check configuration";
         }
-        finally { _busy = false; }
+        finally { _busy = false; _activeEngine = null; _activeResearch = null; }
     }
 
     private void Handle(JsonElement evt)
@@ -78,6 +90,10 @@ public partial class MainWindow : Window
         switch (kind)
         {
             case "plugins": _pluginCatalog = data.Clone(); break;
+            case "model_settings":
+                ModelName.Text = data.GetProperty("model").GetString() ?? "";
+                BaseUrl.Text = data.GetProperty("base_url").GetString() ?? "";
+                break;
             case "session": _session = data.GetString(); break;
             case "sessions":
                 SessionList.ItemsSource = data.EnumerateArray().Select(x =>
@@ -98,6 +114,41 @@ public partial class MainWindow : Window
                     var id = x.GetProperty("id").GetString()!;
                     return new Entry(id, x.GetProperty("operation").GetString() + " · " + id[..Math.Min(8, id.Length)]);
                 }).ToList();
+                break;
+            case "research_tasks":
+                var selected = (ResearchList.SelectedItem as Entry)?.Id ?? _activeResearch;
+                var tasks = data.EnumerateArray().Select(x => new Entry(x.GetProperty("id").GetString()!,
+                    x.GetProperty("stage").GetString() + " · " + x.GetProperty("prompt").GetString())).ToList();
+                ResearchList.ItemsSource = tasks;
+                ResearchList.SelectedItem = tasks.FirstOrDefault(x => x.Id == selected);
+                break;
+            case "research_task":
+                var researchId = data.GetProperty("id").GetString();
+                var stage = data.GetProperty("stage").GetString();
+                if (_activeResearch != researchId || stage is "passed" or "failed" or "cancelled" or "awaiting_input" or "awaiting_approval")
+                    Append(data.GetProperty("summary").GetString() ?? "");
+                _activeResearch = researchId;
+                StatusText.Text = $"Research · {stage} · {data.GetProperty("runs_used")} simulations";
+                break;
+            case "topology": _topology = data.Clone(); break;
+            case "model_revisions":
+                ModelRevisions.ItemsSource = data.EnumerateArray().Select(x =>
+                {
+                    var diff = x.GetProperty("diff");
+                    return new Entry(x.GetProperty("id").GetString()!, x.GetProperty("name").GetString()!,
+                        $"{diff.GetProperty("element")} {diff.GetProperty("index")} · {diff.GetProperty("field")} · " +
+                        $"{diff.GetProperty("before")} → {diff.GetProperty("value")}\nParent run {x.GetProperty("parent_run")}\n" +
+                        $"SHA-256 {x.GetProperty("sha256")}");
+                }).ToList();
+                break;
+            case "analysis_charts":
+                var charts = data.EnumerateArray().Select(chart => new ChartData(chart.GetProperty("title").GetString()!,
+                    chart.GetProperty("x_label").GetString()!, chart.GetProperty("y_label").GetString()!,
+                    chart.GetProperty("scatter").GetBoolean(), chart.GetProperty("series").EnumerateArray().Select(trace =>
+                        new ChartTrace(trace.GetProperty("name").GetString()!,
+                            trace.GetProperty("x").EnumerateArray().Select(x => x.GetDouble()).ToArray(),
+                            trace.GetProperty("y").EnumerateArray().Select(y => y.GetDouble()).ToArray())).ToArray())).ToArray();
+                new ScientificChartWindow(charts) { Owner = this }.Show();
                 break;
             case "waveform":
                 var channels = data.EnumerateArray().Select(x => new WaveformSeries(
@@ -124,6 +175,21 @@ public partial class MainWindow : Window
     }
 
     private async void Refresh(object sender, RoutedEventArgs e) => await Execute(new { action = "refresh" });
+    private async void OpenWorkspace(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        var picker = new OpenFolderDialog { Title = "Open research workspace" };
+        if (picker.ShowDialog(this) != true) return;
+        WorkspacePath.Text = picker.FolderName;
+        ApiKey.Clear();
+        await Execute(new { action = "model-settings" });
+        await Execute(new { action = "refresh" });
+    }
+    private async void LoadModelSettings(object sender, RoutedEventArgs e) => await Execute(new { action = "model-settings" });
+    private async void SaveModelSettings(object sender, RoutedEventArgs e) =>
+        await Execute(new { action = "model-save", model = ModelName.Text, base_url = BaseUrl.Text });
+    private async void TestModelConnection(object sender, RoutedEventArgs e) =>
+        await Execute(new { action = "model-test", model = ModelName.Text, base_url = BaseUrl.Text });
 
     private async void NewSession(object sender, RoutedEventArgs e)
     {
@@ -151,6 +217,97 @@ public partial class MainWindow : Window
     }
 
     private Task Local(string command, params string[] args) => Execute(new { action = "local", command, args });
+    private Task Research(string command, params string[] args) => Execute(new { action = "research", command, args });
+
+    private async Task StartResearchTask(bool multi)
+    {
+        if (_busy || string.IsNullOrWhiteSpace(Prompt.Text)) return;
+        var prompt = Prompt.Text.Trim();
+        Prompt.Clear();
+        await Research(multi ? "research-multi" : "research", prompt);
+    }
+
+    private async void StartResearch(object sender, RoutedEventArgs e) => await StartResearchTask(false);
+    private async void StartMultiResearch(object sender, RoutedEventArgs e) => await StartResearchTask(true);
+
+    private async void StartResearchManifest(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        var picker = new OpenFileDialog { Filter = "Research manifest (*.json)|*.json", CheckFileExists = true };
+        if (picker.ShowDialog(this) == true) await Research("research-manifest", picker.FileName);
+    }
+
+    private async void PythonSettings(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        var result = MessageBox.Show(this, "Enable automatic execution of generated Python in Windows Sandbox " +
+            "for this workspace? Select No to disable automatic execution.", "Automatic Python execution",
+            MessageBoxButton.YesNoCancel, MessageBoxImage.Question, MessageBoxResult.Cancel);
+        if (result != MessageBoxResult.Cancel)
+            await Research("research-sandbox", result == MessageBoxResult.Yes ? "enable" : "disable");
+    }
+
+    private async void RunVerifiedPython(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        var picker = new OpenFileDialog { Filter = "Research manifest (*.json)|*.json", CheckFileExists = true };
+        if (picker.ShowDialog(this) == true) await Research("research-python", picker.FileName);
+    }
+
+    private async void ResearchStatus(object sender, RoutedEventArgs e)
+    {
+        if (!WorkspaceChanged() && ResearchList.SelectedItem is Entry row) await Research("research-status", row.Id);
+    }
+
+    private async void ResumeResearch(object sender, RoutedEventArgs e)
+    {
+        if (!WorkspaceChanged() && ResearchList.SelectedItem is Entry row) await Research("research-resume", row.Id);
+    }
+
+    private async void ApproveResearch(object sender, RoutedEventArgs e)
+    {
+        if (_busy || WorkspaceChanged() || ResearchList.SelectedItem is not Entry row) return;
+        if (MessageBox.Show(this, "Authorize the repair ranges shown in this task's details?", "Authorize repair",
+            MessageBoxButton.OKCancel) == MessageBoxResult.OK) await Research("research-approve", row.Id);
+    }
+
+    private async void ClarifyResearch(object sender, RoutedEventArgs e)
+    {
+        if (_busy || WorkspaceChanged() || ResearchList.SelectedItem is not Entry row ||
+            string.IsNullOrWhiteSpace(Prompt.Text)) return;
+        var answer = Prompt.Text.Trim();
+        Prompt.Clear();
+        await Research("research-clarify", row.Id, answer);
+    }
+
+    private async void ExportResearch(object sender, RoutedEventArgs e)
+    {
+        if (_busy || WorkspaceChanged() || ResearchList.SelectedItem is not Entry row) return;
+        var picker = new SaveFileDialog { Filter = "Research report (*.json)|*.json", FileName = "research-" + row.Id };
+        if (picker.ShowDialog(this) == true) await Research("research-report", row.Id, picker.FileName);
+    }
+
+    private async void CancelResearch(object sender, RoutedEventArgs e)
+    {
+        if (_cancellingResearch || WorkspaceChanged()) return;
+        if (!_busy)
+        {
+            if (ResearchList.SelectedItem is Entry row) await Research("research-cancel", row.Id);
+            return;
+        }
+        if (_activeEngine is not EngineSettings settings || _activeResearch is not string id) return;
+        _cancellingResearch = true;
+        try
+        {
+            await LocalEngine.RunAsync(settings, new { action = "research", command = "research-cancel", args = new[] { id } }, _ => { });
+            StatusText.Text = "Cancellation requested";
+        }
+        catch (InvalidOperationException)
+        {
+            Append("The task could not be cancelled.");
+        }
+        finally { _cancellingResearch = false; }
+    }
     private async void OpenStudy(object sender, RoutedEventArgs e)
     {
         if (_busy || WorkspaceChanged() || StudyList.SelectedItem is not Entry row) return;
@@ -160,6 +317,45 @@ public partial class MainWindow : Window
     {
         if (_busy || WorkspaceChanged() || RunList.SelectedItem is not Entry row) return;
         await Execute(new { action = "waveform", run = row.Id });
+    }
+    private async void OverlayWaveforms(object sender, RoutedEventArgs e)
+    {
+        if (_busy || WorkspaceChanged()) return;
+        var runs = RunList.SelectedItems.Cast<Entry>().Select(row => row.Id).ToArray();
+        if (runs.Length is < 2 or > 4) { Append("Select two to four waveform runs for comparison."); return; }
+        await Execute(new { action = "waveform-overlay", runs });
+    }
+    private async void OpenScientificCharts(object sender, RoutedEventArgs e)
+    {
+        if (!_busy && !WorkspaceChanged() && RunList.SelectedItem is Entry row)
+            await Execute(new { action = "analysis-charts", run = row.Id });
+    }
+    private async void OpenTopology(object sender, RoutedEventArgs e)
+    {
+        if (_busy || WorkspaceChanged() || RunList.SelectedItem is not Entry row) return;
+        _topology = default;
+        await Execute(new { action = "topology", run = row.Id });
+        if (_topology.ValueKind != JsonValueKind.Object) return;
+        var nodes = _topology.GetProperty("nodes").EnumerateArray().Select(x => new TopologyNode(
+            x.GetProperty("id").GetInt32(), x.GetProperty("kv").GetDouble(), x.GetProperty("active").GetBoolean())).ToArray();
+        var links = _topology.GetProperty("links").EnumerateArray().Select(x => new TopologyLink(
+            x.GetProperty("from").GetInt32(), x.GetProperty("to").GetInt32(), x.GetProperty("type").GetString()!,
+            x.GetProperty("closed").GetBoolean())).ToArray();
+        var devices = _topology.GetProperty("devices").EnumerateArray().Select(x => new ModelParameter(
+            x.GetProperty("element").GetString()!, x.GetProperty("index").GetInt32(), x.GetProperty("field").GetString()!,
+            x.GetProperty("value").GetRawText())).ToArray();
+        var dialog = new TopologyWindow(nodes, links, devices) { Owner = this };
+        if (dialog.ShowDialog() == true && dialog.Edit != null)
+            await Execute(new { action = "save-model-revision", run = row.Id, edit = dialog.Edit });
+    }
+    private void ModelRevisionDiff(object sender, RoutedEventArgs e)
+    {
+        if (!WorkspaceChanged() && ModelRevisions.SelectedItem is Entry row && row.Info != null) Append(row.Info);
+    }
+    private async void RunModelRevision(object sender, RoutedEventArgs e)
+    {
+        if (!_busy && !WorkspaceChanged() && ModelRevisions.SelectedItem is Entry row)
+            await Execute(new { action = "run-model-revision", revision = row.Id });
     }
     private async void ResumeDsr(object sender, RoutedEventArgs e)
     {
@@ -188,6 +384,13 @@ public partial class MainWindow : Window
         var dialog = new PluginCenterWindow(_pluginCatalog) { Owner = this };
         if (dialog.ShowDialog() == true && dialog.SelectedId != null && dialog.Command != null)
             await Local(dialog.Command, dialog.SelectedId);
+    }
+    private async void RegisterNgspice(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        var picker = new OpenFileDialog { Filter = "ngspice console (ngspice_con.exe;ngspice.exe)|ngspice_con.exe;ngspice.exe",
+            CheckFileExists = true };
+        if (picker.ShowDialog(this) == true) await Local("register-ngspice", picker.FileName);
     }
     private void ReviewScript(object sender, RoutedEventArgs e)
     {
@@ -280,6 +483,12 @@ public partial class MainWindow : Window
     private async void Dmq(object sender, RoutedEventArgs e) => await Execute(new { action = "dmq", reference = false });
     private async void DmqReference(object sender, RoutedEventArgs e) => await Execute(new { action = "dmq", reference = true });
     private async void Eigen(object sender, RoutedEventArgs e) => await Local("eigen");
+    private async void AndesBatch(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        var picker = new OpenFileDialog { Filter = "ANDES batch (*.json)|*.json", CheckFileExists = true };
+        if (picker.ShowDialog(this) == true) await Local("andes-batch", picker.FileName);
+    }
     private async void Optimize(object sender, RoutedEventArgs e) => await Local("optimize", "24");
     private async void Runs(object sender, RoutedEventArgs e) => await Local("runs");
     private async void Dsr(object sender, RoutedEventArgs e)

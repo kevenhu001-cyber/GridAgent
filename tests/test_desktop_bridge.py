@@ -38,3 +38,54 @@ def test_desktop_waveform_keeps_extrema(tmp_path):
     assert series["samples"] == 3000
     assert len(series["time"]) <= 1200
     assert min(series["value"]) == 0.2
+
+
+def test_desktop_model_configuration_roundtrip(tmp_path, monkeypatch):
+    from gridagent import model_settings
+
+    events = []
+    def emit(kind, data):
+        events.append((kind, data))
+
+    data = {"model": "fixture", "base_url": "http://127.0.0.1:8200/v1"}
+    dispatch(tmp_path, {"action": "model-save", **data}, emit)
+    dispatch(tmp_path, {"action": "model-settings"}, emit)
+    assert [entry for kind, entry in events if kind == "model_settings"] == [data, data]
+    monkeypatch.setattr(model_settings, "check_connection", lambda settings: "Connected to " + settings.model)
+    dispatch(tmp_path, {"action": "model-test", **data}, emit)
+    assert events[-1] == ("result", "Connected to fixture")
+
+
+def test_connection_check_uses_configured_compatible_endpoint(tmp_path, monkeypatch):
+    import json
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from threading import Thread
+
+    monkeypatch.delenv("GRIDAGENT_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    received = []
+
+    class Fixture(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            received.append((self.path, body["model"]))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"id": "fixture", "object": "chat.completion", "created": 0,
+                                         "model": body["model"], "choices": [{"index": 0, "finish_reason": "stop",
+                                         "message": {"role": "assistant", "content": "OK"}}]}).encode())
+
+    with HTTPServer(("127.0.0.1", 0), Fixture) as server:
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            events = []
+            dispatch(tmp_path, {"action": "model-test", "model": "fixture",
+                                "base_url": f"http://127.0.0.1:{server.server_port}/v1"},
+                     lambda kind, data: events.append((kind, data)))
+        finally:
+            server.shutdown()
+            thread.join()
+    assert received == [("/v1/chat/completions", "fixture")]
+    assert events[-1] == ("result", "Connected to fixture")

@@ -19,7 +19,7 @@ Python. There is no exec/eval or arbitrary import/path support. Subprocess
 isolation is not an OS security sandbox.
 
 pandapower: construct buses, external grids, lines, loads, PV generators,
-static generators and storage, edit selected native element table fields,
+static generators, storage, two-winding transformers and switches, edit selected native element table fields,
 inspect built-in cases (14/39/118), perform AC load flow or IEC 60909 maximum
 three-phase fault current with valid model data. A parent_run references an
 existing pandapower run; its validated construction steps are replayed with
@@ -28,7 +28,7 @@ audit, model JSON and CSV tables. Base models use pandapower IDs, not ANDES IDs.
 
 PyPSA: fixed-capacity hourly dispatch for up to 168 hours with buses,
 loads, generators, renewable availability, cyclic storage and directional
-links. Native HiGHS optimization; save generation, storage dispatch/SOC,
+links and passive intra-voltage-level transmission lines. Native HiGHS optimization; save generation, storage dispatch/SOC,
 link flow and marginal prices. No capacity expansion, unit commitment or AC
 network analysis yet. Cost units must be consistent across all inputs.
 A non-optimal solver result is not an optimum.
@@ -49,10 +49,10 @@ Windows edition with the optional Windows Sandbox feature enabled and the
 bundled runtime. No host-Python fallback. A fresh sandbox job maps only the
 runtime and approved input read-only and a dedicated new output folder writable;
 network, clipboard, printer, audio/video and vGPU redirection are disabled.
-The user must close the sandbox when finished. Output files are untrusted and
-are not automatically ingested or claimed as measured results. No automatic
-arbitrary-code execution, sandbox result verification, or TUI launch yet.
-The sandbox integration is untested on a virtualization-enabled Windows host.
+The manual draft viewer leaves the sandbox open and its outputs available for
+inspection. The separate verified Python workflow generates and retries scripts
+with workspace opt-in, controls the sandbox lifecycle, and compares structured
+output to a native reference. See [verified research tasks](research-tasks.md).
 
 ## Automatic quality checks and authorized repair
 
@@ -74,8 +74,9 @@ change. Ratings/capacity changes require explicit manifest authorization and
 are a design variant, not proof the original system was correct. Best tested
 candidate is retained with all artifacts. The policy sees feedback, not hidden
 paper test labels. Original licensed DMQ uses its existing upstream evaluator;
-these native tests do not replace it. Free Python Sandbox outputs are not yet
-automatically evaluated. No LLM weight updates or guaranteed convergence.
+these native tests do not replace it. The verified Python workflow uses a
+separate bus-level numerical contract and independent reference. No LLM weight
+updates or guaranteed convergence.
 
 ### Fixed modeling benchmarks
 

@@ -48,6 +48,24 @@ def test_native_pypsa_storage(tmp_path):
 
 
 @pytest.mark.integration
+def test_pypsa_passive_line_congestion_is_independently_checked(tmp_path):
+    pytest.importorskip("pypsa")
+    pytest.importorskip("highspy")
+    from gridagent.model_quality import table
+    from gridagent.native_backends import run_program
+
+    result = run_program(tmp_path, {"backend": "pypsa", "hours": 2, "buses": [{"name": "a"}, {"name": "b"}],
+        "loads": [{"name": "demand", "bus": "b", "p_set_mw": [7, 4]}],
+        "generators": [{"name": "cheap", "bus": "a", "p_nom_mw": 20, "marginal_cost": 5},
+                       {"name": "backup", "bus": "b", "p_nom_mw": 20, "marginal_cost": 25}],
+        "lines": [{"name": "tie", "bus0": "a", "bus1": "b", "s_nom_mva": 5, "x_ohm": 2}]})
+    assert result["quality"]["passed"], result
+    folder = tmp_path / "runs" / result["run_id"]
+    assert table(folder, "line_mw")["tie"].tolist() == pytest.approx([5, 4])
+    assert result["metrics"]["objective"] == pytest.approx(95)
+
+
+@pytest.mark.integration
 def test_pandapower_construct_fault_and_replay(tmp_path):
     pytest.importorskip("pandapower")
     from gridagent.native_backends import run_program

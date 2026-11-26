@@ -20,10 +20,10 @@ from .advanced_programs import (
     TrackingQP,
     TransmissionLine,
 )
-from .domain import CASES, CaseName, DeviceEdit, FaultRequest, ScenarioRequest
+from .domain import CASES, CaseName, DeviceEdit, FaultRequest, GovernorEigenRequest, ScenarioRequest
 from .extension_program import Battery, ControlResponse, Feeder, Solar
 from .extra_programs import Commitment, EconomicDispatch, EquivalentCell, Wind
-from .knowledge import KnowledgeIndex, QueryPlan, contracts
+from .knowledge import QueryPlan, contracts, workspace_knowledge
 from .native_program import DispatchProgram, PPProgram
 from .plugins import available, guidance
 from .simulator import Simulator
@@ -58,13 +58,18 @@ class State(TypedDict):
     rounds: int
 
 
-def model_from_env():
-    name = os.getenv("GRIDAGENT_MODEL")
-    key = os.getenv("GRIDAGENT_API_KEY") or os.getenv("OPENAI_API_KEY")
+def model_from_env(workspace=None, *, settings=None, api_key=None):
+    from .model_settings import active_settings, local_endpoint
+
+    settings = settings or active_settings(workspace)
+    name = settings.model
+    key = api_key or os.getenv("GRIDAGENT_API_KEY") or os.getenv("OPENAI_API_KEY")
+    if not key and local_endpoint(settings):
+        key = "gridagent-local"
     if not name or not key:
-        raise ValueError("Set GRIDAGENT_MODEL and GRIDAGENT_API_KEY before starting.")
+        raise ValueError("Configure the model and a session API key before starting.")
     return ChatOpenAI(model=name, api_key=key,
-                      base_url=os.getenv("GRIDAGENT_BASE_URL") or None,
+                      base_url=settings.base_url or None,
                       timeout=60, max_retries=1)
 
 
@@ -142,24 +147,36 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
 
         root = Path(workspace)
 
+        from .external_runtime import RCFilter, run_rc, runtime_status
         from .native_backends import available_backends, run_program
 
         @tool
         def list_simulation_backends() -> dict:
             """Check which local native simulation libraries are installed."""
-            return {"backends": available_backends()}
+            return {"backends": available_backends(root)}
+
+        @tool(args_schema=RCFilter)
+        def ngspice_rc(**kwargs) -> dict:
+            """Measure transient or AC response of an RC low-pass filter. Inputs in ohms and farads."""
+            return run_rc(root, kwargs)
+
+        @tool(args_schema=GovernorEigenRequest)
+        def andes_governor_eigen(**kwargs) -> dict:
+            """Evaluate small-signal modes after one bounded change to a TGOV1 droop R or time constant T1."""
+            return simulator.run("governor_eigen", kwargs)
 
         @tool(args_schema=PPProgram)
         def pandapower_program(**kwargs) -> dict:
             """Build or edit a native pandapower network, inspect, solve AC power flow or IEC three-phase short circuit.
-            Buses use kV, line impedance ohm/km, power MW/Mvar. For short circuit supply source short-circuit data.
+            Buses and transformer ratings use kV, line impedance ohm/km, and power MW/Mvar.
+            Supports two-winding transformers, switches and load scaling. Supply source short-circuit data for faults.
             Program steps run sequentially and save the network and results; use existing element IDs.
             """
             return run_program(root, {"backend": "pandapower", **kwargs})
 
         @tool(args_schema=DispatchProgram)
         def pypsa_dispatch(**kwargs) -> dict:
-            """Build a multi-bus fixed-capacity hourly dispatch model with generators, loads, storage and directional links.
+            """Build multi-bus fixed-capacity hourly dispatch with loads, storage, passive lines and directional links.
             Use MW/MWh, hourly profiles and marginal costs per MWh. HiGHS solves the native PyPSA model.
             Cyclic storage; no AC voltage or transient stability results.
             """
@@ -254,7 +271,7 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
             """Compare steady-state bus voltages for matching model snapshots."""
             return compare_power_flows(root, baseline_id, candidate_id)
 
-        tool_list.extend([list_research_runs, read_research_run, network_path,
+        tool_list.extend([list_research_runs, read_research_run, network_path, andes_governor_eigen,
                           list_network_branches, list_model_devices, analyze_voltage_waveform, compare_fault_runs, compare_flow_runs,
                           list_simulation_backends, pandapower_program, read_native_table, draft_simulation_script])
         for plugin, plugin_tool in (("pypsa", pypsa_dispatch), ("opendss", opendss_feeder), ("pybamm", battery_discharge), ("pvlib", solar_dc_power)):
@@ -284,16 +301,17 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
                 tool_list.append(optional_tool(backend, name, schema, description))
         if importlib.util.find_spec("control") is not None:
             tool_list.append(control_step_response)
+        if runtime_status(root):
+            tool_list.append(ngspice_rc)
     tools = {t.name: t for t in tool_list}
     numerical_tools = {"power_flow", "simulate_fault", "eigenanalysis", "scenario_power_flow", "pandapower_program", "pypsa_dispatch", "opendss_feeder", "battery_discharge", "solar_dc_power", "control_step_response", "wind_power_curve", "quadratic_dispatch", "unit_commitment", "equivalent_cell_response",
                        "pypower_case_flow", "powsybl_case_flow", "ramp_tracking_qp",
-                       "transmission_line_sparameters", "fluid_thermophysical_state", "rainflow_cycle_count"}
+                       "transmission_line_sparameters", "fluid_thermophysical_state", "rainflow_cycle_count",
+                       "ngspice_rc", "andes_governor_eigen"}
     base_contracts = contracts(tools)
 
     def knowledge_index():
-        from .knowledge_store import reference_rows
-
-        return KnowledgeIndex([*base_contracts, *(reference_rows(workspace) if workspace is not None else [])])
+        return workspace_knowledge(workspace, base_contracts)
 
     @tool(args_schema=QueryPlan)
     def retrieve_engineering_knowledge(functions=None, options=None) -> dict:

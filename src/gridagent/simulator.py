@@ -7,7 +7,14 @@ from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
 
-from .domain import CASES, CaseRequest, FaultRequest, ScenarioRequest
+from .domain import (
+    CASES,
+    CaseRequest,
+    FaultRequest,
+    GovernorEigenRequest,
+    GovernorFaultRequest,
+    ScenarioRequest,
+)
 from .models import resolve_model
 
 
@@ -22,7 +29,8 @@ class AndesSimulator:
 
     def run(self, operation: str, request: dict) -> dict:
         schemas = {"inspect": CaseRequest, "power_flow": CaseRequest, "fault": FaultRequest,
-                   "eigen": CaseRequest, "scenario_flow": ScenarioRequest}
+                   "eigen": CaseRequest, "scenario_flow": ScenarioRequest,
+                   "governor_eigen": GovernorEigenRequest, "governor_fault": GovernorFaultRequest}
         if operation not in schemas:
             raise ValueError("Operation is not allowed")
         request = schemas[operation].model_validate(request).model_dump()

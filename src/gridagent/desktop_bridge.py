@@ -43,14 +43,34 @@ def dispatch(root, request, emit):
     action = request["action"]
 
     def refresh():
+        from .model_revisions import revisions
+        from .research import ResearchTasks
+
         emit("sessions", store.sessions())
         emit("studies", list_studies(root / "studies"))
         emit("runs", list_runs(root))
+        emit("research_tasks", ResearchTasks(root).listing())
+        emit("model_revisions", revisions(root))
 
     if action == "plugins":
         from .plugins import status
 
         emit("plugins", status())
+    elif action in {"model-settings", "model-save", "model-test"}:
+        from .model_settings import ModelSettings, check_connection, save_settings, stored_settings
+
+        if action == "model-settings":
+            emit("model_settings", stored_settings(root).model_dump())
+        elif action == "model-save":
+            saved = save_settings(root, request["model"], request.get("base_url", ""))
+            emit("model_settings", saved.model_dump())
+            emit("result", "Model and endpoint saved. The API key remains in this session.")
+        else:
+            settings = ModelSettings(model=request["model"], base_url=request.get("base_url", ""))
+            try:
+                emit("result", check_connection(settings))
+            except Exception as exc:  # noqa: BLE001 - keep provider diagnostics and secrets out of the UI
+                emit("error", f"Connection failed ({type(exc).__name__}). Check endpoint, model and session key.")
     elif action == "refresh":
         refresh()
     elif action == "new":
@@ -69,7 +89,7 @@ def dispatch(root, request, emit):
             if task["status"] != "completed":
                 emit("status", f"Previous task {task['id'][:8]}: {task['status']}")
     elif action == "ask":
-        model = model_from_env()
+        model = model_from_env(root)
         budget = int(request.get("budget", 3))
         graph = build_agent(model, AndesSimulator(root / "runs"), budget=budget, workspace=root)
         sid = store.require_session(request["session"]) if request.get("session") else store.create_session()
@@ -89,6 +109,48 @@ def dispatch(root, request, emit):
         refresh()
     elif action == "waveform":
         emit("waveform", chart_series(root, request["run"]))
+    elif action == "analysis-charts":
+        from .scientific_charts import chart_data
+
+        emit("analysis_charts", chart_data(root, request["run"]))
+    elif action == "waveform-overlay":
+        from .scientific_charts import plot, series
+
+        ids = request["runs"]
+        if not 2 <= len(ids) <= 4 or len(set(ids)) != len(ids):
+            raise ValueError("Select two to four runs with voltage waveforms")
+        frames = [{row["channel"]: row for row in chart_series(root, identifier)} for identifier in ids]
+        common = [name for name in frames[0] if all(name in frame for frame in frames)]
+        if not common:
+            raise ValueError("The selected runs have no common waveform channels")
+        name = common[0]
+        traces = [series(identifier[:8], frame[name]["time"], frame[name]["value"])
+                  for identifier, frame in zip(ids, frames, strict=True)]
+        emit("analysis_charts", [plot(f"Voltage overlay · {name}", "Time (s)", "Voltage (p.u.)", traces)])
+    elif action in {"topology", "save-model-revision", "run-model-revision"}:
+        from .model_revisions import create_revision, run_revision, topology
+
+        if action == "topology":
+            emit("topology", topology(root, request["run"]))
+        elif action == "save-model-revision":
+            revision = create_revision(root, request["run"], request["edit"])
+            emit("result", f"Saved model revision {revision['id']} · {revision['name']}")
+            refresh()
+        else:
+            result = run_revision(root, request["revision"])
+            emit("result", f"Model revision run {result['run_id']} · {result['status']}")
+            refresh()
+    elif action == "research":
+        from .research import format_status, task_command
+
+        command = request["command"]
+        for row in task_command(root, command, request.get("args", [])):
+            if isinstance(row, dict):
+                emit("research_task", {"id": row["id"], "stage": row["stage"], "summary": format_status(row),
+                                       "runs_used": row["runs_used"], "max_runs": row["max_runs"]})
+            else:
+                emit("result", row)
+        refresh()
     elif action == "local":
         for line in workspace_command(root, request["command"], request.get("args", [])):
             emit("result", line)
@@ -97,14 +159,14 @@ def dispatch(root, request, emit):
         from .dmq import format_update, study_updates
 
         reference = bool(request.get("reference", False))
-        model = None if reference else model_from_env()
+        model = None if reference else model_from_env(root)
         for node, value in study_updates(root, model, reference=reference):
             emit("result", format_update(node, value))
         refresh()
     elif action == "dsr":
         from .dsr import format_update, study_updates
 
-        model = model_from_env()
+        model = model_from_env(root)
         for node, value in study_updates(request["manifest"], root, model, AndesSimulator(root / "runs"),
                                          request.get("memory"), bool(request.get("holdout", False))):
             emit("result", format_update(node, value))

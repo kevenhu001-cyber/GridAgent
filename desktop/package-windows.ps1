@@ -40,7 +40,7 @@ if ($LASTEXITCODE -ne 0) { throw "Cannot record package versions" }
 $Freeze | Set-Content -Encoding utf8 (Join-Path $Output "runtime-requirements.txt")
 @{ python = $Version; architecture = "win-x64"; runtime = "private-cpython"; project = "GridAgent" } |
     ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $Output "runtime-manifest.json")
-Copy-Item (Join-Path $Repo "LICENSE"), (Join-Path $Repo "docs/windows.md"), (Join-Path $Repo "desktop/gridagent-tui.cmd") $Output
+Copy-Item (Join-Path $Repo "LICENSE"), (Join-Path $Repo "docs/windows.md"), (Join-Path $Repo "docs/research-tasks.md"), (Join-Path $Repo "desktop/gridagent-tui.cmd") $Output
 Copy-Item (Join-Path $Repo "examples") (Join-Path $Output "examples") -Recurse
 Invoke-Checked $Python @((Join-Path $Repo "scripts/sync_benchmark.py"), (Join-Path $Output "benchmark-assets"))
 # A moved install path with spaces verifies that no build-machine prefix is required.

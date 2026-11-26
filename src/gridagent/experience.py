@@ -59,7 +59,7 @@ def remember_repair(root, study_id):
         return False
     before = study.read("candidate-0")
     after = study.read(f"candidate-{index}")
-    if before != manifest.initial.model_dump(mode="json") or after != study.read("best-program"):
+    if before != frozen["initial"] or after != study.read("best-program"):
         raise ValueError("Model provenance mismatch")
     reconstructed = copy.deepcopy(before)
     changes = []

@@ -9,11 +9,19 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import DataTable, Footer, Input, RichLog, Static
+from textual.widgets import Button, DataTable, Footer, Input, RichLog, Static
 
 from .cli import text_content, tool_summary
 from .commands import workspace_command
 from .store import recorded_task
+
+WORKSPACE_COMMANDS = {
+    "/runs", "/study", "/wave", "/study-wave", "/eigen", "/sweep", "/resume-dsr", "/optimize", "/andes-batch",
+    "/paper-rank", "/paper-kpi", "/paper-edit", "/paper-dmq", "/paper-dsr", "/paper-mitigate", "/paper-trials",
+    "/models", "/import-model", "/knowledge", "/import-knowledge", "/backends", "/native-program", "/native-table",
+    "/drafts", "/model-repair", "/modeling-benchmark", "/experience", "/plugins", "/plugin-install",
+    "/plugin-remove", "/plugin-check", "/plugin-update", "/plugin-rollback", "/register-ngspice", "/ngspice-rc",
+}
 
 
 class StudyBrowser(ModalScreen):
@@ -52,6 +60,77 @@ class StudyBrowser(ModalScreen):
         self.dismiss(None)
 
 
+class ModelSettingsScreen(ModalScreen):
+    BINDINGS: ClassVar = [("escape", "close_settings", "Close")]
+    CSS = """
+    ModelSettingsScreen { align: center middle; background: $background 70%; }
+    #model-form { width: 76; max-width: 98%; height: auto; padding: 1 2; border: round $primary; }
+    #model-actions { height: 3; }
+    #connection-status { height: auto; min-height: 1; }
+    """
+
+    def __init__(self, settings, session_key):
+        super().__init__()
+        self.settings = settings
+        self.session_key = session_key
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="model-form"):
+            yield Static("Model settings · OpenAI-compatible endpoint")
+            yield Static("Model name")
+            yield Input(value=self.settings.model, placeholder="Provider model ID", id="model-name")
+            yield Static("Base URL (optional)")
+            yield Input(value=self.settings.base_url, placeholder="https://provider.example/v1", id="model-url")
+            yield Static("API key (this session only)")
+            yield Input(placeholder="Enter a key or use the environment", password=True, id="model-key")
+            with Horizontal(id="model-actions"):
+                yield Button("Save", id="model-save", variant="primary")
+                yield Button("Test connection", id="model-test")
+                yield Button("Close", id="model-close")
+            yield Static("", id="connection-status", markup=False)
+
+    def on_button_pressed(self, event: Button.Pressed):
+        from .model_settings import ModelSettings
+
+        if event.button.id == "model-close":
+            self.dismiss(None)
+            return
+        status = self.query_one("#connection-status", Static)
+        try:
+            settings = ModelSettings(model=self.query_one("#model-name", Input).value,
+                                     base_url=self.query_one("#model-url", Input).value)
+            if not settings.model:
+                raise ValueError("Enter a model name")
+        except ValueError:
+            status.update("Enter a model name and a valid HTTP(S) base URL.")
+            return
+        existing_key = self.session_key if settings.base_url == self.settings.base_url else None
+        key = self.query_one("#model-key", Input).value.strip() or existing_key
+        if event.button.id == "model-save":
+            self.dismiss((settings, key))
+        else:
+            status.update("Testing connection…")
+            event.button.disabled = True
+            self.run_worker(lambda: self._test_connection(settings, key), thread=True, exit_on_error=False)
+
+    def _test_connection(self, settings, key):
+        from .model_settings import check_connection
+
+        try:
+            message = check_connection(settings, key)
+        except Exception as exc:  # noqa: BLE001 - avoid rendering provider errors or credentials
+            message = f"Connection failed ({type(exc).__name__}). Check endpoint, model and session key."
+        self.app.call_from_thread(self._show_result, message)
+
+    def _show_result(self, message):
+        if self.is_mounted:
+            self.query_one("#connection-status", Static).update(message)
+            self.query_one("#model-test", Button).disabled = False
+
+    def action_close_settings(self):
+        self.dismiss(None)
+
+
 class GridApp(App):
     TITLE = "GridAgent"
     CSS = """
@@ -66,7 +145,9 @@ class GridApp(App):
     Footer { background: $surface; }
     """
     BINDINGS: ClassVar = [("ctrl+q", "quit", "Quit"), ("ctrl+l", "new_session", "New session"),
-                          Binding("ctrl+e", "browse_studies", "Studies", priority=True)]
+                          Binding("ctrl+e", "browse_studies", "Studies", priority=True),
+                          Binding("ctrl+p", "model_settings", "Model settings", priority=True),
+                          Binding("ctrl+x", "cancel_research", "Cancel task", priority=True)]
 
     def __init__(self, graph, budget, store, sid, dsr_runner=None, studies_root=None, dmq_runner=None, workspace=Path(".gridagent")):
         super().__init__()
@@ -76,6 +157,9 @@ class GridApp(App):
         self.dmq_runner = dmq_runner
         self.studies_root = studies_root
         self.workspace = workspace
+        self.active_research = None
+        self.session_key = None
+        self.model_settings = None
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="top"):
@@ -127,6 +211,51 @@ class GridApp(App):
             self.sid = self.store.create_session()
             self._load_session()
 
+    def action_model_settings(self):
+        from .model_settings import active_settings
+
+        if not self.busy:
+            try:
+                settings = self.model_settings or active_settings(self.workspace)
+            except ValueError:
+                self._write(Text("The saved model settings are invalid.", style="red"))
+                return
+            self.push_screen(ModelSettingsScreen(settings, self.session_key), self._save_model_settings)
+
+    def _save_model_settings(self, result):
+        if result is None:
+            return
+        from .agent import build_agent
+        from .dmq import study_updates as dmq_updates
+        from .dsr import study_updates as dsr_updates
+        from .model_settings import save_settings
+        from .simulator import AndesSimulator
+
+        settings, self.session_key = result
+        try:
+            self.model_settings = save_settings(self.workspace, settings.model, settings.base_url)
+        except (OSError, ValueError):
+            self._write(Text("Unable to save workspace model settings.", style="red"))
+            return
+        try:
+            model = self._configured_model()
+        except ValueError:
+            self.graph = None
+            self.dsr_runner = self.dmq_runner = None
+            self._write(Text("Model saved. Add a session API key to run agent tasks."))
+            return
+        simulator = AndesSimulator(self.workspace / "runs")
+        self.graph = build_agent(model, simulator, budget=self.budget, workspace=self.workspace)
+        self.dsr_runner = lambda path: dsr_updates(path, self.workspace, model, simulator)
+        self.dmq_runner = lambda: dmq_updates(self.workspace, model)
+        self.query_one("#session", Static).update(f"{settings.model} · {self.sid[:8]}")
+        self._write(Text(f"Model saved · {settings.model} · API key kept for this session"))
+
+    def _configured_model(self, *, settings=None):
+        from .agent import model_from_env
+
+        return model_from_env(self.workspace, settings=settings or self.model_settings, api_key=self.session_key)
+
     def on_input_submitted(self, event: Input.Submitted):
         question = event.value.strip()
         if not question or self.busy:
@@ -134,7 +263,16 @@ class GridApp(App):
         event.input.value = ""
         chat = self.query_one("#chat", RichLog)
         if question == "/help":
+            chat.write(Text("/model · configure the workspace model and test the connection"))
+            chat.write(Text("/research QUESTION · /research-multi QUESTION · /research-manifest PATH · "
+                            "/research-tasks · /research-status ID · /research-resume ID · /research-cancel ID · "
+                            "/research-approve ID · /research-clarify ID ANSWER · /research-report ID PATH"))
+            chat.write(Text("/research-python MANIFEST · /research-sandbox enable|disable|status · "
+                            "/research-benchmark [TASK [MODE]] · /andes-batch PATH"))
             chat.write(Text("/new · new session | /sessions · list | /open ID · reopen | /dsr PATH · screen faults | /dmq · model review | /studies · list | /runs | /study ID | /wave ID CHANNEL | /study-wave ID PATH CHANNEL | /eigen | /sweep BUS DURATIONS | /resume-dsr ID | /optimize [BUDGET] | /paper-dmq PROFILE | /paper-dsr PROFILE | /paper-mitigate PROFILE | /paper-trials TASK COUNT [PROFILE] | /modeling-benchmark TASK | /model-repair MANIFEST | /experience | /plugins | /plugin-install ID | /plugin-remove ID | /drafts | /backends | /native-program JSON | /native-table RUN TABLE | /knowledge | /import-knowledge JSON | /models | /import-model PATH | /paper-rank | /paper-kpi CSV CLEARING_S | /paper-edit Kqp Kqi Kvp Kvi | Ctrl+E Studies | Ctrl+Q · quit"))
+            return
+        if question == "/model":
+            self.action_model_settings()
             return
         if question == "/new":
             self.action_new_session()
@@ -159,7 +297,21 @@ class GridApp(App):
             for row in rows:
                 chat.write(Text(f"{row['id']}  {row['status']}"))
             return
-        if question.split()[0] in {"/runs", "/study", "/wave", "/study-wave", "/eigen", "/sweep", "/resume-dsr", "/optimize", "/paper-rank", "/paper-kpi", "/paper-edit", "/paper-dmq", "/paper-dsr", "/paper-mitigate", "/paper-trials", "/models", "/import-model", "/knowledge", "/import-knowledge", "/backends", "/native-program", "/native-table", "/drafts", "/model-repair", "/modeling-benchmark", "/experience", "/plugins", "/plugin-install", "/plugin-remove"}:
+        command = question.split()[0]
+        if command == "/research" or command.startswith("/research-"):
+            try:
+                if command in {"/research", "/research-multi"}:
+                    parts = question.split(maxsplit=1)
+                else:
+                    parts = shlex.split(question)
+            except ValueError:
+                chat.write(Text("Invalid command quoting.", style="red"))
+                return
+            self.busy = True
+            event.input.disabled = True
+            self.run_worker(lambda: self._research_command(parts), thread=True, exit_on_error=False)
+            return
+        if command in WORKSPACE_COMMANDS:
             try:
                 parts = shlex.split(question)
             except ValueError:
@@ -200,10 +352,10 @@ class GridApp(App):
 
     def _run_task(self, question):
         try:
-            from .agent import build_agent, model_from_env
+            from .agent import build_agent
             from .simulator import AndesSimulator
 
-            graph = build_agent(model_from_env(), AndesSimulator(self.workspace / "runs"),
+            graph = build_agent(self._configured_model(), AndesSimulator(self.workspace / "runs"),
                                 budget=self.budget, workspace=self.workspace)
             for event in recorded_task(graph, self.store, self.sid, question):
                 for node, update in event.items():
@@ -241,12 +393,43 @@ class GridApp(App):
 
     def _workspace_command(self, parts):
         try:
-            for line in workspace_command(self.workspace, parts[0][1:], parts[1:]):
+            for line in workspace_command(self.workspace, parts[0][1:], parts[1:], model_factory=self._configured_model):
                 self.call_from_thread(self._write, Text(line))
         except (OSError, ValueError, TypeError) as exc:
             self.call_from_thread(self._write, Text(str(exc), style="red"))
         finally:
             self.call_from_thread(self._finish)
+
+    def _research_command(self, parts):
+        from .research import task_command
+
+        try:
+            for row in task_command(self.workspace, parts[0][1:], parts[1:], model_factory=self._configured_model):
+                self.call_from_thread(self._show_research, row)
+        except Exception as exc:  # noqa: BLE001 - UI boundary
+            message = str(exc) if isinstance(exc, (ValueError, OSError)) else type(exc).__name__
+            self.call_from_thread(self._write, Text(message, style="red"))
+        finally:
+            self.call_from_thread(self._finish)
+
+    def _show_research(self, row):
+        from .research import TERMINAL, format_status
+
+        if isinstance(row, dict):
+            initial = self.active_research != row["id"]
+            self.active_research = None if row["stage"] in TERMINAL else row["id"]
+            self._status(f"Research · {row['stage']} · {row['runs_used']} simulations")
+            if not initial and row["stage"] not in TERMINAL | {"awaiting_input", "awaiting_approval"}:
+                return
+            row = format_status(row)
+        self._write(Text(row))
+
+    def action_cancel_research(self):
+        from .research import ResearchTasks
+
+        if self.active_research is not None:
+            ResearchTasks(self.workspace).cancel(self.active_research)
+            self._status("Cancellation requested")
 
     def _status(self, text):
         self.query_one("#status", Static).update(text)
@@ -256,6 +439,7 @@ class GridApp(App):
 
     def _finish(self):
         self.busy = False
+        self.active_research = None
         prompt = self.query_one("#prompt", Input)
         prompt.disabled = False
         prompt.focus()

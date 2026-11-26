@@ -91,7 +91,7 @@ def fidelity(task, program):
             item["steps"] = sorted(item["steps"], key=lambda x: json.dumps(x, sort_keys=True))
     if isinstance(program, DispatchProgram) and "buses" in expected:
         for item in (expected, actual):
-            for group in ("buses", "loads", "generators", "storage", "links"):
+            for group in ("buses", "loads", "generators", "storage", "links", "lines"):
                 item[group] = sorted(item[group], key=lambda x: x["name"])
     return actual == expected
 

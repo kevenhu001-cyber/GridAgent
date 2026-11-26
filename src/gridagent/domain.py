@@ -61,6 +61,28 @@ class FaultRequest(BaseModel):
         return self
 
 
+class GovernorSetting(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    device: str = Field(min_length=1, max_length=80)
+    parameter: Literal["R", "T1"]
+    value: float = Field(gt=0, le=2)
+
+    @model_validator(mode="after")
+    def check_range(self):
+        lower, upper = (0.01, 0.15) if self.parameter == "R" else (0.02, 2.0)
+        if not lower <= self.value <= upper:
+            raise ValueError(f"TGOV1 {self.parameter} outside {lower}..{upper}")
+        return self
+
+
+class GovernorEigenRequest(CaseRequest):
+    governor: GovernorSetting
+
+
+class GovernorFaultRequest(FaultRequest):
+    governor: GovernorSetting
+
+
 def voltage_metrics(t, v, bus_ids, clearing_s: float) -> dict:
     """Time-averaged normalized post-fault voltage violations, not a stability proof."""
     t = np.asarray(t, dtype=float)

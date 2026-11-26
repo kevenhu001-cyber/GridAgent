@@ -41,6 +41,25 @@ def tool_summary(message):
 def main():
     parser = argparse.ArgumentParser(description="GridAgent offline research assistant")
     parser.add_argument("--ask", help="Run one research task without TUI")
+    research = parser.add_mutually_exclusive_group()
+    research.add_argument("--research", metavar="QUESTION", help="Start a verified AC power-flow research task")
+    research.add_argument("--research-manifest", metavar="JSON", help="Start from an authorized research manifest")
+    research.add_argument("--research-tasks", action="store_true", help="List saved research tasks")
+    research.add_argument("--research-status", metavar="ID")
+    research.add_argument("--research-resume", metavar="ID")
+    research.add_argument("--research-cancel", metavar="ID")
+    research.add_argument("--research-approve", metavar="ID", help="Approve the listed repair ranges")
+    research.add_argument("--research-clarify", nargs=2, metavar=("ID", "ANSWER"))
+    research.add_argument("--research-report", nargs=2, metavar=("ID", "NEW_JSON"))
+    research.add_argument("--research-benchmark", nargs="*", metavar="TASK_OR_MODE",
+                          help="List public AC benchmarks or run TASK [reference|single|multi]")
+    research.add_argument("--research-python", metavar="MANIFEST", help="Run verified sandbox Python research")
+    research.add_argument("--research-sandbox", choices=("enable", "disable", "status"))
+    research.add_argument("--research-compare", nargs="+", metavar="ARG",
+                          help="TASK REPEATS MODEL MODEL [MODEL ...] [memory TRAINING_JSON]")
+    research.add_argument("--research-experience", nargs="?", const="", metavar="NEW_JSON",
+                          help="List verified repairs or export a training-only snapshot")
+    parser.add_argument("--research-mode", choices=("single", "multi"), default="single")
     parser.add_argument("--budget", type=int, default=3, choices=range(31), metavar="0..30")
     parser.add_argument("--workspace", type=Path, default=Path(".gridagent"))
     parser.add_argument("--session", help="Reopen a session using its full ID")
@@ -70,7 +89,13 @@ def main():
     parser.add_argument("--plugins", action="store_true")
     parser.add_argument("--plugin-install", metavar="ID")
     parser.add_argument("--plugin-remove", metavar="ID")
+    parser.add_argument("--plugin-check", metavar="ID")
+    parser.add_argument("--plugin-update", metavar="ID")
+    parser.add_argument("--plugin-rollback", metavar="ID")
     parser.add_argument("--backends", action="store_true")
+    parser.add_argument("--register-ngspice", metavar="EXE")
+    parser.add_argument("--ngspice-rc", nargs=3, metavar=("ANALYSIS", "OHMS", "FARADS"))
+    parser.add_argument("--andes-batch", metavar="JSON")
     parser.add_argument("--native-program", type=Path, metavar="JSON")
     parser.add_argument("--native-table", nargs="+", metavar="RUN_TABLE_PAGE")
     parser.add_argument("--import-knowledge", type=Path, metavar="JSON")
@@ -87,14 +112,35 @@ def main():
     store = ResearchStore(args.workspace / "research.sqlite3")
     console = Console()
     local_commands = [
+        ("research-multi" if args.research_mode == "multi" else "research",
+         [args.research] if args.research is not None else None),
+        ("research-manifest", [args.research_manifest] if args.research_manifest else None),
+        ("research-tasks", [] if args.research_tasks else None),
+        ("research-status", [args.research_status] if args.research_status else None),
+        ("research-resume", [args.research_resume] if args.research_resume else None),
+        ("research-cancel", [args.research_cancel] if args.research_cancel else None),
+        ("research-approve", [args.research_approve] if args.research_approve else None),
+        ("research-clarify", args.research_clarify), ("research-report", args.research_report),
+        ("research-benchmark", args.research_benchmark),
+        ("research-python", [args.research_python] if args.research_python else None),
+        ("research-sandbox", [args.research_sandbox] if args.research_sandbox else None),
+        ("research-compare", args.research_compare),
+        ("research-experience", [args.research_experience] if args.research_experience else
+         [] if args.research_experience is not None else None),
         ("plugins", [] if args.plugins else None),
         ("plugin-install", [args.plugin_install] if args.plugin_install else None),
         ("plugin-remove", [args.plugin_remove] if args.plugin_remove else None),
+        ("plugin-check", [args.plugin_check] if args.plugin_check else None),
+        ("plugin-update", [args.plugin_update] if args.plugin_update else None),
+        ("plugin-rollback", [args.plugin_rollback] if args.plugin_rollback else None),
         ("experience", [] if args.experience else None),
         ("modeling-benchmark", [args.modeling_benchmark] if args.modeling_benchmark else None),
         ("model-repair", [str(args.model_repair)] if args.model_repair else None),
         ("drafts", [] if args.drafts else None),
         ("backends", [] if args.backends else None),
+        ("register-ngspice", [args.register_ngspice] if args.register_ngspice else None),
+        ("ngspice-rc", args.ngspice_rc),
+        ("andes-batch", [args.andes_batch] if args.andes_batch else None),
         ("native-program", [str(args.native_program)] if args.native_program else None),
         ("native-table", args.native_table),
         ("import-knowledge", [str(args.import_knowledge)] if args.import_knowledge else None),
@@ -161,7 +207,7 @@ def main():
                 workspace=args.workspace).run()
         return
     try:
-        model = model_from_env()
+        model = model_from_env(args.workspace)
         simulator = AndesSimulator(args.workspace / "runs")
         if args.dmq:
             from .dmq import format_update, study_updates
@@ -176,7 +222,17 @@ def main():
         sid = store.require_session(args.session) if args.session else store.create_session()
         graph = build_agent(model, simulator, budget=args.budget, workspace=args.workspace)
     except ValueError as exc:
-        parser.error(str(exc))
+        if args.ask or args.dmq or args.dsr:
+            parser.error(str(exc))
+        from .tui import GridApp
+
+        try:
+            sid = store.require_session(args.session) if args.session else store.create_session()
+        except ValueError as session_error:
+            parser.error(str(session_error))
+        GridApp(None, args.budget, store, sid, studies_root=args.workspace / "studies",
+                workspace=args.workspace).run()
+        return
     if args.ask:
         console.print(f"Session: {sid}", markup=False)
         for event in recorded_task(graph, store, sid, args.ask):

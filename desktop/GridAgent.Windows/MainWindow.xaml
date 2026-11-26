@@ -15,9 +15,14 @@
      <TextBlock Text="RESEARCH WORKSPACE" FontSize="10" Foreground="{StaticResource Muted}" Margin="0,0,0,20"/>
      <Button Content="+  New session" Click="NewSession"/>
      <Button Content="Refresh workspace" Click="Refresh"/>
+     <Button Content="Open workspace…" Click="OpenWorkspace"/>
+     <Expander Header="Models, plugins and knowledge" Margin="0,5,0,0">
+      <ScrollViewer MaxHeight="275" VerticalScrollBarVisibility="Auto">
+       <StackPanel>
      <Button Content="Import ANDES model…" Click="ImportModel"/>
      <Button Content="Available models" Click="Models"/>
      <Button Content="Simulation Plugins…" Click="PluginCenter"/>
+     <Button Content="Register ngspice…" Click="RegisterNgspice"/>
      <Button Content="Run simulation program…" Click="NativeProgram"/>
      <Button Content="Benchmark and repair…" Click="ModelRepair"/>
      <Button Content="Engineering experience" Click="Experience"/>
@@ -25,6 +30,9 @@
      <Button Content="Review Python draft…" Click="ReviewScript"/>
      <Button Content="Import engineering references…" Click="ImportKnowledge"/>
      <Button Content="Knowledge packs" Click="Knowledge"/>
+       </StackPanel>
+      </ScrollViewer>
+     </Expander>
     </StackPanel>
     <TextBlock DockPanel.Dock="Bottom" Text="Local · ANDES · LangGraph" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,12,0,0"/>
     <TabControl Margin="0,12,0,0" Background="Transparent" BorderThickness="0">
@@ -42,8 +50,36 @@
      </TabItem>
      <TabItem Header="Runs">
       <DockPanel>
-       <Button DockPanel.Dock="Bottom" Content="View voltage waveform" Click="OpenWaveform" Margin="0,8,0,0"/>
-       <ListBox x:Name="RunList" DisplayMemberPath="Label"/>
+       <WrapPanel DockPanel.Dock="Bottom" Margin="0,6,0,0">
+        <Button Content="Waveform" Click="OpenWaveform"/>
+        <Button Content="Overlay" Click="OverlayWaveforms"/>
+        <Button Content="Charts" Click="OpenScientificCharts"/>
+        <Button Content="Topology and edit" Click="OpenTopology"/>
+       </WrapPanel>
+       <ListBox x:Name="RunList" DisplayMemberPath="Label" SelectionMode="Extended"/>
+      </DockPanel>
+     </TabItem>
+     <TabItem Header="Models">
+      <DockPanel>
+       <WrapPanel DockPanel.Dock="Bottom" Margin="0,6,0,0">
+        <Button Content="View change" Click="ModelRevisionDiff"/>
+        <Button Content="Run selected version" Click="RunModelRevision"/>
+       </WrapPanel>
+       <ListBox x:Name="ModelRevisions" DisplayMemberPath="Label"/>
+      </DockPanel>
+     </TabItem>
+     <TabItem Header="Tasks">
+      <DockPanel>
+       <WrapPanel DockPanel.Dock="Bottom" Margin="0,6,0,0">
+        <Button Content="Details" Click="ResearchStatus"/>
+        <Button Content="Open manifest…" Click="StartResearchManifest"/>
+        <Button Content="Resume" Click="ResumeResearch"/>
+        <Button Content="Cancel" Click="CancelResearch"/>
+        <Button Content="Approve repair" Click="ApproveResearch"/>
+        <Button Content="Use prompt as answer" Click="ClarifyResearch"/>
+        <Button Content="Export JSON" Click="ExportResearch"/>
+       </WrapPanel>
+       <ListBox x:Name="ResearchList" DisplayMemberPath="Label"/>
       </DockPanel>
      </TabItem>
     </TabControl>
@@ -61,11 +97,11 @@
     <TextBlock x:Name="StatusText" DockPanel.Dock="Right" Text="Ready" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
     <TextBlock Text="Engineering assistant" FontSize="21" FontWeight="SemiBold"/>
    </DockPanel>
-   <Expander Grid.Row="1" Header="Local workspace and model settings" Margin="0,14,0,12">
+   <Expander Grid.Row="1" x:Name="ModelConfiguration" Header="Workspace and model settings" Margin="0,14,0,12">
     <Grid Margin="0,10,0,0">
      <Grid.ColumnDefinitions><ColumnDefinition Width="120"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
      <Grid.RowDefinitions>
-      <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
      </Grid.RowDefinitions>
      <TextBlock Text="Research engine" VerticalAlignment="Center"/>
      <TextBlock x:Name="RuntimeStatus" Grid.Column="1" Margin="9,6" VerticalAlignment="Center" Foreground="{StaticResource Muted}"/>
@@ -77,6 +113,12 @@
      <TextBox x:Name="BaseUrl" Grid.Row="3" Grid.Column="1" Margin="0,2" AutomationProperties.Name="Base URL"/>
      <TextBlock Grid.Row="4" Text="API key (session)" VerticalAlignment="Center"/>
      <PasswordBox x:Name="ApiKey" Grid.Row="4" Grid.Column="1" Margin="0,2" AutomationProperties.Name="API key"/>
+     <WrapPanel Grid.Row="5" Grid.Column="1" Margin="0,8,0,0">
+      <Button Content="Load saved" Click="LoadModelSettings"/>
+      <Button Content="Save model" Click="SaveModelSettings"/>
+      <Button Content="Test connection" Click="TestModelConnection"/>
+      <Button Content="Automatic Python settings…" Click="PythonSettings"/>
+     </WrapPanel>
     </Grid>
    </Expander>
    <Border Grid.Row="2" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,1" Padding="0,12">
@@ -93,9 +135,13 @@
     <Button Content="DMQ reference" Click="DmqReference"/>
     <Button Content="Open DSR…" Click="Dsr"/>
     <Button Content="Eigenanalysis" Click="Eigen"/>
+    <Button Content="ANDES batch…" Click="AndesBatch"/>
     <Button Content="Optimize" Click="Optimize"/>
     <Button Content="Runs" Click="Runs"/>
     <Button Content="Resume selected DSR" Click="ResumeDsr"/>
+    <Button Content="Run research task" Click="StartResearch"/>
+    <Button Content="Run with multiple agents" Click="StartMultiResearch"/>
+    <Button Content="Run verified Python…" Click="RunVerifiedPython"/>
    </WrapPanel>
    <Grid Grid.Row="4">
     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
