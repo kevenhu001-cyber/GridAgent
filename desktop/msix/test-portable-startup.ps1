@@ -1,5 +1,5 @@
 # CI-only actual GUI startup check, separate from the private Python bridge smoke.
-param([Parameter(Mandatory)][string]$PortableDirectory)
+param([Parameter(Mandatory)][string]$PortableDirectory, [switch]$UiOnly)
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 $root = (Resolve-Path $PortableDirectory).Path
@@ -11,7 +11,11 @@ $oldDiagnostics = $env:GRIDAGENT_STARTUP_DIAGNOSTICS
 $env:GRIDAGENT_STARTUP_DIAGNOSTICS = "1"
 $process = $null
 try {
-    $process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
+    if ($UiOnly) {
+        $process = Start-Process -FilePath $exe -WorkingDirectory $root -ArgumentList "--ui-smoke" -PassThru
+    } else {
+        $process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
+    }
     $null = $process.Handle
     $deadline = (Get-Date).AddSeconds(45)
     do {
@@ -21,7 +25,13 @@ try {
             Start-Sleep -Seconds 3
             $process.Refresh()
             if ($process.HasExited -or $process.MainWindowHandle -eq [IntPtr]::Zero -or !$process.Responding) { throw "Portable GridAgent did not remain responsive." }
-            Write-Host "Portable GridAgent window opened and remained responsive."
+            if (!(Test-Path $log)) { throw "Missing managed startup diagnostics." }
+            $stages = Get-Content $log -Raw
+            foreach ($stage in @("application.initialize.complete", "window.xaml.complete", "window.construct.complete", "window.activate.complete", "window.loaded")) {
+                if (!$stages.Contains($stage)) { throw "Missing startup milestone: $stage" }
+            }
+            if ($stages -match 'application.unhandled|application.initialize.failed|launch.failed') { throw "Managed startup exception recorded." }
+            Write-Host "Portable GridAgent XAML loaded, window activated and remained responsive."
             return
         }
         Start-Sleep -Milliseconds 500

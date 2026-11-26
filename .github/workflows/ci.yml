@@ -82,13 +82,15 @@ jobs:
         run: |
           python -m pip install 'Pillow>=11,<13'
           python desktop/msix/make-assets.py desktop/GridAgent.WinUI/BrandAssets
+      - name: Check WinUI XAML icon contracts
+        run: python desktop/msix/check-xaml.py
       - name: Publish native WinUI workbench (UI only)
         run: dotnet publish desktop/GridAgent.WinUI/GridAgent.WinUI.csproj -c Release -r win-x64 --self-contained true -o winui-ui-smoke
       - name: Inspect WinUI resource map and launch before bundling Python
         shell: pwsh
         run: |
           ./desktop/msix/verify-portable-pri.ps1 -Directory winui-ui-smoke
-          ./desktop/msix/test-portable-startup.ps1 -PortableDirectory winui-ui-smoke
+          ./desktop/msix/test-portable-startup.ps1 -PortableDirectory winui-ui-smoke -UiOnly
   windows:
     needs: winui-build
     runs-on: windows-latest

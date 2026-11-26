@@ -32,18 +32,21 @@ public partial class MainWindow : Window
     private JsonElement _topology;
     private sealed record Entry(string Id, string Label, string? Info = null);
 
+    private bool _layoutReady;
     private bool _launchInitialized;
     public MainWindow(bool skipOnboarding = false)
     {
         StartupDiagnostics.Record("window.xaml.begin");
         InitializeComponent();
         StartupDiagnostics.Record("window.xaml.complete");
+        _layoutReady = true;
         RuntimeStatus.Text = File.Exists(BundledPython) ? "Bundled Python · ready" : "Developer runtime";
         WorkspacePath.Text = SetupPreferences.LoadWorkspace() ?? AppDataPaths.DefaultWorkspace;
         ModelName.Text = Environment.GetEnvironmentVariable("GRIDAGENT_MODEL") ?? "";
         BaseUrl.Text = Environment.GetEnvironmentVariable("GRIDAGENT_BASE_URL") ?? "";
         Messages.ItemsSource = _messages;
         LoadTheme();
+        Root.RequestedTheme = Theme.SelectedIndex == 1 ? ElementTheme.Light : Theme.SelectedIndex == 2 ? ElementTheme.Dark : ElementTheme.Default;
         ModelName.TextChanged += (_, _) => UpdateModelCaption();
         UpdateModelCaption();
         Title = "GridAgent";
@@ -85,7 +88,7 @@ public partial class MainWindow : Window
 
     private async void Navigate(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
-        if (Pages == null || (args.SelectedItemContainer as NavigationViewItem)?.Tag is Entry) return;
+        if (!_layoutReady || (args.SelectedItemContainer as NavigationViewItem)?.Tag is Entry) return;
         var tag = args.IsSettingsSelected ? "settings" : (args.SelectedItemContainer as NavigationViewItem)?.Tag as string ?? "chat";
         foreach (var (page, key) in new (UIElement, string)[] { (ChatPage,"chat"),(TasksPage,"tasks"),(ModelsPage,"models"),(RunsPage,"runs"),(StudiesPage,"studies"),(ToolsPage,"tools"),(PluginsPage,"plugins"),(KnowledgePage,"knowledge"),(SettingsPage,"settings") })
             page.Visibility = tag == key ? Visibility.Visible : Visibility.Collapsed;
@@ -98,7 +101,10 @@ public partial class MainWindow : Window
         if (args.InvokedItemContainer is NavigationViewItem item && item.Tag is Entry session)
             await OpenSessionById(session.Id);
     }
-    private void SearchSessions(object sender, TextChangedEventArgs args) => ApplySessionFilter();
+    private void SearchSessions(object sender, TextChangedEventArgs args)
+    {
+        if (_layoutReady) ApplySessionFilter();
+    }
     private void ApplySessionFilter()
     {
         if (SessionList == null) return;
@@ -183,7 +189,7 @@ public partial class MainWindow : Window
     }
     private void ChangeTheme(object sender, SelectionChangedEventArgs e)
     {
-        if (Root == null || sender is not ComboBox choice) return;
+        if (!_layoutReady || sender is not ComboBox choice) return;
         Root.RequestedTheme = choice.SelectedIndex == 1 ? ElementTheme.Light : choice.SelectedIndex == 2 ? ElementTheme.Dark : ElementTheme.Default;
         foreach (var window in _engineeringWindows)
             if (window.Content is FrameworkElement content) content.RequestedTheme = Root.RequestedTheme;

@@ -31,8 +31,11 @@ public partial class App : Application
             AppDataPaths.ConfigureProcess();
             bool smoke = AppDataPaths.IsPackaged && global::Windows.ApplicationModel.Package.Current.Id.Name == "GridAgent.Development" &&
                 (args.Arguments.Trim() == "--msix-smoke" || Environment.GetCommandLineArgs().Contains("--msix-smoke"));
+            bool uiOnly = !AppDataPaths.IsPackaged &&
+                Environment.GetEnvironmentVariable("GRIDAGENT_STARTUP_DIAGNOSTICS") == "1" &&
+                Environment.GetCommandLineArgs().Contains("--ui-smoke");
             StartupDiagnostics.Record("window.construct.begin");
-            _window = new MainWindow(skipOnboarding: smoke);
+            _window = new MainWindow(skipOnboarding: smoke || uiOnly);
             StartupDiagnostics.Record("window.construct.complete");
             _window.Activate();
             StartupDiagnostics.Record("window.activate.complete");
