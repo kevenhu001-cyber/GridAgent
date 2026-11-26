@@ -59,3 +59,19 @@ def test_resume_rejects_unfrozen_study(tmp_path):
     with pytest.raises(ValueError, match="No frozen predictions"):
         list(resume_dsr(tmp_path, study.id, sim))
     assert not sim.calls
+
+
+def test_resume_preserves_completed_attempt(tmp_path):
+    study = Study(tmp_path)
+    sim = FakeSimulator(study)
+    events = build_dsr(manifest(), [], estimate, sim, study).stream({}, stream_mode="updates")
+    for event in events:
+        if "simulate" in event:
+            break
+    events.close()
+    assert len(sim.calls) == 1
+    prior = study.read("result-1")
+    report = list(resume_dsr(tmp_path, study.id, sim))[-1][1]["report"]
+    assert len(sim.calls) == 3
+    assert report["completed"]
+    assert study.read("result-1") == prior

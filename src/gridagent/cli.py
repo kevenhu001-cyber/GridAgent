@@ -60,17 +60,26 @@ def main():
     args = parser.parse_args()
     store = ResearchStore(args.workspace / "research.sqlite3")
     console = Console()
-    if args.optimize is not None or args.resume_dsr or args.eigen or args.sweep or args.runs or args.study or args.wave or args.study_wave:
+    local_commands = [
+        ("optimize", [str(args.optimize)] if args.optimize is not None else None),
+        ("resume-dsr", [args.resume_dsr] if args.resume_dsr else None),
+        ("eigen", [] if args.eigen else None),
+        ("sweep", [str(x) for x in args.sweep] if args.sweep else None),
+        ("runs", [] if args.runs else None),
+        ("study", [args.study] if args.study else None),
+        ("wave", args.wave), ("study-wave", args.study_wave),
+    ]
+    selected = [(name, values) for name, values in local_commands if values is not None]
+    if selected:
         from .commands import workspace_command
 
-        command, values = ("optimize", [str(args.optimize)]) if args.optimize is not None else (("resume-dsr", [args.resume_dsr]) if args.resume_dsr else (("eigen", []) if args.eigen else (
-            ("sweep", [str(x) for x in args.sweep]) if args.sweep else
-            ("runs", []) if args.runs else ("study", [args.study]) if args.study else
-            ("wave", args.wave) if args.wave else ("study-wave", args.study_wave))))
+        if len(selected) != 1:
+            parser.error("Select one local research command at a time")
+        command, values = selected[0]
         try:
             for line in workspace_command(args.workspace, command, values):
                 console.print(line, markup=False)
-        except (OSError, ValueError, TypeError) as exc:
+        except (OSError, ValueError, TypeError, KeyError) as exc:
             parser.error(str(exc))
         return
     if args.dmq_reference:

@@ -6,6 +6,7 @@ from langchain_core.messages import HumanMessage, ToolMessage
 from rich.markdown import Markdown
 from rich.text import Text
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Footer, Input, RichLog, Static
@@ -65,7 +66,7 @@ class GridApp(App):
     Footer { background: $surface; }
     """
     BINDINGS: ClassVar = [("ctrl+q", "quit", "Quit"), ("ctrl+l", "new_session", "New session"),
-                          ("ctrl+e", "browse_studies", "Studies")]
+                          Binding("ctrl+e", "browse_studies", "Studies", priority=True)]
 
     def __init__(self, graph, budget, store, sid, dsr_runner=None, studies_root=None, dmq_runner=None, workspace=Path(".gridagent")):
         super().__init__()
