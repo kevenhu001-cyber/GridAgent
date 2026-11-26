@@ -12,7 +12,14 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from pydantic import Field, ValidationError
 
-from .advanced_programs import FluidState, PowerFlowCase, PowSyBlCase, RainflowSeries, TrackingQP, TransmissionLine
+from .advanced_programs import (
+    FluidState,
+    PowerFlowCase,
+    PowSyBlCase,
+    RainflowSeries,
+    TrackingQP,
+    TransmissionLine,
+)
 from .domain import CASES, CaseName, DeviceEdit, FaultRequest, ScenarioRequest
 from .extension_program import Battery, ControlResponse, Feeder, Solar
 from .extra_programs import Commitment, EconomicDispatch, EquivalentCell, Wind

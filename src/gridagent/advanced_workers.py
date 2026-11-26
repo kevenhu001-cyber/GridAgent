@@ -4,7 +4,14 @@ from importlib.metadata import version
 import numpy as np
 import pandas as pd
 
-from .advanced_programs import FluidState, PowerFlowCase, PowSyBlCase, RainflowSeries, TrackingQP, TransmissionLine
+from .advanced_programs import (
+    FluidState,
+    PowerFlowCase,
+    PowSyBlCase,
+    RainflowSeries,
+    TrackingQP,
+    TransmissionLine,
+)
 
 
 def pypower_flow(params, folder):

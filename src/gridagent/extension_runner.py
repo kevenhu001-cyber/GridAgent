@@ -5,7 +5,14 @@ import sys
 from pathlib import Path
 from uuid import uuid4
 
-from .advanced_programs import FluidState, PowerFlowCase, PowSyBlCase, RainflowSeries, TrackingQP, TransmissionLine
+from .advanced_programs import (
+    FluidState,
+    PowerFlowCase,
+    PowSyBlCase,
+    RainflowSeries,
+    TrackingQP,
+    TransmissionLine,
+)
 from .extension_program import Battery, ControlResponse, Feeder, Solar
 from .extra_programs import Commitment, EconomicDispatch, EquivalentCell, Wind
 from .plugins import clean_env, launch

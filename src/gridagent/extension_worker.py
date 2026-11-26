@@ -86,7 +86,14 @@ def control_response(params, folder):
 
 
 def main():
-    from .advanced_workers import fluid_state, powsybl_flow, pypower_flow, rainflow_cycles, tracking, transmission_line
+    from .advanced_workers import (
+        fluid_state,
+        powsybl_flow,
+        pypower_flow,
+        rainflow_cycles,
+        tracking,
+        transmission_line,
+    )
     from .extra_workers import commitment, dispatch, equivalent_cell, wind
 
     folder = Path.cwd()
