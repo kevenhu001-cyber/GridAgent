@@ -16,6 +16,7 @@ def main():
     research = parser.add_mutually_exclusive_group()
     research.add_argument("--research", metavar="QUESTION", help="Start a verified AC power-flow research task")
     research.add_argument("--research-manifest", metavar="JSON", help="Start from an authorized research manifest")
+    research.add_argument("--research-ir", metavar="JSON", help="Compile and run a versioned AC engineering study")
     research.add_argument("--research-tasks", action="store_true", help="List saved research tasks")
     research.add_argument("--research-status", metavar="ID")
     research.add_argument("--research-resume", metavar="ID")
@@ -87,6 +88,7 @@ def main():
         ("research-multi" if args.research_mode == "multi" else "research",
          [args.research] if args.research is not None else None),
         ("research-manifest", [args.research_manifest] if args.research_manifest else None),
+        ("research-ir", [args.research_ir] if args.research_ir else None),
         ("research-tasks", [] if args.research_tasks else None),
         ("research-status", [args.research_status] if args.research_status else None),
         ("research-resume", [args.research_resume] if args.research_resume else None),

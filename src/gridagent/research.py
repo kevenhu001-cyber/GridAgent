@@ -12,6 +12,8 @@ from pydantic import ValidationError
 from typing_extensions import TypedDict
 
 from .dsr import digest
+from .engineering_compiler import compile_study
+from .engineering_ir import EngineeringStudy
 from .knowledge import QueryPlan, workspace_knowledge
 from .model_quality import check
 from .model_repair import Proposal, apply, leaf, model_proposer
@@ -48,6 +50,16 @@ class ResearchTasks(ResearchStore):
 
     def start(self, prompt, mode="single", manifest=None, use_repair=True, use_experience=True, benchmark=False,
               benchmark_memory=None):
+        return self._start(prompt, mode, manifest, use_repair, use_experience, benchmark, benchmark_memory)
+
+    def start_ir(self, source: EngineeringStudy):
+        """Compile a reviewed IR document and freeze it with its native execution manifest."""
+        compiled = compile_study(source)
+        return self._start(compiled.manifest.objective, "single", compiled.manifest,
+                           False, False, False, None, engineering_ir=compiled.provenance)
+
+    def _start(self, prompt, mode, manifest, use_repair, use_experience, benchmark,
+               benchmark_memory, *, engineering_ir=None):
         if not isinstance(prompt, str) or not 1 <= len(prompt.strip()) <= 12000 or mode not in MODES:
             raise ValueError("Supply a research question and select single or multi mode")
         identifier = uuid4().hex
@@ -57,6 +69,8 @@ class ResearchTasks(ResearchStore):
                  "benchmark": benchmark}
         if benchmark_memory is not None:
             state["benchmark_memory"] = benchmark_memory
+        if engineering_ir is not None:
+            state["engineering_ir"] = engineering_ir
         stage = "planning"
         if manifest is not None:
             freeze(state, ResearchManifest.model_validate(manifest))
@@ -83,6 +97,8 @@ class ResearchTasks(ResearchStore):
         if canonical is not None:
             item["engineering_status"] = canonical.status.value
             item["engineering_revision"] = canonical.revision
+            if canonical.model_revision is not None:
+                item["engineering_model_revision"] = canonical.model_revision
         return item
 
     def listing(self):
@@ -209,6 +225,17 @@ class ResearchTasks(ResearchStore):
         manifest = ResearchManifest.model_validate(state["manifest"])
         if digest(state["manifest"]) != state["manifest_sha256"]:
             raise ValueError("Frozen task manifest changed")
+        ir = state.get("engineering_ir")
+        with self.connect() as db:
+            task = self.lifecycle.repository._find_in(db, identifier)
+        bound_model = task.model_revision if task is not None else None
+        if ir is not None or bound_model is not None:
+            if ir is None:
+                raise ValueError("Frozen engineering IR is missing")
+            compiled = compile_study(EngineeringStudy(model=ir["model"], study=ir["study"]))
+            if (compiled.provenance != ir or compiled.manifest != manifest
+                    or bound_model != ir["model_sha256"]):
+                raise ValueError("Frozen engineering IR or compiler provenance changed")
         attempts = state["attempts"]
         if not attempts:
             attempts.append(candidate(state["manifest"]["program"]))
@@ -631,12 +658,17 @@ def task_command(root, command, args, *, model_factory=None):
     if command in {"research", "research-multi"} and args:
         identifier = tasks.start(" ".join(args), "multi" if command == "research-multi" else "single")
         yield tasks.summary(identifier)
-    elif command == "research-manifest" and len(args) == 1:
+    elif command in {"research-manifest", "research-ir"} and len(args) == 1:
         source = Path(args[0])
-        if source.stat().st_size > 1024 * 1024:
-            raise ValueError("Research manifest exceeds 1 MiB")
-        manifest = ResearchManifest.model_validate_json(source.read_bytes())
-        identifier = tasks.start(manifest.objective, manifest=manifest)
+        with source.open("rb") as handle:
+            payload = handle.read(1024 * 1024 + 1)
+        if len(payload) > 1024 * 1024:
+            raise ValueError("Research input exceeds 1 MiB")
+        if command == "research-ir":
+            identifier = tasks.start_ir(EngineeringStudy.model_validate_json(payload))
+        else:
+            manifest = ResearchManifest.model_validate_json(payload)
+            identifier = tasks.start(manifest.objective, manifest=manifest)
         yield tasks.summary(identifier)
     elif ((command in {"research-resume", "research-approve"} and len(args) == 1)
           or (command == "research-clarify" and len(args) >= 2)):

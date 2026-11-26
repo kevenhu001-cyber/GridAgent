@@ -265,7 +265,8 @@ class GridApp(App):
         if question == "/help":
             chat.write(Text("/model · configure the workspace model and test the connection"))
             chat.write(Text("/research QUESTION · /research-multi QUESTION · /research-manifest PATH · "
-                            "/research-tasks · /research-status ID · /research-resume ID · /research-cancel ID · "
+                            "/research-ir PATH · /research-tasks · /research-status ID · /research-resume ID · "
+                            "/research-cancel ID · "
                             "/research-approve ID · /research-clarify ID ANSWER · /research-report ID PATH"))
             chat.write(Text("/research-python MANIFEST · /research-sandbox enable|disable|status · "
                             "/research-benchmark [TASK [MODE]] · /andes-batch PATH"))

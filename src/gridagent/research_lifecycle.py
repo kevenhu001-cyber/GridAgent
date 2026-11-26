@@ -19,7 +19,9 @@ class ResearchLifecycle:
         self.repository = repository
 
     def create(self, db, identifier, prompt, state, stage):
-        self.repository._create_in(db, RequirementSpec(request=prompt), task_id=identifier)
+        model_hash = state.get("engineering_ir", {}).get("model_sha256")
+        self.repository._create_in(db, RequirementSpec(request=prompt), task_id=identifier,
+                                   model_revision=model_hash)
         self.checkpoint(db, identifier, state, stage)
 
     def checkpoint(self, db, identifier, state, stage, *, approved=False):

@@ -64,13 +64,13 @@ class EngineeringTaskRepository:
         return cls._read_snapshot(row)
 
     @staticmethod
-    def _create_in(db, requirement: RequirementSpec, *, task_id=None) -> EngineeringTask:
+    def _create_in(db, requirement: RequirementSpec, *, task_id=None, model_revision=None) -> EngineeringTask:
         """Create a task inside the caller's write transaction."""
         requirement = RequirementSpec.model_validate(requirement)
         if requirement.revision != 1:
             raise ValueError("A new engineering task must start with requirement revision 1")
         identity = {} if task_id is None else {"task_id": task_id}
-        snapshot = EngineeringTask(requirement=requirement, **identity)
+        snapshot = EngineeringTask(requirement=requirement, model_revision=model_revision, **identity)
         db.execute("INSERT INTO engineering_tasks VALUES (?, 0)", (snapshot.task_id,))
         db.execute("""
             INSERT INTO engineering_task_revisions(task_id, revision, snapshot)
