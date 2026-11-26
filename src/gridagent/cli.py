@@ -23,7 +23,7 @@ def main():
     research.add_argument("--dispatch-cancel", metavar="ID")
     research.add_argument("--optimize-ir", metavar="JSON", help="Run authorized AC mixed-variable optimization")
     research.add_argument("--optimize-resume", metavar="ID", help="Resume an AC optimization study")
-    research.add_argument("--math-program", metavar="JSON", help="Solve a typed LP or MILP")
+    research.add_argument("--math-program", metavar="JSON", help="Solve a typed LP, MILP or polynomial NLP")
     research.add_argument("--math-resume", metavar="ID", help="Recover a mathematical program study")
     research.add_argument("--research-tasks", action="store_true", help="List saved research tasks")
     research.add_argument("--research-status", metavar="ID")

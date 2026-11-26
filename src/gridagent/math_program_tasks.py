@@ -4,29 +4,27 @@ from pathlib import Path
 
 from .dsr import Study
 from .engineering_ir import fingerprint
-from .math_program_ir import MathematicalProgram
-from .math_program_solver import solve_program, verify_result
+from .math_program_router import parse_program, reservation_for, solve, verify
 
 PROTOCOL = "mathematical-program-v1"
 
 
 def start_program(root, spec):
-    spec = MathematicalProgram.model_validate(spec)
+    spec = parse_program(spec)
     study = Study(Path(root) / "studies")
     study.write("manifest", {"protocol": PROTOCOL, "spec": spec.canonical(),
                              "sha256": spec.sha256()})
     return study.id
 
 
-def resume_program(root, identifier, *, solver=solve_program):
+def resume_program(root, identifier, *, solver=solve):
     study = Study.reopen(Path(root) / "studies", identifier)
     with study.lock():
         frozen = study.read("manifest")
-        spec = MathematicalProgram.model_validate(frozen["spec"])
+        spec = parse_program(frozen["spec"])
         if frozen.get("protocol") != PROTOCOL or frozen["sha256"] != spec.sha256():
             raise ValueError("Frozen mathematical program changed")
-        reservation = {"program_sha256": spec.sha256(), "route": spec.route(),
-                       "time_limit_s": spec.time_limit_s, "node_limit": spec.node_limit}
+        reservation = reservation_for(spec)
         fresh = not study.exists("reservation-1")
         if fresh:
             if study.exists("result") or study.exists("report"):
@@ -43,7 +41,7 @@ def resume_program(root, identifier, *, solver=solve_program):
             study.write("result", result)
         if study.exists("result"):
             result = study.read("result")
-            verdict = verify_result(spec, result)
+            verdict = verify(spec, result)
         else:
             result = {"route": spec.route(), "status": "unknown_reserved_call"}
             verdict = {"primal": {"passed": False, "checks": [], "objective": None},

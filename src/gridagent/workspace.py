@@ -57,6 +57,11 @@ def study_summary(root: Path, identifier: str):
             lines.append(f"Verified objective: {verification['primal']['objective']:.6g} {report['objective_unit']}")
         if not verification["optimality_independently_checked"]:
             lines.append("Independent optimality not established")
+        sensitivity = verification.get("sensitivity")
+        if sensitivity:
+            lines.append(f"Local derivative agreement: {sensitivity['all_derivatives_agree']}")
+            ranked = sensitivity["objective_ranking"][:3]
+            lines.append("Local sensitivity ranking: " + ", ".join(row["variable"] for row in ranked))
     elif report.get("phase") == "optimization_finished":
         lines.append(f"AC optimization · {report['termination']}")
         lines.append(f"Reserved runs: {report['reserved_solver_runs']}/{report['budget']}")

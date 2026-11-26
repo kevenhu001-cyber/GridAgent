@@ -207,7 +207,7 @@ def workspace_command(root, command, args, *, model_factory=None):
 
         from filelock import Timeout
 
-        from .math_program_ir import MathematicalProgram
+        from .math_program_router import parse_program
         from .math_program_tasks import resume_program, start_program
 
         if command == "math-program":
@@ -215,7 +215,7 @@ def workspace_command(root, command, args, *, model_factory=None):
                 payload = handle.read(1024 * 1024 + 1)
             if len(payload) > 1024 * 1024:
                 raise ValueError("Mathematical program exceeds 1 MiB")
-            identifier = start_program(root, MathematicalProgram.model_validate_json(payload))
+            identifier = start_program(root, parse_program(json.loads(payload)))
             yield "Mathematical program study: " + identifier
         else:
             identifier = args[0]
