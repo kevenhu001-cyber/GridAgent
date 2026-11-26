@@ -3,6 +3,7 @@ import json
 import sys
 from pathlib import Path
 
+from .device_edits import apply_edits, catalog
 from .domain import CASES, FaultRequest, ScenarioRequest, voltage_metrics
 from .modal import summarize_modes
 from .models import MODEL_ID, file_digest, validate_workbook
@@ -35,6 +36,7 @@ def execute(operation: str, request: dict, folder: Path) -> dict:
                 model.set("u", idx, 0)
         ss.add("Fault", bus=spec.bus, tf=1.0, tc=1.0 + spec.duration_s)
     scenario = None
+    changes = []
     if operation == "scenario_flow":
         scenario = ScenarioRequest.model_validate(request)
         # Fresh in-memory model only. Use the declared static PQ loads.
@@ -42,6 +44,7 @@ def execute(operation: str, request: dict, folder: Path) -> dict:
             if active:
                 ss.PQ.set("p0", idx, float(p0) * scenario.load_scale)
                 ss.PQ.set("q0", idx, float(q0) * scenario.load_scale)
+        changes = apply_edits(ss, scenario.edits)
         if scenario.outage_branch is not None:
             matches = [idx for idx, active in zip(ss.Line.idx.v, ss.Line.u.v)
                        if str(idx) == scenario.outage_branch and active]
@@ -53,7 +56,10 @@ def execute(operation: str, request: dict, folder: Path) -> dict:
               "bus_ids": [str(i) for i in ss.Bus.idx.v], "model_sha256": fingerprint}
     if scenario is not None:
         result["scenario"] = scenario.model_dump()
+        result["device_changes"] = changes
     if operation == "inspect":
+        devices = catalog(ss)
+        (folder / "devices.json").write_text(json.dumps(devices, allow_nan=False), encoding="utf-8")
         topology = topology_summary(ss)
         (folder / "topology.json").write_text(json.dumps(topology, allow_nan=False), encoding="utf-8")
         return {**result, "status": "ok", "topology": {k: v for k, v in topology.items() if k not in {"buses", "branches"}}}

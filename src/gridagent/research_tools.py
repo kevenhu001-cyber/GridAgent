@@ -12,7 +12,7 @@ def run_record(root, identifier):
     record = load_object(folder / "result.json")
     # Return numerical evidence without arbitrary filesystem paths or raw solver logs.
     keys = ("status", "reason", "case", "operation", "backend", "model_sha256",
-            "bus_ids", "fault", "scenario", "metrics", "voltages_pu", "angles_rad", "topology", "samples")
+            "bus_ids", "fault", "scenario", "device_changes", "metrics", "voltages_pu", "angles_rad", "topology", "samples")
     return {"run_id": identifier, **{k: record[k] for k in keys if k in record}}
 
 
@@ -117,3 +117,18 @@ def network_branches(root, run_id, bus=None, offset=0, limit=30):
     return {"run_id": run_id, "model_sha256": record.get("model_sha256"),
             "bus": bus, "total": len(branches), "branches": branches[offset:end],
             "next_offset": end if end < len(branches) else None}
+
+
+def list_devices(root, run_id, model=None, bus=None, offset=0, limit=20):
+    import json
+
+    if offset < 0 or not 1 <= limit <= 50:
+        raise ValueError("Invalid pagination")
+    folder = artifact_folder(root, "runs", run_id)
+    record = run_record(root, run_id)
+    if record.get("operation") != "inspect" or record.get("status") != "ok":
+        raise ValueError("Use a successful inspect_case run")
+    rows = json.loads((folder / "devices.json").read_text(encoding="utf-8"))
+    rows = [r for r in rows if (model is None or r["model"] == model) and (bus is None or r["bus"] == bus)]
+    return {"run_id": run_id, "total": len(rows), "devices": rows[offset:offset+limit],
+            "next_offset": offset+limit if offset+limit < len(rows) else None}

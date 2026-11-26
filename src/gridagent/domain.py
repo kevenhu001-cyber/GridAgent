@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -13,11 +13,35 @@ class CaseRequest(BaseModel):
     case: CaseName = "kundur"
 
 
+class DeviceEdit(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    model: Literal["PQ", "PV", "Slack"]
+    device: str = Field(min_length=1, max_length=80)
+    field: Literal["p0", "q0", "v0"]
+    value: float = Field(ge=-20, le=20)
+
+    @model_validator(mode="after")
+    def permitted(self):
+        allowed = {"PQ": {"p0", "q0"}, "PV": {"p0", "v0"}, "Slack": {"v0"}}
+        if self.field not in allowed[self.model]:
+            raise ValueError("Unsupported device field")
+        if self.field == "v0" and not 0.8 <= self.value <= 1.2:
+            raise ValueError("Voltage setpoint must be 0.8..1.2 p.u.")
+        return self
+
+
 class ScenarioRequest(CaseRequest):
     """Local hypothetical steady-state changes, never edits the source model."""
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     load_scale: float = Field(default=1.0, ge=0.5, le=1.5)
     outage_branch: str | None = Field(default=None, min_length=1, max_length=80)
+    edits: list[DeviceEdit] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="after")
+    def distinct_edits(self):
+        if len({(e.model, e.device, e.field) for e in self.edits}) != len(self.edits):
+            raise ValueError("Duplicate device field edit")
+        return self
 
 
 class FaultRequest(BaseModel):

@@ -38,7 +38,7 @@ def test_packaged_model_inspection(tmp_path, case):
 def test_registered_model_scenario(tmp_path):
     andes = pytest.importorskip("andes")
     from gridagent.models import register_model
-    from gridagent.research_tools import compare_power_flows, network_branches
+    from gridagent.research_tools import compare_power_flows, list_devices, network_branches
 
     identifier = register_model(tmp_path, andes.get_case("kundur/kundur_full.xlsx"))
     sim = AndesSimulator(tmp_path / "runs", timeout_s=300)
@@ -46,6 +46,12 @@ def test_registered_model_scenario(tmp_path):
     assert inspection["status"] == "ok", inspection
     branches = network_branches(tmp_path, inspection["run_id"])
     assert branches["total"] > 0
+    devices = list_devices(tmp_path, inspection["run_id"], model="PQ")
+    load = next(row for row in devices["devices"] if row["in_service"] and row["parameters"]["p0"] > 0)
+    edited = sim.run("scenario_flow", {"case": identifier, "edits": [{"model": "PQ", "device": load["device"],
+                     "field": "p0", "value": load["parameters"]["p0"] * 0.95}]})
+    assert edited["status"] == "ok", edited
+    assert edited["device_changes"][0]["device"] == load["device"]
     a = sim.run("power_flow", {"case": identifier})
     b = sim.run("scenario_flow", {"case": identifier, "load_scale": 0.95})
     assert a["status"] == b["status"] == "ok", (a, b)
