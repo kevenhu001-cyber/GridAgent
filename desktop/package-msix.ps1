@@ -35,6 +35,10 @@ if ($out.StartsWith($source.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnor
 foreach ($file in @("GridAgent.exe", "runtime\python.exe", "runtime\python311._pth", "runtime-manifest.json", "Microsoft.UI.Xaml.dll")) {
     if (!(Test-Path (Join-Path $source $file) -PathType Leaf)) { throw "Verified WinUI portable layout missing $file" }
 }
+# A manually wrapped MSIX uses the package-root resources.pri as the default resource map.
+# Never substitute the SDK framework's PRI for the application's own resources.
+$appPri = @("resources.pri", "GridAgent.pri") | Where-Object { Test-Path (Join-Path $source $_) -PathType Leaf } | Select-Object -First 1
+if (!$appPri) { throw "Portable WinUI application PRI missing; refusing MSIX packaging." }
 $makeappx = Find-SdkTool "makeappx.exe"
 $signtool = Find-SdkTool "signtool.exe"
 New-Item -ItemType Directory $out | Out-Null
@@ -44,6 +48,9 @@ try {
     New-Item -ItemType Directory $stage | Out-Null
     & robocopy $source $stage /E /XD __pycache__ /XF "*.pyc" /NFL /NDL /NJH /NJS /NP
     if ($LASTEXITCODE -ge 8) { throw "Staging failed ($LASTEXITCODE)" }
+    if (!(Test-Path (Join-Path $stage "resources.pri") -PathType Leaf)) {
+        Copy-Item (Join-Path $stage $appPri) (Join-Path $stage "resources.pri")
+    }
     # Do not ship the portable-only command launcher as an app entry point.
     Remove-Item (Join-Path $stage "gridagent-tui.cmd") -ErrorAction SilentlyContinue
     if ($Development) {

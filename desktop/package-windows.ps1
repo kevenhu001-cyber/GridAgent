@@ -24,6 +24,11 @@ if (!$LegacyWpf) {
     Invoke-Checked $Python @((Join-Path $Repo "desktop/msix/make-assets.py"), (Join-Path $Repo "desktop/GridAgent.WinUI/BrandAssets"))
 }
 Invoke-Checked dotnet @("publish", (Join-Path $Repo $DesktopProject), "-c", "Release", "-r", "win-x64", "--self-contained", "true", "-o", $Output)
+if (!$LegacyWpf) {
+    $appPri = @("resources.pri", "GridAgent.pri") | Where-Object { Test-Path (Join-Path $Output $_) -PathType Leaf } | Select-Object -First 1
+    if (!$appPri) { throw "Published WinUI application PRI missing; refusing to build an unusable package." }
+    Write-Host "Published WinUI application resources: $appPri"
+}
 $Runtime = Join-Path $Output "runtime"
 # Copy the complete installed CPython layout, not a non-relocatable virtualenv.
 # Exclude build-machine site packages and console entry-point wrappers.

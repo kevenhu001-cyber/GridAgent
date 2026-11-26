@@ -15,6 +15,8 @@ $trustPath = "Cert:\LocalMachine\TrustedPeople\" + $certificate.Thumbprint
 if (Test-Path $trustPath) { throw "Test certificate already trusted; refusing to alter existing trust." }
 $installed = $null
 $appProcessId = 0
+$appProcess = $null
+$activationStarted = $null
 try {
     Import-Certificate -FilePath $certFile -CertStoreLocation "Cert:\LocalMachine\TrustedPeople" | Out-Null
     Add-AppxPackage -Path $package[0].FullName -ErrorAction Stop
@@ -46,10 +48,19 @@ public static class GridAgentActivation
     }
 }
 '@
+    $activationStarted = Get-Date
     $appProcessId = [GridAgentActivation]::Launch($installed.PackageFamilyName + "!GridAgent")
+    Write-Host "Activated packaged GridAgent PID $appProcessId"
+    $appProcess = Get-Process -Id $appProcessId -ErrorAction SilentlyContinue
     $deadline = (Get-Date).AddMinutes(8)
     while (!(Test-Path $marker) -and (Get-Date) -lt $deadline) {
-        if (!(Get-Process -Id $appProcessId -ErrorAction SilentlyContinue)) { throw "Packaged GridAgent terminated before its smoke result." }
+        if (!$appProcess -or $appProcess.HasExited) {
+            # The marker is published atomically by the app. Recheck after exit
+            # to avoid misclassifying an app that just finished writing it.
+            if (Test-Path $marker) { break }
+            $exitCode = if ($appProcess) { $appProcess.ExitCode } else { "unavailable" }
+            throw "Packaged GridAgent terminated before its smoke result (PID $appProcessId, exit code $exitCode)."
+        }
         Start-Sleep -Seconds 2
     }
     if (!(Test-Path $marker)) { throw "Packaged application smoke timed out." }
@@ -57,7 +68,20 @@ public static class GridAgentActivation
     $result | ConvertTo-Json | Write-Host
     if (!$result.success) { throw "Packaged application smoke failed at $($result.stage): $($result.error)" }
     Write-Host "Installed MSIX activated; private Python, resident metadata, AC solver and plugin lifecycle passed."
+} catch {
+    if ($activationStarted) {
+        # CI-only diagnostics: bounded recent crash/activation events, before uninstall.
+        foreach ($log in @("Application", "Microsoft-Windows-AppModel-Runtime/Admin", "Microsoft-Windows-TWinUI/Operational")) {
+            try {
+                Get-WinEvent -FilterHashtable @{ LogName = $log; StartTime = $activationStarted } -MaxEvents 60 -ErrorAction Stop |
+                    Where-Object { $_.Message -match "GridAgent|$appProcessId" } |
+                    Select-Object -First 8 TimeCreated, Id, ProviderName, Message | Format-List | Out-String | Write-Host
+            } catch { Write-Host "No matching diagnostic events available from $log." }
+        }
+    }
+    throw
 } finally {
+    if ($appProcess) { $appProcess.Dispose() }
     if ($appProcessId -gt 0) { Stop-Process -Id $appProcessId -Force -ErrorAction SilentlyContinue }
     if ($installed) { Remove-AppxPackage -Package $installed.PackageFullName -ErrorAction Continue }
     if (Test-Path $trustPath) { Remove-Item $trustPath -ErrorAction Continue }

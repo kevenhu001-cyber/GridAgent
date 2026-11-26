@@ -5,6 +5,9 @@
     <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
     <UseWinUI>true</UseWinUI>
     <WindowsPackageType>None</WindowsPackageType>
+    <!-- Import the SDK's PRI/XAML publish targets even for the portable build.
+         WindowsAppSDK #3718 / #6720: unpackaged publish may omit app resources. -->
+    <EnableMsixTooling>true</EnableMsixTooling>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
@@ -34,4 +37,18 @@
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260710003" />
     <Compile Include="../GridAgent.Windows/LocalEngine.cs" Link="LocalEngine.cs" />
   </ItemGroup>
+  <Target Name="VerifyGridAgentPublishedResources" AfterTargets="Publish" Condition="'$(WindowsPackageType)' == 'None'">
+    <!-- Guard against SDK regressions in the publish item list. Use only this build's
+         own generated PRI, never a dependency PRI or a previous published artifact. -->
+    <Copy SourceFiles="$(ProjectPriFullPath)" DestinationFolder="$(PublishDir)"
+          Condition="'$(ProjectPriFullPath)' != '' And Exists('$(ProjectPriFullPath)') And !Exists('$(PublishDir)$(ProjectPriFileName)')" />
+    <ItemGroup>
+      <_GridAgentXbf Include="$(TargetDir)App.xbf" Condition="Exists('$(TargetDir)App.xbf')" />
+      <_GridAgentXbf Include="$(TargetDir)MainWindow.xbf" Condition="Exists('$(TargetDir)MainWindow.xbf')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_GridAgentXbf)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true"
+          Condition="'@(_GridAgentXbf)' != ''" />
+    <Error Condition="!Exists('$(PublishDir)resources.pri') And !Exists('$(PublishDir)$(AssemblyName).pri')"
+           Text="GridAgent application PRI is missing from publish output. The WinUI app cannot be shipped without its resources." />
+  </Target>
 </Project>
