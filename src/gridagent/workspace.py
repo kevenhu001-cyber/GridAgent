@@ -57,6 +57,13 @@ def study_summary(root: Path, identifier: str):
             lines.append(f"Verified objective: {verification['primal']['objective']:.6g} {report['objective_unit']}")
         if not verification["optimality_independently_checked"]:
             lines.append("Independent optimality not established")
+        commitment = verification.get("commitment")
+        if commitment and commitment["physical"] is not None:
+            schedule = commitment["physical"]["schedule"]
+            lines.append(f"Single-area commitment: {len(schedule['units'])} thermal units, "
+                         f"{len(schedule['storage'])} storage devices")
+            lines.append(f"Physical schedule checks: {commitment['physical']['passed']}")
+            lines.append("Network flows and AC feasibility are not established")
         advanced = verification.get("advanced_analysis")
         if advanced:
             lines.append(f"Verified baseline candidates: {advanced['baseline_feasible_starts']}")

@@ -4,13 +4,14 @@ from pathlib import Path
 
 from .dsr import Study
 from .engineering_ir import fingerprint
-from .math_program_router import parse_program, reservation_for, solve, verify
+from .math_program_router import objective_unit, parse_program, reservation_for, solve, verify
 
 PROTOCOL = "mathematical-program-v1"
 
 
 def start_program(root, spec):
     spec = parse_program(spec)
+    reservation_for(spec)
     study = Study(Path(root) / "studies")
     study.write("manifest", {"protocol": PROTOCOL, "spec": spec.canonical(),
                              "sha256": spec.sha256()})
@@ -52,7 +53,7 @@ def resume_program(root, identifier, *, solver=solve):
                   "solver_result_sha256": fingerprint(result), "solver_result": result,
                   "verification": verdict, "verification_sha256": fingerprint(verdict),
                   "reserved_solver_calls": 1, "completed": verdict["primal"]["passed"],
-                  "objective_unit": spec.objective.unit}
+                  "objective_unit": objective_unit(spec)}
         if study.exists("report"):
             if study.read("report") != report:
                 raise ValueError("Committed mathematical program evidence changed")
