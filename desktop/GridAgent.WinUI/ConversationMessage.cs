@@ -20,7 +20,6 @@ internal sealed class ConversationMessage(string role, string body) : INotifyPro
     public IReadOnlyList<string> Activity => _activity;
     public int ActivityCount { get; private set; }
     public string Latest { get; private set; } = "";
-    public string? LatestRun { get; private set; }
     public Action<string>? OpenRun { get; init; }
     public Action<string>? RequestPreview { get; init; }
     public RunArtifact? Artifact { get; init; }
@@ -43,8 +42,6 @@ internal sealed class ConversationMessage(string role, string body) : INotifyPro
     public void AddActivity(string summary)
     {
         ActivityCount++;
-        var run = System.Text.RegularExpressions.Regex.Match(summary, @"\brun ([a-f0-9]{32})\b");
-        if (run.Success) LatestRun = run.Groups[1].Value;
         Latest = summary.Split('\n')[0];
         if (Latest.Length > 160) Latest = Latest[..160] + "…";
         // Bound the UI activity log; the durable task history remains in the workspace.

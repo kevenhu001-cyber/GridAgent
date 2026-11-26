@@ -16,8 +16,8 @@ public partial class MainWindow : Window
 {
     private string? _session;
     private string? _boundWorkspace;
-    private readonly ObservableCollection<ConversationMessage> _messages = new();
-    private readonly Dictionary<string, ConversationMessage> _artifacts = new(StringComparer.Ordinal);
+    private readonly ConversationState _conversation = new();
+    private ReadOnlyObservableCollection<ConversationMessage> _messages => _conversation.Messages;
     private readonly DesktopEngineClient _engine = new();
     private bool _workspaceIndexLoaded;
     private List<Entry> _sessions = new();
@@ -71,134 +71,6 @@ public partial class MainWindow : Window
         throw new FileNotFoundException("Bundled research engine is missing. Reinstall GridAgent.");
     }
 
-    private ConversationMessage? _toolGroup;
-    private ConversationMessage? _streamMessage;
-    private ConversationMessage? _researchMessage;
-    private ScrollViewer? _conversationViewport;
-    private bool _followTail = true;
-    private void ClearMessages() { _messages.Clear(); _artifacts.Clear(); _toolGroup = null; _streamMessage = null; _researchMessage = null; _followTail = true; JumpToLatest.Visibility = Visibility.Collapsed; EmptyConversation.Visibility = Visibility.Visible; }
-    private void Notify(string message, InfoBarSeverity severity = InfoBarSeverity.Informational)
-    {
-        Notice.Message = message; Notice.Severity = severity; Notice.IsOpen = true;
-    }
-    private void UpdateModelCaption() => ConversationModel.Text = string.IsNullOrWhiteSpace(ModelName.Text) ? "Engineering assistant" : ModelName.Text.Trim();
-    private void OpenConversationHistory(object sender, RoutedEventArgs e) =>
-        Navigation.SelectedItem = Navigation.MenuItems.OfType<NavigationViewItem>().First(i => (string)i.Tag == "studies");
-    private void UseSuggestion(object sender, RoutedEventArgs e)
-    {
-        if (sender is Button button && button.Content is string text) { Prompt.Text = text; Prompt.Focus(FocusState.Programmatic); }
-    }
-    private bool _scrollQueued;
-    private void ConversationLoaded(object sender, RoutedEventArgs e)
-    {
-        static ScrollViewer? FindViewport(DependencyObject node)
-        {
-            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++)
-            {
-                var child = VisualTreeHelper.GetChild(node, i);
-                if (child is ScrollViewer scroll) return scroll;
-                if (FindViewport(child) is ScrollViewer found) return found;
-            }
-            return null;
-        }
-        if (_conversationViewport != null) _conversationViewport.ViewChanged -= ConversationViewChanged;
-        _conversationViewport = FindViewport(Messages);
-        if (_conversationViewport != null) _conversationViewport.ViewChanged += ConversationViewChanged;
-    }
-    private void ConversationViewChanged(object? sender, ScrollViewerViewChangedEventArgs args)
-    {
-        if (_conversationViewport == null || _scrollQueued) return;
-        _followTail = _conversationViewport.ScrollableHeight - _conversationViewport.VerticalOffset <= 80;
-        JumpToLatest.Visibility = _followTail ? Visibility.Collapsed : Visibility.Visible;
-    }
-    private void JumpToLatestClick(object sender, RoutedEventArgs e)
-    {
-        _followTail = true;
-        JumpToLatest.Visibility = Visibility.Collapsed;
-        QueueConversationScroll();
-    }
-    private void QueueConversationScroll()
-    {
-        if (_scrollQueued || _messages.Count == 0 || !_followTail) return;
-        // Coalesce bursts of history and tool updates into one dispatcher callback.
-        _scrollQueued = true;
-        DispatcherQueue.TryEnqueue(() =>
-        {
-            _scrollQueued = false;
-            if (_messages.Count > 0 && _followTail) Messages.ScrollIntoView(_messages[^1]);
-        });
-    }
-    private void Append(string text, string role = "Result")
-    {
-        if (string.IsNullOrWhiteSpace(text)) return;
-        _toolGroup = null;
-        if (role == "You") { _followTail = true; JumpToLatest.Visibility = Visibility.Collapsed; }
-        EmptyConversation.Visibility = Visibility.Collapsed;
-        _messages.Add(new ConversationMessage(role, text));
-        QueueConversationScroll();
-    }
-    private void AppendDelta(string delta)
-    {
-        if (string.IsNullOrEmpty(delta)) return;
-        EmptyConversation.Visibility = Visibility.Collapsed;
-        _toolGroup = null;
-        if (_streamMessage == null)
-        {
-            _streamMessage = new ConversationMessage("Streaming", "");
-            _messages.Add(_streamMessage);
-        }
-        _streamMessage.AddDelta(delta);
-        QueueConversationScroll();
-    }
-    private void FinishStream(string finalText)
-    {
-        if (_streamMessage != null)
-        {
-            int index = _messages.IndexOf(_streamMessage);
-            if (index >= 0)
-            {
-                if (string.IsNullOrWhiteSpace(finalText)) _messages.RemoveAt(index);
-                else _messages[index] = new ConversationMessage("Assistant", finalText);
-            }
-            _streamMessage = null;
-            QueueConversationScroll();
-        }
-        else Append(finalText, "Assistant");
-    }
-    private void InterruptStream()
-    {
-        if (_streamMessage == null) return;
-        int index = _messages.IndexOf(_streamMessage);
-        if (index >= 0)
-            _messages[index] = new ConversationMessage("Interrupted response", _streamMessage.StreamText);
-        _streamMessage = null;
-    }
-    private async void LoadArtifactPreview(string id)
-    {
-        if (_busy || WorkspaceChanged() || !_artifacts.ContainsKey(id))
-        { Notify("Wait for the current operation before loading a chart preview.", InfoBarSeverity.Warning); return; }
-        await Execute(new { action = "artifact-preview", run = id });
-    }
-    private void AddArtifact(RunArtifact artifact)
-    {
-        if (_artifacts.ContainsKey(artifact.Id)) return;
-        var message = new ConversationMessage("Artifact", "") { Artifact = artifact, OpenRun = OpenArtifactRun, RequestPreview = LoadArtifactPreview };
-        _artifacts.Add(artifact.Id, message);
-        _messages.Add(message); EmptyConversation.Visibility = Visibility.Collapsed;
-        QueueConversationScroll();
-    }
-    private void AddTool(string label)
-    {
-        EmptyConversation.Visibility = Visibility.Collapsed;
-        // Only the bridge's sanitized tool summary is accepted; no raw execution payload.
-        if (_toolGroup == null)
-        {
-            _toolGroup = new ConversationMessage("Activity", "") { OpenRun = OpenArtifactRun };
-            _messages.Add(_toolGroup);
-        }
-        _toolGroup.AddActivity(label);
-        QueueConversationScroll();
-    }
     private async void Navigate(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
         if (Pages == null || (args.SelectedItemContainer as NavigationViewItem)?.Tag is Entry) return;
@@ -274,16 +146,8 @@ public partial class MainWindow : Window
     }
     private void UpdateResearchCard(ResearchSnapshot snapshot)
     {
-        EmptyConversation.Visibility = Visibility.Collapsed;
-        _toolGroup = null;
-        if (_researchMessage?.Research?.Id != snapshot.Id)
-        {
-            _researchMessage = new ConversationMessage("Research", "") { OpenTask = OpenArtifactTask };
-            _researchMessage.SetResearch(snapshot);
-            _messages.Add(_researchMessage);
-        }
-        else _researchMessage.SetResearch(snapshot);
-        QueueConversationScroll();
+        _conversation.Research(snapshot, OpenArtifactTask);
+        UpdateConversationViewport();
     }
     private Task EnsureWorkspaceIndex()
     {
@@ -339,7 +203,7 @@ public partial class MainWindow : Window
         if (_busy) { Notify("Another operation is running.", InfoBarSeverity.Warning); return; }
         SetBusy(true);
         _operationError = false;
-        _researchMessage = null;
+        _conversation.BeginOperation();
         StatusText.Text = "Working…";
         try
         {
@@ -372,96 +236,6 @@ public partial class MainWindow : Window
             Notify("Operation could not complete. Check the workspace, runtime and provider.", InfoBarSeverity.Error);
         }
         finally { InterruptStream(); SetBusy(false); _activeEngine = null; _activeResearch = null; }
-    }
-
-    private void Handle(JsonElement evt)
-    {
-        var kind = evt.GetProperty("kind").GetString();
-        var data = evt.GetProperty("data");
-        switch (kind)
-        {
-            case "plugins": _pluginCatalog = data.Clone(); RenderPlugins(); break;
-            case "model_settings":
-                ModelName.Text = data.GetProperty("model").GetString() ?? "";
-                BaseUrl.Text = data.GetProperty("base_url").GetString() ?? "";
-                break;
-            case "session": _session = data.GetString(); break;
-            case "sessions":
-                SetSessions(data.EnumerateArray().Select(x =>
-                    new Entry(x.GetProperty("id").GetString()!,
-                        x.GetProperty("title").GetString() + " · " + x.GetProperty("tasks").GetInt32())).ToList());
-                break;
-            case "studies":
-                StudyList.ItemsSource = data.EnumerateArray().Select(x =>
-                {
-                    var id = x.GetProperty("id").GetString()!;
-                    return new Entry(id, id[..Math.Min(12, id.Length)] + " · " + x.GetProperty("status").GetString());
-                }).ToList();
-                break;
-            case "runs":
-                RunList.ItemsSource = data.EnumerateArray().Select(x =>
-                {
-                    var id = x.GetProperty("id").GetString()!;
-                    return new Entry(id, $"{x.GetProperty("operation")} · {x.GetProperty("case")} · {x.GetProperty("status")} · {id[..Math.Min(8, id.Length)]}");
-                }).ToList();
-                break;
-            case "research_tasks":
-                var selected = (ResearchList.SelectedItem as Entry)?.Id ?? _activeResearch;
-                var tasks = data.EnumerateArray().Select(x => new Entry(x.GetProperty("id").GetString()!,
-                    x.GetProperty("stage").GetString() + " · " + x.GetProperty("prompt").GetString())).ToList();
-                ResearchList.ItemsSource = tasks;
-                ResearchList.SelectedItem = tasks.FirstOrDefault(x => x.Id == selected);
-                break;
-            case "research_task":
-                var researchId = data.GetProperty("id").GetString();
-                var stage = data.GetProperty("stage").GetString();
-                UpdateResearchCard(new ResearchSnapshot(researchId ?? "", stage ?? "unknown", data.GetProperty("summary").GetString() ?? "",
-                    data.GetProperty("runs_used").GetInt32(), data.GetProperty("max_runs").GetInt32()));
-                _activeResearch = researchId;
-                CancelButton.Visibility = _busy && stage is not ("passed" or "failed" or "cancelled" or "awaiting_input" or "awaiting_approval") ? Visibility.Visible : Visibility.Collapsed;
-                StatusText.Text = $"Research · {stage} · {data.GetProperty("runs_used")}/{data.GetProperty("max_runs")} simulations";
-                break;
-            case "topology": _topology = data.Clone(); break;
-            case "model_revisions":
-                _workspaceIndexLoaded = true;
-                ModelRevisions.ItemsSource = data.EnumerateArray().Select(x =>
-                {
-                    var diff = x.GetProperty("diff");
-                    return new Entry(x.GetProperty("id").GetString()!, x.GetProperty("name").GetString()!,
-                        $"{diff.GetProperty("element")} {diff.GetProperty("index")} · {diff.GetProperty("field")} · " +
-                        $"{diff.GetProperty("before")} → {diff.GetProperty("value")}\nParent run {x.GetProperty("parent_run")}\n" +
-                        $"SHA-256 {x.GetProperty("sha256")}");
-                }).ToList();
-                break;
-            case "analysis_charts":
-                var charts = data.EnumerateArray().Select(chart => new ChartData(chart.GetProperty("title").GetString()!,
-                    chart.GetProperty("x_label").GetString()!, chart.GetProperty("y_label").GetString()!,
-                    chart.GetProperty("scatter").GetBoolean(), chart.GetProperty("series").EnumerateArray().Select(trace =>
-                        new ChartTrace(trace.GetProperty("name").GetString()!,
-                            trace.GetProperty("x").EnumerateArray().Select(x => x.GetDouble()).ToArray(),
-                            trace.GetProperty("y").EnumerateArray().Select(y => y.GetDouble()).ToArray())).ToArray())).ToArray();
-                ShowCharts(charts);
-                break;
-            case "waveform":
-                var channels = data.EnumerateArray().Select(x => new WaveformSeries(
-                    x.GetProperty("channel").GetString()!,
-                    x.GetProperty("time").EnumerateArray().Select(v => v.GetDouble()).ToArray(),
-                    x.GetProperty("value").EnumerateArray().Select(v => v.GetDouble()).ToArray(),
-                    x.GetProperty("samples").GetInt32(),
-                    x.GetProperty("minimum").GetDouble(), x.GetProperty("maximum").GetDouble())).ToList();
-                ShowWaveforms(channels);
-                break;
-            case "user": Append(data.GetString() ?? "", "You"); break;
-            case "assistant_delta": AppendDelta(data.GetString() ?? ""); break;
-            case "assistant_end": FinishStream(data.GetString() ?? ""); break;
-            case "assistant": Append(data.GetString() ?? "", "Assistant"); break;
-            case "tool": AddTool(data.GetString() ?? "Tool"); break;
-            case "artifact": if (RunArtifact.Parse(data) is RunArtifact artifact) AddArtifact(artifact); break;
-            case "artifact_preview": if (RunPreview.Parse(data) is RunPreview preview && _artifacts.TryGetValue(preview.Id, out var card)) card.SetPreview(preview); break;
-            case "result": Append(data.ValueKind == JsonValueKind.String ? data.GetString() ?? "" : "A structured result is available in the workspace."); break;
-            case "status": StatusText.Text = data.GetString() ?? "Working…"; break;
-            case "error": _operationError = true; Append(data.GetString() ?? "Operation failed.", "Error"); Notify("The operation reported an error. See the conversation for details.", InfoBarSeverity.Error); break;
-        }
     }
 
     private bool WorkspaceChanged()

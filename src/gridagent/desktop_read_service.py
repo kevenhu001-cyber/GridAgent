@@ -51,7 +51,7 @@ def serve(root, source, output, *, handler=dispatch):
             if action not in READ_ACTIONS or not set(request) <= READ_ACTIONS[action] | {"action"}:
                 raise ValueError("Unsupported read operation")
             with redirect_stdout(sys.stderr):
-                handler(root, request, lambda kind, data: send(identifier, kind, data))
+                handler(root, request, lambda kind, data, request_id=identifier: send(request_id, kind, data))
         except Exception as exc:  # noqa: BLE001 - transport boundary, no sensitive exception content
             if identifier is None:
                 return

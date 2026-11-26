@@ -13,7 +13,7 @@ internal sealed record RunArtifact(string Id, string Backend, string Operation, 
     private const string Schema = "gridagent.artifact.v1";
     internal static bool Valid(JsonElement data, string kind) =>
         data.ValueKind == JsonValueKind.Object && data.TryGetProperty("schema", out var schema) &&
-        schema.GetString() == Schema && data.TryGetProperty("kind", out var type) && type.GetString() == kind &&
+        schema.ValueKind == JsonValueKind.String && schema.GetString() == Schema && data.TryGetProperty("kind", out var type) && type.ValueKind == JsonValueKind.String && type.GetString() == kind &&
         data.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String &&
         Regex.IsMatch(id.GetString() ?? "", "^[a-f0-9]{32}$");
     internal static string Label(JsonElement data, string key) =>
@@ -25,8 +25,8 @@ internal sealed record RunArtifact(string Id, string Backend, string Operation, 
         if (!Valid(data, "run")) return null;
         ArtifactQuality? quality = null;
         if (data.TryGetProperty("quality", out var q) && q.ValueKind == JsonValueKind.Object &&
-            q.TryGetProperty("passed", out var passed) && passed.TryGetInt32(out int p) &&
-            q.TryGetProperty("total", out var total) && total.TryGetInt32(out int t) && 0 <= p && p <= t && t <= 10000)
+            q.TryGetProperty("passed", out var passed) && passed.ValueKind == JsonValueKind.Number && passed.TryGetInt32(out int p) &&
+            q.TryGetProperty("total", out var total) && total.ValueKind == JsonValueKind.Number && total.TryGetInt32(out int t) && 0 <= p && p <= t && t <= 10000)
             quality = new ArtifactQuality(p, t, Label(q, "protocol"));
         var metrics = new List<ArtifactMetric>();
         if (data.TryGetProperty("metrics", out var rows) && rows.ValueKind == JsonValueKind.Array)
@@ -51,7 +51,7 @@ internal sealed record RunPreview(string Id, string Title, string XLabel, string
             !data.TryGetProperty("x", out var x) || x.ValueKind != JsonValueKind.Array ||
             !data.TryGetProperty("y", out var y) || y.ValueKind != JsonValueKind.Array ||
             x.GetArrayLength() != y.GetArrayLength() || x.GetArrayLength() is < 1 or > 240 ||
-            !data.TryGetProperty("source_points", out var count) || !count.TryGetInt32(out var n) || n < x.GetArrayLength() ||
+            !data.TryGetProperty("source_points", out var count) || count.ValueKind != JsonValueKind.Number || !count.TryGetInt32(out var n) || n < x.GetArrayLength() ||
             !data.TryGetProperty("scatter", out var scatter) || scatter.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
             return null;
         var xs = x.EnumerateArray().Select(v => v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var d) ? d : double.NaN).ToArray();

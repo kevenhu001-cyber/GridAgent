@@ -21,7 +21,6 @@ public sealed class ConversationMessageView : UserControl
     private ConversationMessage? _message;
     private Expander? _activity;
     private StackPanel? _details;
-    private Button? _openRun;
     private TextBlock? _streamText;
     private TextBlock? _researchStage;
     private TextBlock? _researchSummary;
@@ -42,7 +41,7 @@ public sealed class ConversationMessageView : UserControl
     private void Bind(ConversationMessage? message)
     {
         if (ReferenceEquals(message, _message)) return;
-        Detach(); _activity = null; _details = null; _openRun = null; _streamText = null; _researchStage = null; _researchSummary = null; _researchProgress = null; _artifactHost = null; Content = null;
+        Detach(); _activity = null; _details = null; _streamText = null; _researchStage = null; _researchSummary = null; _researchProgress = null; _artifactHost = null; Content = null;
         if (message == null) return;
         _message = message;
         var layout = new Grid { MaxWidth = 820, HorizontalAlignment = HorizontalAlignment.Stretch, Padding = new Thickness(8, 8, 8, 14) };
@@ -52,12 +51,7 @@ public sealed class ConversationMessageView : UserControl
             _activity = new Expander { HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, Content = _details };
             _activity.Expanding += (_, _) => UpdateActivity();
             _activity.Collapsed += (_, _) => _details?.Children.Clear();
-            var activityLayout = new StackPanel { Spacing = 6 };
-            activityLayout.Children.Add(_activity);
-            _openRun = new Button { Content = "Open simulation result", Visibility = Visibility.Collapsed, HorizontalAlignment = HorizontalAlignment.Left };
-            _openRun.Click += (_, _) => { if (message.LatestRun is string id) message.OpenRun?.Invoke(id); };
-            activityLayout.Children.Add(_openRun);
-            layout.Children.Add(activityLayout);
+            layout.Children.Add(_activity);
             message.PropertyChanged += MessageChanged;
             UpdateActivity();
         }
@@ -148,7 +142,6 @@ public sealed class ConversationMessageView : UserControl
     {
         if (_activity == null || _message == null || _details == null) return;
         _activity.Header = $"{_message.ActivityCount} engineering actions · {_message.Latest}";
-        if (_openRun != null) _openRun.Visibility = _message.LatestRun != null && _message.OpenRun != null ? Visibility.Visible : Visibility.Collapsed;
         if (!_activity.IsExpanded) return;
         _details.Children.Clear();
         if (_message.ActivityCount > _message.Activity.Count)

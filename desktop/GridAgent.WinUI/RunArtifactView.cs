@@ -75,7 +75,7 @@ internal static class RunArtifactView
             {
                 var geometry = new GeometryGroup();
                 for (int i = 0; i < data.X.Length; i++) geometry.Children.Add(new EllipseGeometry { Center = Map(i), RadiusX = 2, RadiusY = 2 });
-                canvas.Children.Add(new Path { Data = geometry, Fill = brush });
+                canvas.Children.Add(new Microsoft.UI.Xaml.Shapes.Path { Data = geometry, Fill = brush });
             }
             else
             {

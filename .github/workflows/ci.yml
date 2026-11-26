@@ -36,6 +36,8 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+      - name: Test UI-independent presentation state
+        run: dotnet run --project desktop/GridAgent.Presentation.Tests/GridAgent.Presentation.Tests.csproj -c Release
       - name: Compile native WinUI workbench
         run: dotnet build desktop/GridAgent.WinUI/GridAgent.WinUI.csproj -c Release -r win-x64
   windows:
