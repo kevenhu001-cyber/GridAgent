@@ -89,3 +89,28 @@ def test_connection_check_uses_configured_compatible_endpoint(tmp_path, monkeypa
             thread.join()
     assert received == [("/v1/chat/completions", "fixture")]
     assert events[-1] == ("result", "Connected to fixture")
+
+
+def test_desktop_initialize_is_lightweight(tmp_path, monkeypatch):
+    import os
+    import subprocess
+    import sys
+
+    env = dict(os.environ)
+    env.pop("GRIDAGENT_MODEL", None)
+    env.pop("GRIDAGENT_BASE_URL", None)
+    code = """
+import sys
+from pathlib import Path
+from gridagent.desktop_bridge import dispatch
+events = []
+dispatch(Path(sys.argv[1]), {"action": "initialize"}, lambda k, v: events.append((k, v)))
+assert [k for k, v in events] == ["model_settings", "sessions"]
+assert "gridagent.agent" not in sys.modules
+assert "gridagent.simulator" not in sys.modules
+assert "gridagent.research" not in sys.modules
+assert "numpy" not in sys.modules
+"""
+    result = subprocess.run([sys.executable, "-c", code, str(tmp_path)], env=env,
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr

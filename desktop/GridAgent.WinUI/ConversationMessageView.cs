@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Text;
 using Markdig;
 using Markdig.Syntax;
+using Block = Markdig.Syntax.Block;
 using Markdig.Syntax.Inlines;
 using Markdig.Extensions.Tables;
 using Microsoft.UI.Xaml;
@@ -141,7 +142,7 @@ internal static class NativeMarkdown
                 codePanel.Children.Add(copy);
                 codePanel.Children.Add(new ScrollViewer { Content = text, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollMode = ScrollMode.Enabled, VerticalScrollMode = ScrollMode.Disabled });
                 panel.Children.Add(Card(codePanel)); break;
-            case Table table:
+            case Markdig.Extensions.Tables.Table table:
                 var grid = new Grid { ColumnSpacing = 16, RowSpacing = 8 };
                 var rows = table.OfType<TableRow>().ToArray();
                 int columns = rows.Select(row => row.Count).DefaultIfEmpty(0).Max();
@@ -204,7 +205,7 @@ internal static class NativeMarkdown
             {
                 case LiteralInline literal: AddRun(literal.Content.ToString()); break;
                 case CodeInline code: AddRun(code.Content, true); break;
-                case LineBreakInline: target.Add(new LineBreak()); break;
+                case LineBreakInline: target.Add(new Microsoft.UI.Xaml.Documents.LineBreak()); break;
                 case EmphasisInline emphasis: AddInline(target, emphasis, bold || emphasis.DelimiterCount >= 2, italic || emphasis.DelimiterCount == 1); break;
                 case LinkInline link:
                     // Links remain plain selectable text; no untrusted navigation or remote image loading.
@@ -217,7 +218,7 @@ internal static class NativeMarkdown
         }
         void AddRun(string value, bool mono = false)
         {
-            var run = new Run { Text = value, FontWeight = bold ? FontWeights.SemiBold : FontWeights.Normal, FontStyle = italic ? FontStyle.Italic : FontStyle.Normal };
+            var run = new Microsoft.UI.Xaml.Documents.Run { Text = value, FontWeight = bold ? FontWeights.SemiBold : FontWeights.Normal, FontStyle = italic ? global::Windows.UI.Text.FontStyle.Italic : global::Windows.UI.Text.FontStyle.Normal };
             if (mono) run.FontFamily = new FontFamily("Consolas");
             target.Add(run);
         }

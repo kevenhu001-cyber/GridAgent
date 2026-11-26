@@ -17,6 +17,8 @@ public partial class MainWindow : Window
     private string? _session;
     private string? _boundWorkspace;
     private readonly ObservableCollection<ConversationMessage> _messages = new();
+    private bool _workspaceIndexLoaded;
+    private bool _initialized;
     private bool _busy;
     private bool _operationError;
     private EngineSettings? _activeEngine;
@@ -45,9 +47,10 @@ public partial class MainWindow : Window
         Navigation.SelectedItem = AssistantNavigation;
         Root.Loaded += async (_, _) =>
         {
-            if (string.IsNullOrWhiteSpace(ModelName.Text)) await Execute(new { action = "model-settings" });
+            await Execute(new { action = "initialize" });
+            _initialized = true;
             if (string.IsNullOrWhiteSpace(ModelName.Text)) { Navigation.SelectedItem = Navigation.SettingsItem; Notify("Configure a model provider to use the assistant. Offline tools are available without one.", InfoBarSeverity.Informational); }
-            await Execute(new { action = "refresh" });
+            await EnsureWorkspaceIndex();
         };
     }
 
@@ -107,13 +110,21 @@ public partial class MainWindow : Window
         _toolGroup.AddActivity(label);
         QueueConversationScroll();
     }
-    private void Navigate(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
+    private async void Navigate(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
         if (Pages == null) return;
         var tag = args.IsSettingsSelected ? "settings" : (args.SelectedItemContainer as NavigationViewItem)?.Tag as string ?? "chat";
         foreach (var (page, key) in new (UIElement, string)[] { (ChatPage,"chat"),(TasksPage,"tasks"),(ModelsPage,"models"),(RunsPage,"runs"),(StudiesPage,"studies"),(ToolsPage,"tools"),(PluginsPage,"plugins"),(KnowledgePage,"knowledge"),(SettingsPage,"settings") })
             page.Visibility = tag == key ? Visibility.Visible : Visibility.Collapsed;
+        if (!_initialized) return;
         if (tag == "plugins" && _pluginCatalog.ValueKind != JsonValueKind.Array && !_busy) PluginCenter(this, new RoutedEventArgs());
+        else await EnsureWorkspaceIndex();
+    }
+    private Task EnsureWorkspaceIndex()
+    {
+        var tag = (Navigation.SelectedItem as NavigationViewItem)?.Tag as string;
+        return !_workspaceIndexLoaded && !_busy && tag is ("tasks" or "models" or "runs" or "studies")
+            ? Execute(new { action = "refresh" }) : Task.CompletedTask;
     }
     private void ShowChat() => Navigation.SelectedItem = AssistantNavigation;
     private void ChangeTheme(object sender, SelectionChangedEventArgs e)
@@ -146,6 +157,7 @@ public partial class MainWindow : Window
             var root = Path.GetFullPath(WorkspacePath.Text.Trim());
             if (_boundWorkspace != root)
             {
+                _workspaceIndexLoaded = false;
                 _pluginCatalog = default;
                 PluginRows.Children.Clear();
                 _boundWorkspace = root;
@@ -222,6 +234,7 @@ public partial class MainWindow : Window
                 break;
             case "topology": _topology = data.Clone(); break;
             case "model_revisions":
+                _workspaceIndexLoaded = true;
                 ModelRevisions.ItemsSource = data.EnumerateArray().Select(x =>
                 {
                     var diff = x.GetProperty("diff");
@@ -276,8 +289,8 @@ public partial class MainWindow : Window
         WorkspacePath.Text = folder.Path;
         ApiKey.Password = "";
         ClearMessages();
-        await Execute(new { action = "model-settings" });
-        await Execute(new { action = "refresh" });
+        await Execute(new { action = "initialize" });
+        await EnsureWorkspaceIndex();
     }
     private async void LoadModelSettings(object sender, RoutedEventArgs e) => await Execute(new { action = "model-settings" });
     private async void SaveModelSettings(object sender, RoutedEventArgs e) =>
@@ -289,7 +302,7 @@ public partial class MainWindow : Window
     {
         if (_busy) return;
         ClearMessages(); ShowChat();
-        await Execute(new { action = "new" });
+        await Execute(new { action = "new", lightweight = true });
     }
 
     private async void OpenSession(object sender, RoutedEventArgs e)
@@ -572,7 +585,7 @@ public partial class MainWindow : Window
         if (picker != null) await Local("andes-batch", picker);
     }
     private async void Optimize(object sender, RoutedEventArgs e) => await Local("optimize", "24");
-    private async void Runs(object sender, RoutedEventArgs e) => await Local("runs");
+    private async void Runs(object sender, RoutedEventArgs e) => await Execute(new { action = "refresh" });
     private async void Dsr(object sender, RoutedEventArgs e)
     {
         if (_busy) return;

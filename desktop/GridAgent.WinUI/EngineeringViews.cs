@@ -113,6 +113,8 @@ public partial class MainWindow
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         var select = new ComboBox { ItemsSource = charts.Select(c => c.Title).ToArray(), Header = "Scientific chart", HorizontalAlignment = HorizontalAlignment.Stretch };
         var summary = Text("");
+        var legend = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        var readout = Text("Move the pointer over the plot to inspect a sample.", 13);
         var plot = new Canvas { MinWidth = 300, MinHeight = 220 };
         AutomationProperties.SetName(plot, "Scientific plot; numerical range and series are described above");
         var zoom = new ScrollViewer { Content = plot, ZoomMode = ZoomMode.Enabled, MinZoomFactor = 1, MaxZoomFactor = 8,
@@ -120,7 +122,21 @@ public partial class MainWindow
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         var toolbar = new StackPanel { Spacing = 8 };
         toolbar.Children.Add(summary);
-        toolbar.Children.Add(ActionButton("Reset zoom", (_, _) => zoom.ChangeView(0, 0, 1)));
+        toolbar.Children.Add(legend);
+        toolbar.Children.Add(readout);
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        actions.Children.Add(ActionButton("Reset zoom", (_, _) => zoom.ChangeView(0, 0, 1)));
+        actions.Children.Add(ActionButton("Copy plotted data", (_, _) =>
+        {
+            if (select.SelectedIndex < 0) return;
+            var chart = charts[select.SelectedIndex];
+            var csv = new System.Text.StringBuilder("series,x,y\n");
+            foreach (var trace in chart.Traces)
+                foreach (var (x, y) in trace.X.Zip(trace.Y))
+                    csv.Append('"').Append(trace.Name.Replace("\"", "\"\"")).Append("\",").Append(x.ToString("R", CultureInfo.InvariantCulture)).Append(',').Append(y.ToString("R", CultureInfo.InvariantCulture)).Append('\n');
+            ConversationMessageView.Copy(csv.ToString());
+        }));
+        toolbar.Children.Add(actions);
         Grid.SetRow(toolbar, 1); Grid.SetRow(zoom, 2);
         root.Children.Add(select); root.Children.Add(toolbar); root.Children.Add(zoom);
         void Render()
@@ -128,7 +144,36 @@ public partial class MainWindow
             if (select.SelectedIndex < 0 || plot.ActualWidth < 200 || plot.ActualHeight < 150) return;
             var chart = charts[select.SelectedIndex];
             summary.Text = DrawChart(plot, chart);
+            legend.Children.Clear();
+            for (int i = 0; i < chart.Traces.Length; i++)
+            {
+                var label = Text(chart.Traces[i].Name, 12); label.Foreground = SeriesColor(i); legend.Children.Add(label);
+            }
         }
+        plot.PointerMoved += (_, e) =>
+        {
+            if (select.SelectedIndex < 0) return;
+            var chart = charts[select.SelectedIndex];
+            var p = e.GetCurrentPoint(plot).Position;
+            double width = plot.ActualWidth - 106;
+            if (width <= 0 || p.X < 78 || p.X > 78 + width) return;
+            var values = chart.Traces.SelectMany(t => t.X).Where(double.IsFinite);
+            if (!values.Any()) return;
+            var min = values.Min(); var max = values.Max();
+            var target = min + (max - min) * (p.X - 78) / width;
+            var trace = chart.Traces.FirstOrDefault();
+            if (trace == null) return;
+            var count = Math.Min(trace.X.Length, trace.Y.Length);
+            if (count == 0) return;
+            int best = -1; double distance = double.PositiveInfinity;
+            for (int i = 0; i < count; i++)
+            {
+                if (!double.IsFinite(trace.X[i]) || !double.IsFinite(trace.Y[i])) continue;
+                var d = Math.Abs(trace.X[i] - target);
+                if (d < distance) { best = i; distance = d; }
+            }
+            if (best >= 0) readout.Text = $"{trace.Name}: {chart.XLabel} {trace.X[best]:G6} · {chart.YLabel} {trace.Y[best]:G6}";
+        };
         select.SelectionChanged += (_, _) => Render();
         plot.SizeChanged += (_, _) => Render();
         root.ActualThemeChanged += (_, _) => Render();

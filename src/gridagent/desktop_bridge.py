@@ -5,20 +5,15 @@ import sys
 from contextlib import redirect_stdout
 from pathlib import Path
 
-import numpy as np
-from langchain_core.messages import HumanMessage, ToolMessage
-
-from .agent import build_agent, model_from_env
-from .cli import text_content, tool_summary
-from .commands import workspace_command
-from .dsr import list_studies
-from .simulator import AndesSimulator
-from .store import ResearchStore, recorded_task
-from .workspace import list_runs, waveform
+from .store import ResearchStore
 
 
 def chart_series(root, identifier):
     """Return bounded chart data without dropping per-bucket extrema."""
+    import numpy as np
+
+    from .workspace import waveform
+
     first = waveform(root, identifier)
     series = []
     for channel in first["channels"]:
@@ -43,6 +38,8 @@ def dispatch(root, request, emit):
     action = request["action"]
 
     def refresh():
+        from .dsr import list_studies
+        from .workspace import list_runs
         from .model_revisions import revisions
         from .research import ResearchTasks
 
@@ -52,7 +49,12 @@ def dispatch(root, request, emit):
         emit("research_tasks", ResearchTasks(root).listing())
         emit("model_revisions", revisions(root))
 
-    if action == "plugins":
+    if action == "initialize":
+        from .model_settings import active_settings
+
+        emit("model_settings", active_settings(root).model_dump())
+        emit("sessions", store.sessions())
+    elif action == "plugins":
         from .plugins import status
 
         emit("plugins", status())
@@ -75,8 +77,15 @@ def dispatch(root, request, emit):
         refresh()
     elif action == "new":
         emit("session", store.create_session())
-        refresh()
+        if request.get("lightweight"):
+            emit("sessions", store.sessions())
+        else:
+            refresh()
     elif action == "history":
+        from langchain_core.messages import HumanMessage, ToolMessage
+
+        from .message_format import text_content, tool_summary
+
         sid = store.require_session(request["session"])
         for msg in store.history(sid):
             if isinstance(msg, HumanMessage):
@@ -89,6 +98,11 @@ def dispatch(root, request, emit):
             if task["status"] != "completed":
                 emit("status", f"Previous task {task['id'][:8]}: {task['status']}")
     elif action == "ask":
+        from .agent import build_agent, model_from_env
+        from .message_format import text_content, tool_summary
+        from .simulator import AndesSimulator
+        from .store import recorded_task
+
         model = model_from_env(root)
         budget = int(request.get("budget", 3))
         graph = build_agent(model, AndesSimulator(root / "runs"), budget=budget, workspace=root)
@@ -152,10 +166,13 @@ def dispatch(root, request, emit):
                 emit("result", row)
         refresh()
     elif action == "local":
+        from .commands import workspace_command
+
         for line in workspace_command(root, request["command"], request.get("args", [])):
             emit("result", line)
         refresh()
     elif action == "dmq":
+        from .agent import model_from_env
         from .dmq import format_update, study_updates
 
         reference = bool(request.get("reference", False))
@@ -164,6 +181,8 @@ def dispatch(root, request, emit):
             emit("result", format_update(node, value))
         refresh()
     elif action == "dsr":
+        from .agent import model_from_env
+        from .simulator import AndesSimulator
         from .dsr import format_update, study_updates
 
         model = model_from_env(root)
