@@ -1,0 +1,42 @@
+{
+  "backend": "pypsa",
+  "hours": 4,
+  "buses": [
+    {
+      "name": "b"
+    }
+  ],
+  "loads": [
+    {
+      "name": "load",
+      "bus": "b",
+      "p_set_mw": [
+        5,
+        5,
+        5,
+        5
+      ]
+    }
+  ],
+  "generators": [
+    {
+      "name": "grid",
+      "bus": "b",
+      "p_nom_mw": 15,
+      "marginal_cost": [
+        10,
+        10,
+        100,
+        100
+      ]
+    }
+  ],
+  "storage": [
+    {
+      "name": "battery",
+      "bus": "b",
+      "p_nom_mw": 5,
+      "max_hours": 2
+    }
+  ]
+}

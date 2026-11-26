@@ -1,0 +1,59 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -e '.[dev]'
+      - run: python scripts/sync_benchmark.py benchmark-assets
+      - run: python scripts/sync_evaluator.py offline-evaluation/test_memory.json
+      - run: ruff check src tests
+      - run: pytest -m 'not integration' -q
+  andes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -e '.[dev,engineering]'
+      - run: pytest -m integration -q
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: x64
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: pip install -e '.[dev,engineering]'
+      - run: python scripts/sync_benchmark.py benchmark-assets
+      - run: pytest -m 'not integration' -q
+      - run: pytest -m integration -q
+      - name: Build and verify portable Windows application
+        shell: pwsh
+        run: ./desktop/package-windows.ps1 -Output desktop-publish
+      - name: Verify optional plugin install, run and removal
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:SystemRoot\\System32;$env:SystemRoot"
+          & ./desktop-publish/runtime/python.exe -X utf8 ./desktop/smoke_plugins.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GridAgent-Windows-x64
+          path: desktop-publish/

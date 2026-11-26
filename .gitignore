@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.pytest_cache/
+.ruff_cache/
+dist/
+.gridagent/
+*.egg-info/
+desktop/**/bin/
+desktop/**/obj/
+desktop-publish/
+desktop-publish relocated/
+benchmark-assets/
+
+offline-evaluation/

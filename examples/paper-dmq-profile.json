@@ -1,0 +1,6 @@
+{
+  "dedicated_install": true,
+  "python": "C:\\Research\\PSSE-Python311\\python.exe",
+  "dmview_root": "C:\\Research\\Dedicated-DMView3.4",
+  "suite_timeout_s": 1800
+}
