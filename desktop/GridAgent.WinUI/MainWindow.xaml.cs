@@ -17,6 +17,7 @@ public partial class MainWindow : Window
     private string? _session;
     private string? _boundWorkspace;
     private readonly ObservableCollection<ConversationMessage> _messages = new();
+    private readonly DesktopEngineClient _engine = new();
     private bool _workspaceIndexLoaded;
     private List<Entry> _sessions = new();
     private bool _initialized;
@@ -47,6 +48,7 @@ public partial class MainWindow : Window
         SystemBackdrop = new MicaBackdrop();
         AppWindow.Resize(new global::Windows.Graphics.SizeInt32(1200, 840));
         AppWindow.Closing += (_, args) => { if (_busy) { args.Cancel = true; Notify("A research operation is active. Wait for completion or cancel the research task.", InfoBarSeverity.Warning); } };
+        Closed += (_, _) => _engine.Dispose();
         Navigation.SelectedItem = AssistantNavigation;
         Root.Loaded += async (_, _) =>
         {
@@ -329,6 +331,7 @@ public partial class MainWindow : Window
             var root = Path.GetFullPath(WorkspacePath.Text.Trim());
             if (_boundWorkspace != root)
             {
+                _engine.Reset();
                 _workspaceIndexLoaded = false;
                 _pluginCatalog = default;
                 PluginRows.Children.Clear();
@@ -342,7 +345,7 @@ public partial class MainWindow : Window
             }
             var settings = new EngineSettings(ResolvePython(), root, ModelName.Text.Trim(), BaseUrl.Text.Trim(), ApiKey.Password);
             _activeEngine = settings;
-            await LocalEngine.RunAsync(settings, request, Handle);
+            await _engine.RunAsync(settings, request, Handle);
             StatusText.Text = _operationError ? "Operation failed" : "Ready";
         }
         catch (Exception ex)
