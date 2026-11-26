@@ -613,19 +613,24 @@ public partial class MainWindow : Window
     private async void OpenTopology(object sender, RoutedEventArgs e)
     {
         if (_busy || WorkspaceChanged() || RunList.SelectedItem is not Entry row) return;
+        var originalWorkspace = _boundWorkspace;
         _topology = default;
         await Execute(new { action = "topology", run = row.Id });
         if (_topology.ValueKind != JsonValueKind.Object) return;
         var nodes = _topology.GetProperty("nodes").EnumerateArray().Select(x => new TopologyNode(
             x.GetProperty("id").GetInt32(), x.GetProperty("kv").GetDouble(), x.GetProperty("active").GetBoolean())).ToArray();
         var links = _topology.GetProperty("links").EnumerateArray().Select(x => new TopologyLink(
-            x.GetProperty("from").GetInt32(), x.GetProperty("to").GetInt32(), x.GetProperty("type").GetString()!,
+            x.GetProperty("id").GetInt32(), x.GetProperty("from").GetInt32(), x.GetProperty("to").GetInt32(), x.GetProperty("type").GetString()!,
             x.GetProperty("closed").GetBoolean())).ToArray();
         var devices = _topology.GetProperty("devices").EnumerateArray().Select(x => new ModelParameter(
             x.GetProperty("element").GetString()!, x.GetProperty("index").GetInt32(), x.GetProperty("field").GetString()!,
-            x.GetProperty("value").GetRawText())).ToArray();
+            x.GetProperty("value").GetRawText(),
+            x.TryGetProperty("minimum", out var minimum) ? minimum.GetDouble() : null,
+            x.TryGetProperty("maximum", out var maximum) ? maximum.GetDouble() : null)).ToArray();
         var edit = await ShowTopology(nodes, links, devices);
-        if (edit != null) await Execute(new { action = "save-model-revision", run = row.Id, edit });
+        if (edit != null && !_busy && !WorkspaceChanged() && originalWorkspace == _boundWorkspace)
+            await Execute(new { action = "save-model-revision", run = row.Id, edit });
+        else if (edit != null) Notify("Workspace changed before the revision could be saved.", InfoBarSeverity.Warning);
     }
     private void ModelRevisionDiff(object sender, RoutedEventArgs e)
     {

@@ -13,8 +13,8 @@ internal sealed record ChartTrace(string Name, double[] X, double[] Y);
 internal sealed record ChartData(string Title, string XLabel, string YLabel, bool Scatter, ChartTrace[] Traces);
 internal sealed record WaveformSeries(string Channel, double[] Time, double[] Value, int Samples, double Minimum, double Maximum);
 internal sealed record TopologyNode(int Id, double Kv, bool Active);
-internal sealed record TopologyLink(int From, int To, string Type, bool Closed);
-internal sealed record ModelParameter(string Element, int Index, string Field, string Value)
+internal sealed record TopologyLink(int Id, int From, int To, string Type, bool Closed);
+internal sealed record ModelParameter(string Element, int Index, string Field, string Value, double? Minimum = null, double? Maximum = null)
 {
     public string Label => $"{Element} {Index} · {Field} = {Value}";
 }
@@ -22,7 +22,7 @@ internal sealed record ModelParameter(string Element, int Index, string Field, s
 public partial class MainWindow
 {
     private readonly List<Window> _engineeringWindows = new();
-    private void OpenEngineeringWindow(string title, FrameworkElement content, Action? cleanup = null)
+    private Window OpenEngineeringWindow(string title, FrameworkElement content, Action? cleanup = null)
     {
         var window = new Window { Title = title + " — GridAgent", Content = content };
         content.RequestedTheme = Root.RequestedTheme;
@@ -30,6 +30,7 @@ public partial class MainWindow
         _engineeringWindows.Add(window);
         window.Closed += (_, _) => { cleanup?.Invoke(); _engineeringWindows.Remove(window); };
         window.Activate();
+        return window;
     }
     private static TextBlock Text(string value, double size = 14) =>
         new() { Text = value, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, FontSize = size };
@@ -130,50 +131,29 @@ public partial class MainWindow
     }
     private async Task<object?> ShowTopology(TopologyNode[] nodes, TopologyLink[] links, ModelParameter[] devices)
     {
-        // Use a separate native window for inspection and a modal confirmation for revision creation.
-        var canvas = new Canvas { Width = 850, Height = 470 };
-        var root = new StackPanel { Spacing = 10, Width = 850 };
-        root.Children.Add(Text($"{nodes.Length} buses · {links.Length} branches. Open branches are dashed."));
-        var scroll = new ScrollViewer { Content = canvas, ZoomMode = ZoomMode.Enabled, MinZoomFactor = 1, MaxZoomFactor = 5,
-            HorizontalScrollMode = ScrollMode.Enabled, VerticalScrollMode = ScrollMode.Enabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-        root.Children.Add(scroll);
-        void Draw()
+        var completion = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var view = new TopologyInspector(nodes, links, devices);
+        var workspace = _boundWorkspace;
+        var window = OpenEngineeringWindow("Power network topology", view, () => completion.TrySetResult(null));
+        view.SaveRequested += async edit =>
         {
-            canvas.Children.Clear();
-            var ink = Ink(canvas);
-            var positions = nodes.Select((n, i) => (n.Id, Point: new Point(425 + 330 * Math.Cos(2 * Math.PI * i / Math.Max(1, nodes.Length)), 235 + 180 * Math.Sin(2 * Math.PI * i / Math.Max(1, nodes.Length))))).ToDictionary(x => x.Id, x => x.Point);
-            foreach (var link in links)
-                if (positions.TryGetValue(link.From, out var a) && positions.TryGetValue(link.To, out var b))
-                    LineAt(canvas, a.X, a.Y, b.X, b.Y, link.Type == "transformer" ? SeriesColor(0) : ink, 1.5, !link.Closed);
-            foreach (var node in nodes)
+            if (_busy || WorkspaceChanged() || workspace != _boundWorkspace)
             {
-                var at = positions[node.Id];
-                var circle = new Ellipse { Width = 13, Height = 13, Fill = node.Active ? SeriesColor(0) : new SolidColorBrush(Microsoft.UI.Colors.Gray), Stroke = ink, StrokeThickness = 1 };
-                Canvas.SetLeft(circle, at.X - 6.5); Canvas.SetTop(circle, at.Y - 6.5); canvas.Children.Add(circle);
-                LabelAt(canvas, $"Bus {node.Id} · {node.Kv:G4} kV", at.X + 8, at.Y - 10);
+                view.ShowError("The original workspace must be active and no other operation running.");
+                return;
             }
-        }
-        canvas.Loaded += (_, _) => Draw();
-        canvas.ActualThemeChanged += (_, _) => Draw();
-        var picker = new ComboBox { Header = "Model parameter", ItemsSource = devices, DisplayMemberPath = "Label", HorizontalAlignment = HorizontalAlignment.Stretch };
-        var value = new TextBox { Header = "New value" };
-        var message = Text("");
-        root.Children.Add(picker); root.Children.Add(value); root.Children.Add(message);
-        picker.SelectionChanged += (_, _) => { if (picker.SelectedItem is ModelParameter parameter) value.Text = parameter.Value; };
-        object? edit = null;
-        var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = "Power network topology",
-            Content = new ScrollViewer { Content = root, MaxHeight = 540, MaxWidth = 850 }, PrimaryButtonText = "Save new revision", CloseButtonText = "Close",
-            DefaultButton = ContentDialogButton.Close, IsPrimaryButtonEnabled = devices.Length > 0 };
-        dialog.PrimaryButtonClick += (_, args) =>
-        {
-            if (picker.SelectedItem is not ModelParameter parameter) { message.Text = "Select a model parameter."; args.Cancel = true; return; }
-            object fieldValue;
-            if (parameter.Field == "closed" && bool.TryParse(value.Text, out var closed)) fieldValue = closed;
-            else if (parameter.Field != "closed" && double.TryParse(value.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var number) && double.IsFinite(number)) fieldValue = number;
-            else { message.Text = parameter.Field == "closed" ? "Enter true or false." : "Enter a finite number."; args.Cancel = true; return; }
-            edit = new { op = "edit", element = parameter.Element, index = parameter.Index, field = parameter.Field, value = fieldValue };
+            var confirm = new ContentDialog { XamlRoot = view.XamlRoot, Title = "Create model revision",
+                Content = "Save this parameter change as a new revision? The original run and model remain unchanged.",
+                PrimaryButtonText = "Save revision", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
+            if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
+            if (_busy || WorkspaceChanged() || workspace != _boundWorkspace)
+            {
+                view.ShowError("Workspace or execution state changed. Reopen the topology before saving.");
+                return;
+            }
+            completion.TrySetResult(edit);
+            window.Close();
         };
-        if (devices.Length > 0) picker.SelectedIndex = 0;
-        return await dialog.ShowAsync() == ContentDialogResult.Primary ? edit : null;
+        return await completion.Task;
     }
 }

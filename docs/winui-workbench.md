@@ -43,3 +43,6 @@ Markdig mathematics recognizes dollar-delimited inline and display TeX; CSharpMa
 
 ## Native scientific rendering
 Scientific plot windows now use Microsoft's Win2D CanvasControl (Direct2D) instead of constructing per-sample XAML elements. Cached sorted samples support logarithmic nearest-point lookup; pointer redraw is throttled, series visibility and axis range can be updated, and displayed data can be copied as CSV. Native resources are detached on close. This is an implementation change, not a measured GPU or FPS claim. Reference: https://learn.microsoft.com/en-us/windows/apps/develop/win2d/quick-start .
+
+## Topology inspection
+A separate native topology window supports voltage-level or circular layout, zoom, bus/branch selection, branch-specific parameter filtering, numeric range validation, and explicit revision confirmation. The original run remains immutable. The source workspace is checked again before saving. Bus-to-device ownership is not inferred from missing metadata; bus selection shows connected-branch counts and global editable parameters. Drag-and-drop schematic creation and multi-operation topology editing are not implemented.
