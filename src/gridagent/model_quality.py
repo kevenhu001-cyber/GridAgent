@@ -88,7 +88,7 @@ def dispatch_checks(folder, request, result_record=None):
         name = item["name"]
         charge = frames["storage_charge_mw"][name].to_numpy()
         discharge = frames["storage_discharge_mw"][name].to_numpy()
-        soc = frames["storage_soc_mwh"][name].to_numpy()
+        soc = frames["storage_soc_mwh"][name].to_numpy(dtype=float)
         violation = max(violation, float(np.max(charge-item["p_nom_mw"])),
                         float(np.max(discharge-item["p_nom_mw"])), float(np.max(-charge)),
                         float(np.max(-discharge)), float(np.max(-soc)),

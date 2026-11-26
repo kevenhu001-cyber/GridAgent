@@ -129,6 +129,9 @@ def test_dispatch_uses_canonical_lifecycle_and_recovers_committed_evidence(tmp_p
     final = reopened.resume(identifier, solver=lambda *a, **k: pytest.fail("Duplicate native run"))
     assert final["status"] == "completed", final
     assert final["evidence"]["passed"]
+    nodes = {node["node_id"]: node for node in final["execution_nodes"]}
+    assert nodes["solve-001"]["run_id"] == final["run_id"]
+    assert nodes["verify-001"]["outcome"] == nodes["aggregate"]["outcome"] == "verified"
     from gridagent.evidence import EvidenceRecord, verify_artifacts
 
     evidence = EvidenceRecord.model_validate(final["evidence"]["evidence_record"])
@@ -153,12 +156,18 @@ def test_unknown_reserved_dispatch_is_not_rerun(tmp_path):
         identifier, solver=lambda *a, **k: pytest.fail("Duplicate native run"))
     assert final["status"] == "failed"
     assert final["reason"] == "unknown_or_missing_native_result"
+    nodes = {node["node_id"]: node for node in final["execution_nodes"]}
+    assert nodes["solve-001"]["outcome"] == "unknown"
+    assert nodes["verify-001"]["outcome"] == "unavailable"
+    assert nodes["aggregate"]["outcome"] == "rejected"
 
 
 def test_dispatch_cancellation_before_launch(tmp_path):
     tasks = DispatchTasks(tmp_path)
     identifier = tasks.start(source())
-    assert tasks.cancel(identifier)["status"] == "cancelled"
+    final = tasks.cancel(identifier)
+    assert final["status"] == "cancelled"
+    assert all(node["status"] == "cancelled" for node in final["execution_nodes"])
     assert tasks.resume(identifier, solver=lambda *a, **k: pytest.fail("Unexpected solve"))["run_id"] is None
 
 

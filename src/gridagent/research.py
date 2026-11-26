@@ -15,6 +15,7 @@ from .dsr import digest
 from .engineering_compiler import compile_study
 from .engineering_ir import EngineeringStudy
 from .evidence import capture_evidence, verify_record
+from .execution_journal import ExecutionJournal
 from .execution_plan import ExecutionPlan, ac_plan
 from .knowledge import QueryPlan, workspace_knowledge
 from .model_quality import check
@@ -39,6 +40,7 @@ class ResearchTasks(ResearchStore):
         self.root = Path(root).resolve()
         super().__init__(self.root / "research.sqlite3")
         self.lifecycle = ResearchLifecycle(self.engineering_tasks())
+        self.journal = ExecutionJournal(self)
         with self.connect() as db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS research_tasks (
@@ -76,6 +78,7 @@ class ResearchTasks(ResearchStore):
             plan = ac_plan(ResearchManifest.model_validate(manifest), engineering_ir)
             state["execution_plan"] = plan.model_dump(mode="json")
             state["execution_plan_sha256"] = plan.sha256()
+            state["execution_journal_version"] = 1
         stage = "planning"
         if manifest is not None:
             freeze(state, ResearchManifest.model_validate(manifest))
@@ -86,6 +89,8 @@ class ResearchTasks(ResearchStore):
                        (identifier, prompt.strip(), mode, stage, timestamp, timestamp,
                         json.dumps(state, allow_nan=False)))
             self.lifecycle.create(db, identifier, prompt.strip(), state, stage)
+            if engineering_ir is not None:
+                self.journal.register(db, identifier, plan)
         return identifier
 
     def get(self, identifier):
@@ -97,6 +102,7 @@ class ResearchTasks(ResearchStore):
             if row is None:
                 raise ValueError("Unknown research task")
             canonical = self.lifecycle.repository._find_in(db, identifier)
+            graph, nodes = self.journal.load(db, identifier)
         item = dict(row)
         item["state"] = json.loads(item["state"])
         if canonical is not None:
@@ -104,6 +110,8 @@ class ResearchTasks(ResearchStore):
             item["engineering_revision"] = canonical.revision
             if canonical.model_revision is not None:
                 item["engineering_model_revision"] = canonical.model_revision
+        if graph is not None:
+            item["execution_nodes"] = list(nodes.values())
         return item
 
     def listing(self):
@@ -123,8 +131,10 @@ class ResearchTasks(ResearchStore):
             if row["cancel_requested"] and stage != "cancelled":
                 # Keep reserved runs and other checkpoints, but do not claim execution has stopped.
                 stage = row["stage"]
+                self.journal.sync_ac(db, identifier, state, stage)
                 self._write_checkpoint(db, identifier, state, stage)
                 return
+            self.journal.sync_ac(db, identifier, state, stage)
             self.lifecycle.checkpoint(db, identifier, state, stage, approved=approved)
             self._write_checkpoint(db, identifier, state, stage)
 
@@ -152,6 +162,7 @@ class ResearchTasks(ResearchStore):
                 return
             state = json.loads(row["state"])
             state["termination"] = "cancelled"
+            self.journal.sync_ac(db, identifier, state, "cancelled")
             self.lifecycle.checkpoint(db, identifier, state, "cancelled")
             self._write_checkpoint(db, identifier, state, "cancelled")
 
@@ -255,6 +266,13 @@ class ResearchTasks(ResearchStore):
                     raise ValueError("Frozen execution plan changed")
             elif "execution_plan" in state or "execution_plan_sha256" in state:
                 raise ValueError("Execution plan has no matching lifecycle event")
+        with self.connect() as db:
+            db.execute("BEGIN")
+            journal_plan, journal_rows = self.journal.load(db, identifier, plan)
+        if (state.get("execution_journal_version") == 1) != (journal_plan is not None):
+            raise ValueError("Execution journal registration is inconsistent")
+        if journal_plan is not None and journal_plan != plan:
+            raise ValueError("Journal differs from frozen execution plan")
         attempts = state["attempts"]
         if plan is not None:
             if len(attempts) > 1:
@@ -276,6 +294,14 @@ class ResearchTasks(ResearchStore):
                                 or run["evaluation"]["passed"] != (evidence.status == "verified")):
                             raise ValueError("Recorded evidence differs from evaluation")
 
+        if journal_plan is not None:
+            # Check that a deleted or replaced checkpoint cannot trigger another solver launch.
+            reserved = {run["solve_node_id"]: run["run_id"]
+                        for attempt in attempts for run in attempt["runs"]}
+            journal_reserved = {key: row["run_id"] for key, row in journal_rows.items()
+                                if row["run_id"] is not None}
+            if reserved != journal_reserved:
+                raise ValueError("AC checkpoints differ from committed solver reservations")
         if not attempts:
             attempts.append(candidate(state["manifest"]["program"]))
             self.save(identifier, state, "running")

@@ -126,6 +126,8 @@ def test_ir_task_persists_provenance_and_reopens(tmp_path):
     plan = ExecutionPlan.model_validate(report["record"]["execution_plan"])
     assert plan.sha256() == report["record"]["execution_plan_sha256"]
     assert [n.scenario for n in plan.ready()] == ["base", "peak"]
+    assert len(report["execution_nodes"]) == 5
+    assert all(node["status"] == "pending" for node in report["execution_nodes"])
     assert report["record"]["engineering_ir"]["model_sha256"] == source.model.sha256()
     assert report["record"]["engineering_ir"]["device_indices"]["grid"]["table"] == "ext_grid"
     assert json.loads(json.dumps(report))["record"]["manifest"]["max_repairs"] == 0
@@ -142,6 +144,9 @@ def test_compiled_ir_executes_with_native_verification(tmp_path):
     assert report["stage"] == "passed", report
     assert report["engineering_status"] == "completed"
     assert report["runs_used"] == 2
+    nodes = {node["node_id"]: node for node in report["execution_nodes"]}
+    assert all(node["status"] == "done" for node in nodes.values())
+    assert nodes["aggregate"]["outcome"] == "verified"
     assert all(run["evaluation"]["passed"] for run in report["best_runs"])
     from gridagent.evidence import EvidenceRecord, verify_artifacts
 

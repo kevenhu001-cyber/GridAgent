@@ -10,6 +10,7 @@ from filelock import FileLock
 from .dispatch_ir import DispatchStudy, compile_dispatch
 from .engineering_ir import fingerprint
 from .evidence import capture_evidence
+from .execution_journal import ExecutionJournal
 from .execution_plan import ExecutionPlan, dispatch_plan
 from .model_quality import evaluate_run
 from .native_backends import run_program
@@ -36,6 +37,7 @@ class DispatchTasks(ResearchStore):
         self.root = Path(root).resolve()
         super().__init__(self.root / "research.sqlite3")
         self.repository = self.engineering_tasks()
+        self.journal = ExecutionJournal(self)
         with self.connect() as db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS dispatch_tasks (
@@ -55,6 +57,8 @@ class DispatchTasks(ResearchStore):
         return self.repository._head(db, identifier), dict(row)
 
     def _move(self, db, task, target, **kwargs):
+        if target == TaskStatus.CANCELLED:
+            self.journal.cancel(db, task.task_id)
         updated, _ = self.repository._mutate_in(
             db, task.task_id, task.revision, lambda current: transition_task(current, target, **kwargs)
         )
@@ -66,7 +70,8 @@ class DispatchTasks(ResearchStore):
         plan = dispatch_plan(request, provenance)
         frozen = json.dumps({"provenance": provenance, "program": request,
                              "execution_plan": plan.model_dump(mode="json"),
-                             "execution_plan_sha256": plan.sha256()}, allow_nan=False, ensure_ascii=False)
+                             "execution_plan_sha256": plan.sha256(),
+                             "execution_journal_version": 1}, allow_nan=False, ensure_ascii=False)
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             task = self.repository._create_in(
@@ -74,6 +79,7 @@ class DispatchTasks(ResearchStore):
                 model_revision=provenance["model_sha256"],
             )
             db.execute("INSERT INTO dispatch_tasks(id, source) VALUES (?, ?)", (task.task_id, frozen))
+            self.journal.register(db, task.task_id, plan)
             self._move(db, task, TaskStatus.PLANNED, plan_revision=1,
                        reason=f"Execution plan: {plan.sha256()}; Frozen dispatch study: {provenance['study_sha256']}")
         return task.task_id
@@ -82,12 +88,14 @@ class DispatchTasks(ResearchStore):
         with self.connect() as db:
             db.execute("BEGIN")
             task, row = self._read_in(db, identifier)
+            graph, nodes = self.journal.load(db, identifier)
         return {
             "id": identifier, "status": task.status.value, "revision": task.revision,
             "cancel_requested": task.cancel_requested, "reason": task.terminal_reason,
             "model_sha256": task.model_revision, "run_id": row["run_id"],
             "source": json.loads(row["source"]),
             "evidence": json.loads(row["evidence"]) if row["evidence"] else None,
+            **({"execution_nodes": list(nodes.values())} if graph is not None else {}),
         }
 
     def _lock(self, identifier):
@@ -156,14 +164,23 @@ class DispatchTasks(ResearchStore):
                     run_id = None
                 else:
                     request, plan = self._validate_frozen(db, task, row)
-                    if plan is not None:
-                        plan.solve_for("dispatch", request)
+                    graph, nodes = self.journal.load(db, identifier, plan)
+                    source = json.loads(row["source"])
+                    if (source.get("execution_journal_version") == 1) != (graph is not None):
+                        raise ValueError("Dispatch journal registration is inconsistent")
+                    if graph is not None and graph != plan:
+                        raise ValueError("Journal differs from frozen execution plan")
+                    node = plan.solve_for("dispatch", request) if plan is not None else None
                     run_id = row["run_id"]
+                    if graph is not None and nodes[node.id]["run_id"] != run_id:
+                        raise ValueError("Dispatch checkpoint differs from committed reservation")
                     execute = run_id is None
                     if execute:
                         if task.status != TaskStatus.PLANNED:
                             raise ValueError("Dispatch reservation is missing")
                         run_id = uuid4().hex
+                        if graph is not None:
+                            self.journal.reserve(db, identifier, node.id, run_id)
                         db.execute("UPDATE dispatch_tasks SET run_id=? WHERE id=?", (run_id, identifier))
                         self._move(db, task, TaskStatus.RUNNING)
             if run_id is None:
@@ -189,6 +206,12 @@ class DispatchTasks(ResearchStore):
             with self.connect() as db:
                 db.execute("BEGIN IMMEDIATE")
                 task, _ = self._read_in(db, identifier)
+                if graph is not None:
+                    self.journal.finish(db, identifier, envelope)
+                    if not task.cancel_requested:
+                        outcome = self.journal.aggregate(db, identifier)
+                        if evidence["passed"] != (outcome == "verified"):
+                            raise ValueError("Dispatch completion differs from aggregated evidence")
                 db.execute("UPDATE dispatch_tasks SET evidence=? WHERE id=?",
                            (json.dumps(evidence, allow_nan=False), identifier))
                 if task.cancel_requested:
