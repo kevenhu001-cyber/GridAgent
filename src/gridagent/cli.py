@@ -28,6 +28,9 @@ def tool_summary(message):
     result = f"{message.name}: {status}"
     if message.name == "research_plan" and status == "ok":
         return "Research plan: " + data["objective"] + "\n" + "\n".join(f"{i+1}. {step}" for i, step in enumerate(data["steps"])) + "\nVerify: " + data["verification"]
+    quality = data.get("quality")
+    if isinstance(quality, dict):
+        result += f" | quality {quality.get('passed_count', 0)}/{quality.get('test_count', 0)} · {'passed' if quality.get('passed') else 'not passed'}"
     if data.get("run_id"):
         result += f" | run {data['run_id']}"
     if status != "ok":
@@ -60,6 +63,7 @@ def main():
     parser.add_argument("--wave", nargs="+", metavar="ID_OR_CHANNEL", help="View a saved run waveform")
     parser.add_argument("--study-wave", nargs="+", metavar="ID_PATH_CHANNEL", help="View a study waveform")
     parser.add_argument("--paper-dmq", metavar="PROFILE", help="Run original licensed DMQ")
+    parser.add_argument("--modeling-benchmark", choices=["two-bus", "storage-dispatch"])
     parser.add_argument("--model-repair", type=Path, metavar="MANIFEST")
     parser.add_argument("--drafts", action="store_true", help="List Python drafts awaiting review")
     parser.add_argument("--backends", action="store_true")
@@ -79,6 +83,7 @@ def main():
     store = ResearchStore(args.workspace / "research.sqlite3")
     console = Console()
     local_commands = [
+        ("modeling-benchmark", [args.modeling_benchmark] if args.modeling_benchmark else None),
         ("model-repair", [str(args.model_repair)] if args.model_repair else None),
         ("drafts", [] if args.drafts else None),
         ("backends", [] if args.backends else None),

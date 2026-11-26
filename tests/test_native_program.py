@@ -43,6 +43,7 @@ def test_native_pypsa_storage(tmp_path):
         "storage": [{"name": "battery", "bus": "b", "p_nom_mw": 5, "max_hours": 2}]})
     assert result["status"] == "ok", result
     assert result["metrics"]["storage_discharge_mwh"] > 0
+    assert result["quality"]["passed"], result["quality"]
     assert (tmp_path / "runs" / result["run_id"] / "storage_soc_mwh.csv").is_file()
 
 

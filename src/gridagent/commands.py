@@ -8,7 +8,13 @@ from .workspace import list_runs, study_summary, waveform, waveform_text
 
 def workspace_command(root, command, args):
     root = Path(root)
-    if command == "model-repair" and len(args) == 1:
+    if command == "modeling-benchmark" and len(args) == 1:
+        from .agent import model_from_env
+        from .modeling_benchmark import benchmark_updates, model_candidate
+
+        for row in benchmark_updates(root, args[0], model_candidate(model_from_env(), args[0])):
+            yield row
+    elif command == "model-repair" and len(args) == 1:
         from .agent import model_from_env
         from .model_repair import Manifest, format_update, model_proposer, repair_updates
 

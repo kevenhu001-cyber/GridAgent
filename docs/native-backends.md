@@ -75,3 +75,16 @@ candidate is retained with all artifacts. The policy sees feedback, not hidden
 paper test labels. Original licensed DMQ uses its existing upstream evaluator;
 these native tests do not replace it. Free Python Sandbox outputs are not yet
 automatically evaluated. No LLM weight updates or guaranteed convergence.
+
+### Fixed modeling benchmarks
+
+Run gridagent --modeling-benchmark two-bus or storage-dispatch (TUI also
+supports /modeling-benchmark TASK). The LLM starts from a natural-language
+specification, builds a typed model, receives evaluator feedback and revises
+up to six attempts. Exact required inputs are checked before the solver runs.
+The independent reference uses a closed-form two-bus AC voltage or the
+analytic optimum of a lossless four-hour storage arbitrage case. No expected
+numeric answers are injected into the policy prompt. These are public,
+small developer regression benchmarks, not held-out paper tests or a
+comprehensive measure of general Agent intelligence. The original paper
+workflows remain available separately.

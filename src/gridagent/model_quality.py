@@ -25,7 +25,7 @@ def table(folder, name):
 
 def pp_checks(folder, request):
     bus = table(folder, "bus")
-    active = bus.index[bus.in_service == True]  # noqa: E712 - pandas vector comparison
+    active = bus.index[bus.in_service.eq(True)]
     if request["analysis"] == "inspect":
         return [check("nonempty_network", len(active)>0, len(active), "At least one in-service bus")]
     if request["analysis"] == "short_circuit":
@@ -48,7 +48,7 @@ def pp_checks(folder, request):
             continue
         # Out-of-service equipment can legitimately have missing results.
         devices = table(folder, name.removeprefix("res_"))
-        loading = data.reindex(devices.index[devices.in_service == True]).loading_percent  # noqa: E712
+        loading = data.reindex(devices.index[devices.in_service.eq(True)]).loading_percent
         good = bool(np.isfinite(loading.to_numpy(dtype=float)).all())
         maximum = float(loading.max()) if len(loading) and good else None
         result.append(check(name + "_loading", good and (maximum is None or maximum<=100+1e-6),

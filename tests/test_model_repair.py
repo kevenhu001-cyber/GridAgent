@@ -53,3 +53,14 @@ def test_best_is_not_overwritten_by_failed_repair(tmp_path):
     rows = list(repair_updates(tmp_path, manifest, lambda obs: {
         "changes": [{"path": "/steps/1/vm_pu", "value": 1}], "rationale": "test"}, solver))
     assert rows[-1]["best_run_id"] == "1" and not rows[-1]["passed"]
+
+
+@pytest.mark.integration
+def test_real_native_repair(tmp_path):
+    pytest.importorskip("pandapower")
+    manifest = spec()
+    rows = list(repair_updates(tmp_path, manifest, lambda obs: {
+        "changes": [{"path": "/steps/1/vm_pu", "value": 1}], "rationale": "restore voltage setpoint"}))
+    assert not rows[0]["result"]["quality"]["passed"], rows[0]
+    assert rows[-1]["passed"], rows[-1]
+    assert rows[-1]["solver_calls"] == 2
