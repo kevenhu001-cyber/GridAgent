@@ -9,6 +9,43 @@ from . import scientific_runtime as runtime
 from . import scientific_workspace as workspace
 
 
+def scientific_failure(exc):
+    """Return bounded recovery feedback without exposing host filesystem paths."""
+    if isinstance(exc, Timeout):
+        code, reason, action = ("workspace_busy", "Workspace lock timed out",
+                                "Inspect run status; retry only when the workspace is idle")
+    elif isinstance(exc, FileNotFoundError):
+        code, reason, action = ("not_found", "Requested project file or run does not exist",
+                                "List project files or scientific runs and use an exact returned name")
+    elif isinstance(exc, PermissionError):
+        code, reason, action = ("access_denied", "Filesystem access denied",
+                                "Check workspace authorization; do not bypass access restrictions")
+    elif isinstance(exc, UnicodeDecodeError):
+        code, reason, action = ("binary_data", "File is not UTF-8 text",
+                                "Inspect its metadata or process it with authorized Python")
+    elif isinstance(exc, SyntaxError):
+        code, reason, action = ("invalid_python", "Python source could not be compiled",
+                                "Read the project source and correct its syntax")
+    elif isinstance(exc, OSError):
+        code, reason, action = ("workspace_io", "Workspace or runtime I/O failed",
+                                "Inspect environment and run status before trying again")
+    elif isinstance(exc, ValueError):
+        reason = str(exc)[:500]
+        code, action = "invalid_operation", "Review the tool contract and correct the request"
+        if "disabled" in reason or "authorization revoked" in reason:
+            code, action = "authorization_required", "Ask the user to enable scientific execution"
+        elif "Unresolved sandbox" in reason or "session journal" in reason:
+            code, action = "recovery_required", "Ask the user to recover the sandbox; do not bypass it"
+        elif "SHA-256" in reason or "file changed" in reason or "Artifact changed" in reason:
+            code, action = "revision_conflict", "Inspect the current fingerprint; do not overwrite blindly"
+        elif "exactly once" in reason:
+            code, action = "ambiguous_edit", "Read the source and select one unique exact fragment"
+    else:
+        code, reason, action = ("tool_failure", type(exc).__name__,
+                                "Inspect environment and relevant files before deciding the next action")
+    return {"status": "failed", "error_code": code, "reason": reason, "next_action": action}
+
+
 def scientific_tools(root):
     @tool
     def scientific_environment() -> dict:
@@ -27,6 +64,11 @@ def scientific_tools(root):
         return workspace.read_project(root, path, offset, limit)
 
     @tool
+    def inspect_project_file(path: str) -> dict:
+        """Inspect size and SHA-256 of a project file, including binary models, without decoding it."""
+        return workspace.inspect_project(root, path)
+
+    @tool
     def write_project_file(path: str, text: Annotated[str, Field(max_length=1048576)],
                            expected_sha256: str | None = None) -> dict:
         """Create a project text file or replace it after reading its current SHA-256."""
@@ -41,10 +83,7 @@ def scientific_tools(root):
         Returns actual exit status, output/error log tail, run ID and artifact manifest.
         Execution alone does not verify physical correctness.
         """
-        try:
-            return runtime.execute(root, entry, plugin, arguments)
-        except (OSError, ValueError, SyntaxError, Timeout) as exc:
-            return {"status": "failed", "reason": str(exc)[:500]}
+        return runtime.execute(root, entry, plugin, arguments)
 
     @tool
     def read_scientific_artifact(run_id: str, path: str, offset: int = 0,
@@ -59,12 +98,9 @@ def scientific_tools(root):
         """
         from .scientific_library import inventory
 
-        try:
-            _, target = runtime.require_runtime()
-            return {"status": "ok", "distributions": inventory(target, plugin),
-                    "scope": "installed distribution metadata; not proof of successful import"}
-        except (OSError, ValueError) as exc:
-            return {"status": "failed", "reason": str(exc)[:500]}
+        _, target = runtime.require_runtime()
+        return {"status": "ok", "distributions": inventory(target, plugin),
+                "scope": "installed distribution metadata; not proof of successful import"}
 
     @tool
     def inspect_native_api(module: str, symbol: str | None = None, plugin: str | None = None) -> dict:
@@ -74,11 +110,8 @@ def scientific_tools(root):
         """
         from .scientific_library import probe_source
 
-        try:
-            probe_source(module, symbol)
-            return runtime.execute(root, "api.py", plugin, probe={"module": module, "symbol": symbol})
-        except (OSError, ValueError, SyntaxError, Timeout) as exc:
-            return {"status": "failed", "reason": str(exc)[:500]}
+        probe_source(module, symbol)
+        return runtime.execute(root, "api.py", plugin, probe={"module": module, "symbol": symbol})
 
     @tool
     def edit_project_file(path: str, old: str, new: str, expected_sha256: str) -> dict:
@@ -105,6 +138,6 @@ def scientific_tools(root):
         """
         return workspace.promote_artifact(root, run_id, path, destination, expected_sha256)
 
-    return [scientific_environment, list_project_files, read_project_file, write_project_file,
+    return [scientific_environment, list_project_files, read_project_file, inspect_project_file, write_project_file,
             execute_python, read_scientific_artifact, edit_project_file, list_scientific_runs,
             inspect_scientific_run, promote_scientific_artifact, list_scientific_libraries, inspect_native_api]
