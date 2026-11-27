@@ -148,6 +148,18 @@ def read_project(root, path, offset=0, limit=24000):
             "next_offset": offset+limit if offset+limit < len(text) else None}
 
 
+def inspect_project(root, path):
+    """Return the content fingerprint even for a binary project file."""
+    data = bounded_bytes(scoped(project(root), path), MAX_FILE)
+    try:
+        data.decode("utf-8")
+        text_readable = b"\x00" not in data
+    except UnicodeDecodeError:
+        text_readable = False
+    return {"status": "ok", "path": path, "sha256": sha(data), "size_bytes": len(data),
+            "text_readable": text_readable}
+
+
 def write_project(root, path, text, expected_sha256=None):
     return write_bytes(root, path, text.encode("utf-8"), expected_sha256)
 
