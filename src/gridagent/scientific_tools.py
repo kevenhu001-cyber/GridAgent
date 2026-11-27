@@ -109,6 +109,35 @@ def scientific_tools(root):
             return {"status": "ok", **environment_inventory(target, targets)}
 
     @tool
+    def search_native_documentation(distribution: str, query: str,
+                                    plugin_ids: Annotated[list[str] | None, Field(max_length=4)] = None,
+                                    limit: Annotated[int, Field(ge=1, le=8)] = 5) -> dict:
+        """Search local attributed documentation for the exact selected installed distribution version.
+        Does not fetch the web or execute a solver. Missing references are not fabricated.
+        """
+        from .scientific_library import managed_targets, selected_plugins
+        from .scientific_reference import search_references
+
+        workspace.require_grant(root)
+        _, target = runtime.require_runtime()
+        with managed_targets(selected_plugins(plugin_ids=plugin_ids)) as targets:
+            return search_references(root, target, targets, distribution, query, limit)
+
+    @tool
+    def inspect_installed_api_source(distribution: str, module: str, symbol: str | None = None,
+                                     plugin_ids: Annotated[list[str] | None, Field(max_length=4)] = None) -> dict:
+        """Read static Python definitions/docstrings from installed distribution files without imports.
+        Results may omit re-exported, generated or compiled functions. Use sandbox API inspection to verify.
+        """
+        from .scientific_library import managed_targets, selected_plugins
+        from .scientific_reference import inspect_source
+
+        workspace.require_grant(root)
+        _, target = runtime.require_runtime()
+        with managed_targets(selected_plugins(plugin_ids=plugin_ids)) as targets:
+            return inspect_source(target, targets, distribution, module, symbol)
+
+    @tool
     def inspect_native_api(module: str, symbol: str | None = None, plugin: str | None = None,
                            plugin_ids: Annotated[list[str] | None, Field(max_length=4)] = None) -> dict:
         """Inspect actual Python API signatures, docstrings and members inside the scientific sandbox.
@@ -148,4 +177,5 @@ def scientific_tools(root):
 
     return [scientific_environment, list_project_files, read_project_file, inspect_project_file, write_project_file,
             execute_python, read_scientific_artifact, edit_project_file, list_scientific_runs,
-            inspect_scientific_run, promote_scientific_artifact, list_scientific_libraries, inspect_native_api]
+            inspect_scientific_run, promote_scientific_artifact, list_scientific_libraries, inspect_native_api,
+            search_native_documentation, inspect_installed_api_source]
