@@ -60,6 +60,17 @@ internal sealed class TopologyInspector : Grid
         _save.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
         var scroll = new ScrollViewer { Content = inspector, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         SetRow(scroll, 1); SetColumn(scroll, 1); Children.Add(scroll);
+        RowDefinitions.Add(new RowDefinition { Height = new GridLength(0) });
+        SizeChanged += (_, e) =>
+        {
+            bool narrow = e.NewSize.Width < 760;
+            ColumnDefinitions[1].Width = new GridLength(narrow ? 0 : 300);
+            RowDefinitions[2].Height = narrow ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+            SetRow(scroll, narrow ? 2 : 1);
+            SetColumn(scroll, narrow ? 0 : 1);
+            SetColumnSpan(left, narrow ? 2 : 1);
+            SetColumnSpan(scroll, narrow ? 2 : 1);
+        };
         AutomationProperties.SetName(_diagram, "Power network diagram");
         AutomationProperties.SetName(_parameters, "Editable model parameter");
         AutomationProperties.SetName(_search, "Search editable model parameters");
