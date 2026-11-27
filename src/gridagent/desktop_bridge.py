@@ -41,7 +41,13 @@ def dispatch(root, request, emit):
         emit("tool", summary)
         if request.get("presentation") == 1:
             from .artifact_presentation import artifact_from_tool
+            from .scientific_visualization import chart_from_tool
 
+            if message.name == "present_scientific_chart":
+                chart = chart_from_tool(root, message)
+                if chart is not None:
+                    emit("scientific_chart", chart)
+                return
             artifact = artifact_from_tool(root, message)
             if artifact is not None:
                 emit("artifact", artifact)
@@ -129,13 +135,22 @@ def dispatch(root, request, emit):
                     emit("status", f"{update['used']}/{budget} simulation attempts")
                 for msg in update.get("messages", []):
                     if node == "tools":
-                        emit("tool", tool_summary(msg))
+                        if msg.name == "present_scientific_chart":
+                            tool_event(msg, tool_summary(msg))
+                        else:
+                            emit("tool", tool_summary(msg))
                     elif streaming:
                         # The complete stored message is authoritative; reconcile the preview even if empty.
                         emit("assistant_end", text_content(msg))
                     elif text_content(msg):
                         emit("assistant", text_content(msg))
         refresh()
+    elif action == "scientific-chart-open":
+        from .scientific_visualization import chart_artifact
+
+        descriptor, chart = chart_artifact(root, request["run"], request["path"], request["sha256"])
+        chart["title"] += " · unverified script output · " + descriptor["run_id"][:8]
+        emit("analysis_charts", [chart])
     elif action == "artifact-preview":
         from .artifact_presentation import preview_run
 
