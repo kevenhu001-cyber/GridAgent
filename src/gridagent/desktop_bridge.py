@@ -41,8 +41,14 @@ def dispatch(root, request, emit):
         emit("tool", summary)
         if request.get("presentation") == 1:
             from .artifact_presentation import artifact_from_tool
+            from .scientific_views import view_from_tool
             from .scientific_visualization import chart_from_tool
 
+            if message.name == "present_scientific_view":
+                view = view_from_tool(root, message)
+                if view is not None:
+                    emit("scientific_view", view)
+                return
             if message.name == "present_scientific_chart":
                 chart = chart_from_tool(root, message)
                 if chart is not None:
@@ -135,7 +141,7 @@ def dispatch(root, request, emit):
                     emit("status", f"{update['used']}/{budget} simulation attempts")
                 for msg in update.get("messages", []):
                     if node == "tools":
-                        if msg.name == "present_scientific_chart":
+                        if msg.name in {"present_scientific_chart", "present_scientific_view"}:
                             tool_event(msg, tool_summary(msg))
                         else:
                             emit("tool", tool_summary(msg))
@@ -145,6 +151,12 @@ def dispatch(root, request, emit):
                     elif text_content(msg):
                         emit("assistant", text_content(msg))
         refresh()
+    elif action == "scientific-view-open":
+        from .scientific_views import view_artifact
+
+        descriptor, view = view_artifact(root, request["run"], request["path"], request["sha256"])
+        emit("scientific_view_data", {**view, "run_id": descriptor["run_id"],
+                                      "verification": descriptor["verification"]})
     elif action == "scientific-chart-open":
         from .scientific_visualization import chart_artifact
 
