@@ -116,8 +116,9 @@ def dispatch(root, request, emit):
         budget = int(request.get("budget", 3))
         streaming = request.get("stream", False) is True
         on_delta = (lambda text: emit("assistant_delta", text)) if streaming else None
-        graph = build_agent(model, AndesSimulator(root / "runs"), budget=budget, workspace=root, on_delta=on_delta)
         sid = store.require_session(request["session"]) if request.get("session") else store.create_session()
+        graph = build_agent(model, AndesSimulator(root / "runs"), budget=budget, workspace=root, on_delta=on_delta,
+                            session_store=store, session_id=sid)
         emit("session", sid)
         prompt = request["prompt"].strip()
         if not prompt:
