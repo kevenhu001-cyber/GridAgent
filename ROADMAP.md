@@ -5,6 +5,8 @@
 **Effective:** 2026-11-27  
 **Status:** Owner-approved product direction; implementation and validation remain pending unless separately demonstrated.
 
+**Desktop migration (2026-11-28):** Use the preserved Proliferate 0.4.27 source as the new desktop baseline rather than building another UI from scratch. [ADR 0002](docs/adr/0002-proliferate-desktop.md) records the transition. The first integration lives in [integration/proliferate](integration/proliferate/README.md).
+
 [AGENTS.md](AGENTS.md) is the repository-wide development contract. [ADR 0001](docs/adr/0001-llm-first.md) records the architectural decision. The [previous PGHA roadmap](docs/history/roadmap-pgha-2026-11-26.md) is archived for reference only and is no longer normative.
 
 ## 1. Product objective
@@ -23,7 +25,7 @@ This is a local-first research application, not a certified engineering system, 
 - **Professional libraries:** ANDES, pandapower, NumPy/SciPy, SymPy, HiGHS and Python Control as core capabilities; on-demand PyPSA, OpenDSS, PyBaMM, CVXPY, Pyomo, CasADi and other supported plugins. Expand access to native APIs, not only narrow wrappers.
 - **Knowledge:** version-specific official API documentation, signatures, examples, units and methods, available to the LLM on demand.
 - **Evidence:** independent mathematical/physical checks when supported, numerical provenance, logs and reusable artifacts. Solver success does not establish full physical validity.
-- **Presentation:** native WinUI and shared Python core, with charts, topology, equations, code and artifact views. UI must not own scientific decisions.
+- **Presentation:** Proliferate Tauri/React and shared Python scientific core via MCP, with charts, topology, equations, code and artifact views. Legacy WinUI remains a rollback client. UI must not own scientific decisions.
 - **Optional research tools:** typed IR, fixed workflow benchmarks, optimization, diagnostic rules, retrieval-based policies and lightweight learned rankers. LLM may invoke useful subroutines; none controls the default research path.
 
 ## 3. Implementation priorities and acceptance gates
@@ -35,7 +37,7 @@ This is a local-first research application, not a certified engineering system, 
 | P0 | Native API access and dependencies | Discover versions and native capabilities, use installed libraries directly from code, request missing dependencies with user approval; do not rely on a new wrapper for every operation. |
 | P1 | Documentation and domain knowledge | Retrieve exact versioned API signatures, solver examples and physical assumptions; measure retrieval quality and recovery from errors. |
 | P1 | Long-horizon LLM loop | Multiple code/compute/inspect/revise cycles, model context and task continuity, structured tool errors, safe cancellation and recovery; no silent duplicate jobs. |
-| P1 | Scientific artifact UX | Native WinUI project explorer, code/model inspection, plots, topology and numerical tables with provenance, progress and clear errors. |
+| P1 | Scientific artifact UX | Proliferate-based project explorer, code/model inspection, plots, topology and numerical tables with provenance, progress and clear errors. |
 | P1 | Generalization benchmarks | Unseen tasks across AC networks, storage dispatch, dynamics, control and numerical modeling; evaluate model correctness, completion, recovery, resources and evidence against explicit baselines. |
 | P2 | Optional accelerators and release | Add tested specialist tools only when useful; avoid mandatory policies. Verify real desktop behavior, packaging, signing and release readiness. |
 
@@ -49,7 +51,7 @@ The normal workflow is a single LLM deciding what to do next after actual tool f
 
 ## 5. Transition from existing code
 
-- Retain LangGraph Agent, native WinUI, plugin management, numerical backends, model revisions, journals, independent verification and artifacts.
+- Retain plugin management, numerical backends, model revisions, journals, independent verification and artifacts. Retain LangGraph and WinUI for existing clients during the migration; the Proliferate-based client uses its external harness as the sole LLM loop.
 - Generalize existing sandbox code beyond the special AC reference workflow; use secure implementation and fail closed on unsupported platforms. Do not equate dependency/process isolation with OS-level isolation.
 - Review existing specialist policies as optional tools, isolate benchmarks from the primary chat flow, and avoid adding new mandatory controllers. Do not delete verified implementation before migration and tests.
 - Re-review open PRs #6–#8 under the new direction. Keep generic workbench, reference solvers and useful research artifacts; do not merge expert-system behavior as default. These are review instructions, not assertions that PRs have merged.
