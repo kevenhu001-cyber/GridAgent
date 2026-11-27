@@ -24,7 +24,9 @@ export class PiSessionController {
   private polling = false;
   private failedTurn = false;
 
-  constructor(private readonly bridge: DesktopPiBridge) {}
+  private readonly bridge: DesktopPiBridge;
+
+  constructor(bridge: DesktopPiBridge) { this.bridge = bridge; }
 
   getSnapshot(): PiSessionSnapshot { return this.snapshot; }
 
@@ -45,7 +47,7 @@ export class PiSessionController {
       const sessionId = await this.bridge.open();
       this.publish({sessionId});
       const deadline = Date.now() + 30_000;
-      while (this.snapshot.status === "opening") {
+      while (this.getSnapshot().status === "opening") {
         await this.poll();
         if (this.getSnapshot().status !== "opening") break;
         if (Date.now() >= deadline) throw new Error("Pi startup timed out");
@@ -122,6 +124,21 @@ export class PiSessionController {
     } finally {
       this.polling = false;
     }
+  }
+
+  /** Drive the same event loop for any UI consumer. Stop only on terminal
+   * state; cancelling continues to poll until the worker confirms settlement.
+   * Call once after prompt; do not use polling as a retry of submission.
+   */
+  async drainTurn() {
+    if (!["running", "cancelling"].includes(this.snapshot.status)) {
+      throw new Error("No active Pi turn to drain");
+    }
+    while (["running", "cancelling"].includes(this.getSnapshot().status)) {
+      await this.poll();
+      if (["running", "cancelling"].includes(this.getSnapshot().status)) await delay(50);
+    }
+    return this.getSnapshot();
   }
 
   async close() {

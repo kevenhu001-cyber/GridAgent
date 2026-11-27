@@ -3,11 +3,19 @@ on:
   pull_request:
     paths:
       - 'integration/pi-runtime/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/lib/access/pi/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/host/desktop-bridge.ts'
+      - 'vendor/proliferate/apps/desktop/src-tauri/src/pi_bridge.rs'
+      - 'vendor/proliferate/apps/desktop/src/lib/access/scientific/**'
       - '.github/workflows/pi-runtime.yml'
   push:
     branches: [main]
     paths:
       - 'integration/pi-runtime/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/lib/access/pi/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/host/desktop-bridge.ts'
+      - 'vendor/proliferate/apps/desktop/src-tauri/src/pi_bridge.rs'
+      - 'vendor/proliferate/apps/desktop/src/lib/access/scientific/**'
       - '.github/workflows/pi-runtime.yml'
 permissions:
   contents: read

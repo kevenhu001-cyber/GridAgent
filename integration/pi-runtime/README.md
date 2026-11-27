@@ -45,6 +45,10 @@ round-trip is required. The initial tool registry includes solver discovery,
 scientific job control, project files, run listings and artifact reads.
 No external executable extension discovery is enabled.
 
+## Shared session controller
+
+`ProductClient` now receives the typed native Pi capability via `DesktopBridge.pi`. The shared `PiSessionController` owns the host session ID, prompt ID, readiness, cancellation, event batches and settlement; it does not import Tauri or start any external Agent. `drainTurn` is the reusable polling loop for a future transcript consumer. The Node test suite exercises this actual TypeScript controller without installing the full desktop monorepo. It is intentionally not yet substituted into the existing AnyHarness-backed session directory, launch catalog, prompt outbox or transcript ingest. Those need a coordinated cutover, not a second parallel chat screen.
+
 ## Remaining integration
 
 Wire the debug bridge into the existing desktop conversation/session lifecycle,
