@@ -465,10 +465,10 @@ public partial class MainWindow : Window
             await Execute(new { action = "save-model-revision", run = row.Id, edit });
         else if (edit != null) Notify("Workspace changed before the revision could be saved.", InfoBarSeverity.Warning);
     }
-    private void ModelRevisionDiff(object sender, RoutedEventArgs e)
+    private async void ModelRevisionDiff(object sender, RoutedEventArgs e)
     {
-        if (!WorkspaceChanged() && ModelRevisions.SelectedItem is Entry row && row.Info != null)
-            _ = new ContentDialog { XamlRoot = Root.XamlRoot, Title = row.Label, Content = Text(row.Info), CloseButtonText = "Close" }.ShowAsync();
+        if (!_busy && !WorkspaceChanged() && ModelRevisions.SelectedItem is Entry row && row.Info != null)
+            await new ContentDialog { XamlRoot = Root.XamlRoot, Title = row.Label, Content = Text(row.Info), CloseButtonText = "Close" }.ShowAsync();
     }
     private async void RunModelRevision(object sender, RoutedEventArgs e)
     {
@@ -505,7 +505,11 @@ public partial class MainWindow : Window
     {
         if (_busy) return;
         var picker = await PickFile(".exe");
-        if (picker != null) await Local("register-ngspice", picker);
+        if (picker != null)
+        {
+            await Execute(new { action = "local", command = "register-ngspice", args = new[] { picker } });
+            if (!_operationError) await Execute(new { action = "plugins" });
+        }
     }
     private async void ReviewScript(object sender, RoutedEventArgs e)
     {
