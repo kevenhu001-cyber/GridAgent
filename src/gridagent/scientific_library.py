@@ -4,22 +4,58 @@ Actual callable introspection is executed in the same isolated runtime as
 user-authored science programs, and counts against the run budget.
 """
 import re
+from contextlib import ExitStack, contextmanager
 from importlib.metadata import distributions
 from pathlib import Path
+
+from filelock import FileLock
 
 from . import plugins
 
 DOTTED = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){0,7}")
 
 
-def inventory(runtime, plugin=None):
-    """Read metadata from the guest's actual mapped package roots, not host sys.path."""
-    roots = [("core", Path(runtime) / "Lib" / "site-packages")]
-    if plugin is not None:
-        target = plugins.installed_target(plugin)
-        if target is None:
-            raise ValueError("Install the requested managed plugin first")
-        roots.append((plugin, target))
+MAX_PLUGINS = 4
+MAX_DISTRIBUTIONS = 2000
+
+
+def selected_plugins(plugin=None, plugin_ids=None):
+    """Validate first-party IDs and preserve explicit import precedence."""
+    if plugin is not None and plugin_ids is not None:
+        raise ValueError("Use either plugin or plugin_ids, not both")
+    ids = [plugin] if plugin is not None else ([] if plugin_ids is None else plugin_ids)
+    if not isinstance(ids, list) or len(ids) > MAX_PLUGINS:
+        raise ValueError("Select at most four managed plugins")
+    for item in ids:
+        if not isinstance(item, str):
+            raise ValueError("Plugin IDs must be strings")
+        plugins.spec(item)
+    if len(ids) != len(set(ids)):
+        raise ValueError("Duplicate managed plugin ID")
+    return tuple(ids)
+
+
+@contextmanager
+def managed_targets(ids):
+    """Pin active managed generations with globally ordered plugin locks."""
+    with ExitStack() as stack:
+        if ids:
+            root = plugins.plugin_root()
+            root.mkdir(parents=True, exist_ok=True)
+            for item in sorted(ids):
+                stack.enter_context(FileLock(str(root / (item + ".lock")), timeout=0))
+        targets = {}
+        for item in ids:
+            target = plugins.installed_target(item)
+            if target is None:
+                raise ValueError(f"Install managed plugin {item} before using its native API")
+            targets[item] = target
+        yield targets
+
+
+def environment_inventory(runtime, targets):
+    """Inspect metadata only; do not import packages or silently resolve conflicts."""
+    roots = [("core", Path(runtime) / "Lib" / "site-packages"), *targets.items()]
     items = []
     for scope, path in roots:
         if not path.is_dir():
@@ -28,8 +64,34 @@ def inventory(runtime, plugin=None):
             name = dist.metadata.get("Name")
             if not name or not dist.version:
                 continue
+            if len(items) >= MAX_DISTRIBUTIONS:
+                raise ValueError("Scientific environment distribution limit exceeded")
             items.append({"distribution": name[:120], "version": dist.version[:120], "scope": scope})
-    return sorted(items, key=lambda row: (row["distribution"].casefold(), row["scope"]))[:500]
+    items.sort(key=lambda row: (row["distribution"].casefold(), row["scope"], row["version"]))
+    groups = {}
+    for row in items:
+        key = re.sub(r"[-_.]+", "-", row["distribution"].casefold())
+        groups.setdefault(key, []).append(row)
+    conflicts = [{"distribution": key, "versions": rows} for key, rows in sorted(groups.items())
+                 if len({row["version"] for row in rows}) > 1]
+    return {"distributions": items, "conflicts": conflicts,
+            "plugin_ids": list(targets), "import_precedence": ["project", *targets, "core"],
+            "scope": "distribution metadata only; not proof of import, ABI or numerical compatibility"}
+
+
+def inventory(runtime, plugin=None):
+    """Legacy inventory view for single-plugin consumers."""
+    with managed_targets(selected_plugins(plugin)) as targets:
+        return environment_inventory(runtime, targets)["distributions"][:500]
+
+
+def preflight(runtime, targets):
+    info = environment_inventory(runtime, targets)
+    if len(targets) > 1 and info["conflicts"]:
+        names = ", ".join(row["distribution"] for row in info["conflicts"][:12])
+        raise ValueError("Scientific dependency conflict: " + names
+                         + "; inspect library metadata or use separate runs")
+    return info
 
 
 def probe_source(module, symbol=None):
