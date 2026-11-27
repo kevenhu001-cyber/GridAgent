@@ -3,6 +3,9 @@ using System.Text;
 
 namespace GridAgent.Windows;
 
+internal sealed record ScientificChartArtifact(string RunId, string Path, string Sha256, string Title,
+    string XLabel, string YLabel, int SeriesCount, int Points);
+
 internal sealed record ResearchSnapshot(string Id, string Stage, string Summary, int RunsUsed, int MaxRuns);
 
 internal sealed class ConversationMessage(string role, string body) : INotifyPropertyChanged
@@ -23,6 +26,8 @@ internal sealed class ConversationMessage(string role, string body) : INotifyPro
     public Action<string>? OpenRun { get; init; }
     public Action<string>? RequestPreview { get; init; }
     public RunArtifact? Artifact { get; init; }
+    public ScientificChartArtifact? ScientificChart { get; init; }
+    public Action<ScientificChartArtifact>? OpenScientificChart { get; init; }
     public RunPreview? Preview { get; private set; }
     public void SetPreview(RunPreview preview)
     {
