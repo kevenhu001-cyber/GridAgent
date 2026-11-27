@@ -20,6 +20,7 @@ WORKSPACE_COMMANDS = {
     "/paper-rank", "/paper-kpi", "/paper-edit", "/paper-dmq", "/paper-dsr", "/paper-mitigate", "/paper-trials",
     "/models", "/import-model", "/knowledge", "/import-knowledge", "/backends", "/native-program", "/native-table",
     "/dispatch-ir", "/dispatch-resume", "/dispatch-status", "/dispatch-cancel",
+    "/closed-loop", "/closed-loop-resume",
     "/optimize-ir", "/optimize-resume", "/math-program", "/math-resume", "/ac-check", "/ac-check-resume", "/diagnose-study",
     "/diagnostic-experiment", "/diagnostic-experiment-resume",
     "/ac-diagnostic-experiment", "/ac-diagnostic-experiment-resume",
@@ -276,6 +277,7 @@ class GridApp(App):
                             "/research-approve ID · /research-clarify ID ANSWER · /research-report ID PATH"))
             chat.write(Text("/dispatch-ir PATH · /dispatch-resume ID · /dispatch-status ID · /dispatch-cancel ID"))
             chat.write(Text("/optimize-ir PATH · /optimize-resume ID · /math-program PATH · /math-resume ID"))
+            chat.write(Text("/closed-loop PATH · /closed-loop-resume ID"))
             chat.write(Text("/ac-check PATH · /ac-check-resume ID · /diagnose-study ID"))
             chat.write(Text("/diagnostic-experiment PATH · /diagnostic-experiment-resume ID"))
             chat.write(Text("/ac-diagnostic-experiment PATH · /ac-diagnostic-experiment-resume ID"))

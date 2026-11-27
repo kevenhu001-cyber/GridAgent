@@ -23,6 +23,8 @@ def main():
     research.add_argument("--dispatch-cancel", metavar="ID")
     research.add_argument("--optimize-ir", metavar="JSON", help="Run authorized AC mixed-variable optimization")
     research.add_argument("--optimize-resume", metavar="ID", help="Resume an AC optimization study")
+    research.add_argument("--closed-loop", metavar="JSON", help="Run reviewed bounded AC repair workflow")
+    research.add_argument("--closed-loop-resume", metavar="ID", help="Replay or resume AC repair workflow")
     research.add_argument("--math-program", metavar="JSON", help="Solve typed LP, MILP, polynomial NLP or unit commitment")
     research.add_argument("--math-resume", metavar="ID", help="Recover a mathematical program study")
     research.add_argument("--ac-check", metavar="JSON", help="Cross-check verified DC commitment with AC snapshots")
@@ -116,6 +118,8 @@ def main():
         ("dispatch-cancel", [args.dispatch_cancel] if args.dispatch_cancel else None),
         ("optimize-ir", [args.optimize_ir] if args.optimize_ir else None),
         ("optimize-resume", [args.optimize_resume] if args.optimize_resume else None),
+        ("closed-loop", [args.closed_loop] if args.closed_loop else None),
+        ("closed-loop-resume", [args.closed_loop_resume] if args.closed_loop_resume else None),
         ("math-program", [args.math_program] if args.math_program else None),
         ("math-resume", [args.math_resume] if args.math_resume else None),
         ("ac-check", [args.ac_check] if args.ac_check else None),

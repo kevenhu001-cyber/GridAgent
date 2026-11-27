@@ -359,6 +359,27 @@ def workspace_command(root, command, args, *, model_factory=None):
         except Timeout as exc:
             raise ValueError("Mathematical program is already running") from exc
         yield json.dumps(report, ensure_ascii=False, allow_nan=False)
+    elif command in {"closed-loop", "closed-loop-resume"} and len(args) == 1:
+        import json
+
+        from filelock import Timeout
+
+        from .ac_closed_loop import ClosedLoopSpec, resume_loop, start_loop
+
+        try:
+            if command == "closed-loop":
+                with Path(args[0]).open("rb") as handle:
+                    raw = handle.read(1024 * 1024 + 1)
+                if len(raw) > 1024 * 1024:
+                    raise ValueError("Closed-loop input exceeds 1 MiB")
+                identifier = start_loop(root, ClosedLoopSpec.model_validate_json(raw))
+                yield "Closed-loop study: " + identifier
+            else:
+                identifier = args[0]
+            result = resume_loop(root, identifier)
+        except Timeout as exc:
+            raise ValueError("Closed-loop study is locked") from exc
+        yield json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False)
     elif command in {"optimize-ir", "optimize-resume"} and len(args) == 1:
         import json
 
