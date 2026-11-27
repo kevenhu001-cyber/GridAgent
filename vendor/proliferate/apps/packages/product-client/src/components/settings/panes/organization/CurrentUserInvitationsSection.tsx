@@ -1,0 +1,94 @@
+import { useEffect, useRef, useState } from "react";
+import { ConfirmationDialog } from "#product/primitives/patterns/ConfirmationDialog";
+import { Button } from "#product/primitives/Button";
+import { Check } from "#product/primitives/icons/core";
+import { SettingsRow } from "#product/primitives/patterns/settings/SettingsRow";
+import { SettingsSection } from "#product/primitives/patterns/settings/SettingsSection";
+import type { OrganizationInvitationRecord } from "#product/lib/domain/organizations/organization-records";
+
+export function CurrentUserInvitationsSection({
+  invitations,
+  accepting,
+  focusedOrganizationId,
+  onAccept,
+}: {
+  invitations: OrganizationInvitationRecord[];
+  accepting: boolean;
+  focusedOrganizationId?: string | null;
+  onAccept: (invitationId: string) => void;
+}) {
+  const [acceptTarget, setAcceptTarget] = useState<OrganizationInvitationRecord | null>(null);
+  const focusedPromptShownRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (
+      !focusedOrganizationId
+      || acceptTarget
+      || focusedPromptShownRef.current === focusedOrganizationId
+    ) {
+      return;
+    }
+    const focusedInvitation = invitations.find(
+      (invitation) => invitation.organizationId === focusedOrganizationId,
+    );
+    if (focusedInvitation) {
+      focusedPromptShownRef.current = focusedOrganizationId;
+      setAcceptTarget(focusedInvitation);
+    }
+  }, [acceptTarget, focusedOrganizationId, invitations]);
+
+  if (invitations.length === 0) {
+    return null;
+  }
+
+  return (
+    <>
+      <SettingsSection
+        title="Pending invitations"
+        description="Join an organization that invited your signed-in email address."
+      >
+        {invitations.map((invitation) => (
+          <SettingsRow
+            key={invitation.id}
+            label={invitation.organizationName ?? "Organization invitation"}
+            description={`${invitation.role} access for ${invitation.email}`}
+          >
+            <Button
+              type="button"
+              variant="secondary"
+              loading={accepting}
+              onClick={() => setAcceptTarget(invitation)}
+            >
+              <Check className="icon-paired" />
+              Accept invitation
+            </Button>
+          </SettingsRow>
+        ))}
+      </SettingsSection>
+      {/* Rendered as a sibling, not a SettingsGroup child: it always mounts one
+          element even while closed, which would otherwise count toward the
+          group's divider interleaving and leave a trailing hairline. */}
+      <ConfirmationDialog
+        open={acceptTarget !== null}
+        title={acceptTarget ? `Join ${acceptTarget.organizationName ?? "organization"}?` : "Join organization?"}
+        description={
+          acceptTarget
+            ? `Accept this invitation for ${acceptTarget.email} and join as ${acceptTarget.role}.`
+            : "Accept this invitation and join the organization."
+        }
+        confirmLabel="Join"
+        loading={accepting}
+        disableClose={accepting}
+        onClose={() => setAcceptTarget(null)}
+        onConfirm={() => {
+          if (!acceptTarget) {
+            return;
+          }
+          const invitationId = acceptTarget.id;
+          setAcceptTarget(null);
+          onAccept(invitationId);
+        }}
+      />
+    </>
+  );
+}

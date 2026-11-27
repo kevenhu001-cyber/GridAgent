@@ -1,0 +1,48 @@
+const CHAT_LAUNCH_PROVIDER_ORDER = [
+  "claude",
+  "codex",
+  "cursor",
+  "opencode",
+] as const;
+
+const PROVIDER_ORDER_INDEX = new Map<string, number>(
+  CHAT_LAUNCH_PROVIDER_ORDER.map((kind, index) => [kind, index]),
+);
+
+export function compareChatLaunchKinds(
+  leftKind: string,
+  rightKind: string,
+  leftDisplayName: string,
+  rightDisplayName: string,
+) {
+  const leftIndex = PROVIDER_ORDER_INDEX.get(leftKind) ?? Number.MAX_SAFE_INTEGER;
+  const rightIndex = PROVIDER_ORDER_INDEX.get(rightKind) ?? Number.MAX_SAFE_INTEGER;
+  if (leftIndex !== rightIndex) {
+    return leftIndex - rightIndex;
+  }
+
+  return leftDisplayName.localeCompare(rightDisplayName);
+}
+
+interface ChatLaunchAgentOrderInput {
+  kind: string;
+  displayName: string;
+  models: readonly unknown[];
+}
+
+export function shouldExposeChatLaunchAgent(agent: ChatLaunchAgentOrderInput): boolean {
+  return agent.models.length > 0;
+}
+
+export function orderChatLaunchAgents<T extends ChatLaunchAgentOrderInput>(
+  agents: readonly T[],
+): T[] {
+  return [...agents].sort((left, right) => {
+    return compareChatLaunchKinds(
+      left.kind,
+      right.kind,
+      left.displayName,
+      right.displayName,
+    );
+  });
+}

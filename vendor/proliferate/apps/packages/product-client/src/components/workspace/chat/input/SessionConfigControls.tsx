@@ -1,0 +1,186 @@
+import {
+  resolveSessionControlTooltip,
+  resolveSessionToggleControlPresentation,
+  resolveSessionToggleControlStateLabel,
+} from "#product/lib/domain/chat/session-controls/session-toggle-control";
+import type { LiveSessionControlDescriptor } from "#product/lib/domain/chat/session-controls/session-controls";
+import type { ConfiguredSessionControlKey } from "#product/lib/domain/chat/session-controls/presentation";
+import { Brain, Zap } from "#product/primitives/icons/product";
+import { Check } from "#product/primitives/icons/core";
+import { Tooltip } from "#product/primitives/Tooltip";
+import { POPOVER_SURFACE_CLASS, PopoverButton } from "#product/primitives/PopoverButton";
+import { PopoverMenuItem } from "#product/primitives/PopoverMenuItem";
+import { ComposerControlButton } from "#product/primitives/patterns/composer/ComposerControlButton";
+import {
+  PendingConfigIndicator,
+  showsPendingConfigIndicator,
+} from "#product/components/workspace/chat/input/PendingConfigIndicator";
+import { SessionModeControl } from "#product/components/workspace/chat/input/SessionModeControl";
+
+interface SessionConfigControlsProps {
+  agentKind: string | null;
+  controls: LiveSessionControlDescriptor[];
+}
+
+export function SessionConfigControls({ agentKind, controls }: SessionConfigControlsProps) {
+  const uniqueControls = uniqueSessionControls(controls);
+
+  return (
+    <>
+      {uniqueControls.map((control) => (
+        isConfiguredModeControl(control) ? (
+          <SessionModeControl key={control.key} agentKind={agentKind} control={control} />
+        ) : control.kind === "toggle" ? (
+          <ToggleControl key={control.key} control={control} />
+        ) : (
+          <SelectControl key={control.key} control={control} />
+        )
+      ))}
+    </>
+  );
+}
+
+function uniqueSessionControls(
+  controls: LiveSessionControlDescriptor[],
+): LiveSessionControlDescriptor[] {
+  const controlsByKey = new Map<string, LiveSessionControlDescriptor>();
+  const orderedKeys: string[] = [];
+
+  for (const control of controls) {
+    if (!controlsByKey.has(control.key)) {
+      orderedKeys.push(control.key);
+    }
+    controlsByKey.set(control.key, control);
+  }
+
+  return orderedKeys
+    .map((key) => controlsByKey.get(key))
+    .filter((control): control is LiveSessionControlDescriptor => control !== undefined);
+}
+
+function isConfiguredModeControl(
+  control: LiveSessionControlDescriptor,
+): control is LiveSessionControlDescriptor & { key: ConfiguredSessionControlKey } {
+  return control.key === "collaboration_mode" || control.key === "mode";
+}
+
+function ToggleControl({ control }: { control: LiveSessionControlDescriptor }) {
+  const nextValue = control.isEnabled ? control.disabledValue : control.enabledValue;
+  const selectedOption = control.options.find((option) => option.selected) ?? null;
+  const accessibleName = control.detail ? `${control.label}: ${control.detail}` : control.label;
+
+  if (control.key === "reasoning" || control.key === "fast_mode") {
+    const presentation = resolveSessionToggleControlPresentation(control.key);
+    const Icon = presentation.icon === "brain" ? Brain : Zap;
+    const stateLabel = resolveSessionToggleControlStateLabel(control.key, !!control.isEnabled);
+    const tooltip = resolveSessionControlTooltip(
+      control.label,
+      control.detail,
+      selectedOption?.description,
+    );
+    const triggerLabel = control.key === "fast_mode" ? stateLabel : control.label;
+
+    return (
+      <Tooltip content={tooltip}>
+        <ComposerControlButton
+          disabled={!control.settable || !nextValue}
+          active={!!control.isEnabled}
+          icon={<Icon className={`icon-control [font-size:var(--text-body)] ${control.isEnabled ? "" : "opacity-65"}`} />}
+          label={triggerLabel}
+          trailing={showsPendingConfigIndicator(control.pendingState)
+        ? <PendingConfigIndicator pendingState={control.pendingState} />
+        : null}
+          aria-label={tooltip}
+          className="max-w-[12rem]"
+          data-session-config-control={control.key}
+          data-session-config-selected={selectedOption?.value ?? ""}
+          onClick={() => {
+            if (nextValue) {
+              control.onSelect(nextValue);
+            }
+          }}
+        />
+      </Tooltip>
+    );
+  }
+
+  return (
+    <ComposerControlButton
+      disabled={!control.settable || !nextValue}
+      active={!!control.isEnabled}
+      label={control.label}
+      detail={control.detail}
+      aria-label={accessibleName}
+      trailing={showsPendingConfigIndicator(control.pendingState)
+        ? <PendingConfigIndicator pendingState={control.pendingState} />
+        : null}
+      className="max-w-[12rem]"
+      data-session-config-control={control.key}
+      data-session-config-selected={selectedOption?.value ?? ""}
+      onClick={() => {
+        if (nextValue) {
+          control.onSelect(nextValue);
+        }
+      }}
+    />
+  );
+}
+
+function SelectControl({ control }: { control: LiveSessionControlDescriptor }) {
+  const selectedOption = control.options.find((option) => option.selected) ?? null;
+  const accessibleName = control.detail ? `${control.label}: ${control.detail}` : control.label;
+
+  if (!control.settable) {
+    return (
+      <ComposerControlButton
+        disabled
+        label={control.label}
+        detail={control.detail}
+        aria-label={accessibleName}
+        data-session-config-control={control.key}
+        data-session-config-selected={selectedOption?.value ?? ""}
+      />
+    );
+  }
+
+  return (
+    <PopoverButton
+      trigger={
+        <ComposerControlButton
+          label={control.label}
+          detail={control.detail}
+          aria-label={accessibleName}
+          trailing={showsPendingConfigIndicator(control.pendingState)
+        ? <PendingConfigIndicator pendingState={control.pendingState} />
+        : null}
+          className="max-w-[14rem]"
+          data-session-config-control={control.key}
+          data-session-config-selected={selectedOption?.value ?? ""}
+        />
+      }
+      side="top"
+      className={`w-56 ${POPOVER_SURFACE_CLASS}`}
+    >
+      {() => (
+        <>
+          {control.options.map((option) => (
+            <PopoverMenuItem
+              key={option.value}
+              data-session-config-option={`${control.key}:${option.value}`}
+              label={option.label}
+              trailing={option.selected ? <Check className="icon-paired shrink-0 text-foreground/60" /> : null}
+              // Intentionally does not close the surface: with a
+              // multi-level ladder (e.g. reasoning effort) the user needs
+              // to see which level they landed on before dismissing —
+              // same contract as AdvancedControlSections' StatusRow options.
+              // Outside click / Escape still close as normal.
+              onClick={() => {
+                control.onSelect(option.value);
+              }}
+            />
+          ))}
+        </>
+      )}
+    </PopoverButton>
+  );
+}

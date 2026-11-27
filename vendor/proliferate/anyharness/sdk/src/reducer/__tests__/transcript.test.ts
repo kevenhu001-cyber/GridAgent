@@ -1,0 +1,1721 @@
+import { describe, expect, it } from "vitest";
+import {
+  createTranscriptState,
+  reduceEvent,
+  reduceEvents,
+  selectPendingApprovalInteraction,
+  selectPendingMcpElicitationInteraction,
+  selectPendingUserInputInteraction,
+  selectPrimaryPendingInteraction,
+} from "../../index.js";
+import type { ContentPart, SessionEventEnvelope, ThoughtItem, ToolCallItem } from "../../index.js";
+
+describe("transcript reducer", () => {
+  it("normalizes available slash commands at the reducer boundary", () => {
+    const state = reduceEvent(createTranscriptState("session-1"), {
+      sessionId: "session-1",
+      seq: 1,
+      timestamp: "2026-04-04T00:00:01Z",
+      event: {
+        type: "available_commands_update",
+        availableCommands: [
+          { name: " review ", description: "Review changes", input: { hint: "scope" } },
+          { name: "init" },
+          { name: "" },
+          { description: "missing name" },
+        ],
+      },
+    } as unknown as SessionEventEnvelope);
+
+    expect(state.availableCommands).toEqual([
+      {
+        name: "review",
+        description: "Review changes",
+        input: { hint: "scope" },
+      },
+      {
+        name: "init",
+        description: "",
+        input: null,
+      },
+    ]);
+  });
+
+  it("reduces assistant streaming lifecycle into one completed prose item", () => {
+    const state = reduceEvents(
+      [
+        turnStarted(1),
+        assistantStarted(2, "assistant-1", "Hel"),
+        assistantDelta(3, "assistant-1", "lo"),
+        assistantCompleted(4, "assistant-1", "Hello"),
+      ],
+      "session-1",
+    );
+
+    const item = state.itemsById["assistant-1"];
+    expect(item.kind).toBe("assistant_prose");
+    if (item.kind !== "assistant_prose") {
+      throw new Error("expected assistant prose item");
+    }
+    expect(item.text).toBe("Hello");
+    expect(item.isStreaming).toBe(false);
+    expect(state.openAssistantItemId).toBeNull();
+  });
+
+  it("does not mutate previous item or content part references on deltas", () => {
+    const before = reduceEvents(
+      [
+        turnStarted(1),
+        assistantStarted(2, "assistant-1", "Hel"),
+      ],
+      "session-1",
+    );
+    const beforeItem = before.itemsById["assistant-1"];
+    if (beforeItem.kind !== "assistant_prose") {
+      throw new Error("expected assistant prose item");
+    }
+    const beforeContentParts = beforeItem.contentParts;
+    const beforeContentPart = beforeContentParts[0];
+
+    const after = reduceEvent(before, assistantDelta(3, "assistant-1", "lo"));
+    const afterItem = after.itemsById["assistant-1"];
+    if (afterItem.kind !== "assistant_prose") {
+      throw new Error("expected assistant prose item");
+    }
+
+    expect(before.itemsById["assistant-1"]).toBe(beforeItem);
+    expect(beforeItem.text).toBe("Hel");
+    expect(beforeItem.contentParts).toBe(beforeContentParts);
+    expect(beforeContentParts[0]).toBe(beforeContentPart);
+    expect(beforeContentPart).toEqual({ type: "text", text: "Hel" });
+    expect(afterItem).not.toBe(beforeItem);
+    expect(afterItem.contentParts).not.toBe(beforeContentParts);
+    expect(afterItem.contentParts[0]).not.toBe(beforeContentPart);
+    expect(afterItem.text).toBe("Hello");
+  });
+
+  it("preserves unchanged item references when one item changes", () => {
+    const before = reduceEvents(
+      [
+        turnStarted(1),
+        assistantStarted(2, "assistant-1", "Hel"),
+        completedToolItem(3, "tool-1"),
+      ],
+      "session-1",
+    );
+    const unchangedTool = before.itemsById["tool-1"];
+
+    const after = reduceEvent(before, assistantDelta(4, "assistant-1", "lo"));
+
+    expect(after.itemsById["tool-1"]).toBe(unchangedTool);
+    expect(after.itemsById["assistant-1"]).not.toBe(before.itemsById["assistant-1"]);
+  });
+
+  it("keeps the owning turn reference stable when completing an existing item", () => {
+    const before = reduceEvents(
+      [
+        turnStarted(1),
+        assistantStarted(2, "assistant-1", "Hel"),
+      ],
+      "session-1",
+    );
+    const beforeTurn = before.turnsById["turn-1"];
+
+    const after = reduceEvent(before, assistantCompleted(3, "assistant-1", "Hello"));
+
+    expect(after.turnsById["turn-1"]).toBe(beforeTurn);
+    expect(after.itemsById["assistant-1"]).not.toBe(before.itemsById["assistant-1"]);
+  });
+
+  it("does not mutate previous turn records when a turn completes", () => {
+    const before = reduceEvents(
+      [
+        turnStarted(1),
+        completedToolItem(2, "tool-1", {
+          type: "file_change",
+          operation: "edit",
+          path: "src/app.ts",
+          workspacePath: "src/app.ts",
+          additions: 3,
+          deletions: 1,
+        }),
+      ],
+      "session-1",
+    );
+    const beforeTurn = before.turnsById["turn-1"];
+
+    const after = reduceEvent(before, turnEnded(3));
+
+    expect(before.turnsById["turn-1"]).toBe(beforeTurn);
+    expect(beforeTurn.completedAt).toBeNull();
+    expect(beforeTurn.fileBadges).toEqual([]);
+    expect(after.turnsById["turn-1"]).not.toBe(beforeTurn);
+    expect(after.turnsById["turn-1"].completedAt).toBe("2026-04-04T00:00:03Z");
+    expect(after.turnsById["turn-1"].fileBadges).toEqual([
+      { path: "src/app.ts", additions: 3, deletions: 1 },
+    ]);
+  });
+
+  it("does not mutate previous tool items for interaction state updates", () => {
+    const before = reduceEvents(
+      [
+        turnStarted(1),
+        completedToolItem(2, "tool-1"),
+      ],
+      "session-1",
+    );
+    const beforeTool = before.itemsById["tool-1"] as ToolCallItem;
+
+    const afterRequest = reduceEvent(before, permissionRequested(3, "tool-1"));
+    const requestedTool = afterRequest.itemsById["tool-1"] as ToolCallItem;
+    const afterResolved = reduceEvent(afterRequest, {
+      sessionId: "session-1",
+      seq: 4,
+      timestamp: "2026-04-04T00:00:04Z",
+      turnId: "turn-1",
+      event: {
+        type: "interaction_resolved",
+        requestId: "perm-1",
+        kind: "permission",
+        outcome: {
+          outcome: "selected",
+          optionId: "allow",
+        },
+      },
+    });
+
+    expect(beforeTool.approvalState).toBe("none");
+    expect(requestedTool).not.toBe(beforeTool);
+    expect(requestedTool.approvalState).toBe("pending");
+    expect((afterResolved.itemsById["tool-1"] as ToolCallItem)).not.toBe(requestedTool);
+    expect((afterResolved.itemsById["tool-1"] as ToolCallItem).approvalState).toBe("approved");
+  });
+
+  it("preserves prompt attachment content parts across item completion", () => {
+    const contentParts: ContentPart[] = [
+      { type: "text", text: "see attached" },
+      {
+        type: "image",
+        attachmentId: "image-1",
+        mimeType: "image/png",
+        name: "screenshot.png",
+        size: 2048,
+        source: "upload",
+      },
+      {
+        type: "resource",
+        attachmentId: "file-1",
+        uri: "file://README.md",
+        name: "README.md",
+        mimeType: "text/markdown",
+        size: 1024,
+        preview: "# Readme",
+        source: "paste",
+      },
+      {
+        type: "resource_link",
+        uri: "file:///workspace/spec.pdf",
+        name: "spec.pdf",
+        mimeType: "application/pdf",
+        size: 4096,
+      },
+      {
+        type: "plan_reference",
+        planId: "plan-1",
+        title: "Migration plan",
+        bodyMarkdown: "# Migration plan\n\nDo it.",
+        snapshotHash: "hash-1",
+        sourceSessionId: "session-1",
+        sourceTurnId: "turn-1",
+        sourceItemId: "item-1",
+        sourceKind: "codex_turn_plan",
+        sourceToolCallId: null,
+      },
+    ];
+    const state = reduceEvents(
+      [
+        turnStarted(1),
+        userMessageStarted(2, "user-1", contentParts),
+        userMessageCompleted(3, "user-1", contentParts),
+      ],
+      "session-1",
+    );
+
+    const item = state.itemsById["user-1"];
+    expect(item.kind).toBe("user_message");
+    if (item.kind !== "user_message") {
+      throw new Error("expected user message item");
+    }
+    expect(item.text).toBe("see attached");
+    expect(item.contentParts.map((part) => part.type)).toEqual([
+      "text",
+      "image",
+      "resource",
+      "resource_link",
+      "plan_reference",
+    ]);
+    expect(item.contentParts.find((part) => part.type === "resource")).toMatchObject({
+      attachmentId: "file-1",
+      name: "README.md",
+    });
+    expect(item.contentParts.find((part) => part.type === "plan_reference")).toMatchObject({
+      planId: "plan-1",
+      snapshotHash: "hash-1",
+    });
+  });
+
+  it("preserves prompt ids on user-message transcript items", () => {
+    const state = reduceEvents(
+      [
+        turnStarted(1),
+        userMessageStarted(2, "user-1", [{ type: "text", text: "hello" }], "prompt-1"),
+        userMessageCompleted(3, "user-1", [{ type: "text", text: "hello" }], "prompt-1"),
+      ],
+      "session-1",
+    );
+
+    const item = state.itemsById["user-1"];
+    expect(item.kind).toBe("user_message");
+    if (item.kind !== "user_message") {
+      throw new Error("expected user message item");
+    }
+    expect(item.promptId).toBe("prompt-1");
+  });
+
+  it("preserves plan reference content parts when later snapshots omit them", () => {
+    const state = reduceEvents(
+      [
+        turnStarted(1),
+        userMessageStarted(2, "user-1", [
+          { type: "text", text: "continue this" },
+          {
+            type: "plan_reference",
+            planId: "plan-1",
+            title: "Migration plan",
+            bodyMarkdown: "# Migration plan\n\nDo it.",
+            snapshotHash: "hash-1",
+            sourceSessionId: "session-1",
+            sourceTurnId: "turn-1",
+            sourceItemId: "item-1",
+            sourceKind: "codex_turn_plan",
+            sourceToolCallId: null,
+          },
+        ]),
+        userMessageCompleted(3, "user-1", [{ type: "text", text: "continue this" }]),
+      ],
+      "session-1",
+    );
+
+    const item = state.itemsById["user-1"];
+    expect(item.kind).toBe("user_message");
+    if (item.kind !== "user_message") {
+      throw new Error("expected user message item");
+    }
+    expect(item.contentParts.map((part) => part.type)).toEqual(["text", "plan_reference"]);
+  });
+
+  it("treats subagent completion events as metadata, not transcript content", () => {
+    const state = reduceEvents(
+      [
+        {
+          sessionId: "session-1",
+          seq: 1,
+          timestamp: "2026-04-04T00:00:01Z",
+          event: {
+            type: "subagent_turn_completed",
+            completionId: "completion-1",
+            sessionLinkId: "link-1",
+            parentSessionId: "parent-1",
+            childSessionId: "child-1",
+            childTurnId: "turn-child-1",
+            childLastEventSeq: 42,
+            outcome: "completed",
+            label: "Reviewer",
+          },
+        },
+      ],
+      "session-1",
+    );
+
+    expect(Object.keys(state.itemsById)).toEqual([]);
+    expect(state.turnOrder).toEqual([]);
+    expect(state.unknownEvents).toEqual([]);
+    expect(state.lastSeq).toBe(1);
+    expect(state.linkCompletionsByCompletionId["completion-1"]).toMatchObject({
+      relation: "subagent",
+      completionId: "completion-1",
+      sessionLinkId: "link-1",
+      childSessionId: "child-1",
+      outcome: "completed",
+      seq: 1,
+    });
+    expect(state.latestLinkCompletionBySessionLinkId["link-1"]).toBe("completion-1");
+  });
+
+  it("treats review run updates as metadata, not transcript content", () => {
+    const state = reduceEvents(
+      [
+        {
+          sessionId: "session-1",
+          seq: 1,
+          timestamp: "2026-04-28T00:00:01Z",
+          event: {
+            type: "review_run_updated",
+            reviewRunId: "review-1",
+            parentSessionId: "session-1",
+            kind: "plan",
+            status: "parent_revising",
+            currentRoundNumber: 1,
+            maxRounds: 2,
+            autoIterate: true,
+            activeRoundId: "round-1",
+            updatedAt: "2026-04-28T00:00:00Z",
+          },
+        },
+      ],
+      "session-1",
+    );
+
+    expect(Object.keys(state.itemsById)).toEqual([]);
+    expect(state.turnOrder).toEqual([]);
+    expect(state.unknownEvents).toEqual([]);
+    expect(state.lastSeq).toBe(1);
+  });
+
+  it("treats goal mirror events as metadata, not transcript content", () => {
+    const goal = {
+      objective: "make CI green",
+      status: "active",
+      native: true,
+      revision: 1,
+      createdAt: "2026-07-02T00:00:00Z",
+      updatedAt: "2026-07-02T00:00:01Z",
+    };
+    const state = reduceEvents(
+      [
+        {
+          sessionId: "session-1",
+          seq: 1,
+          timestamp: "2026-07-02T00:00:01Z",
+          event: { type: "goal_updated", goal },
+        },
+        {
+          sessionId: "session-1",
+          seq: 2,
+          timestamp: "2026-07-02T00:00:02Z",
+          event: { type: "goal_met", goal: { ...goal, status: "met" } },
+        },
+        {
+          sessionId: "session-1",
+          seq: 3,
+          timestamp: "2026-07-02T00:00:03Z",
+          event: { type: "goal_cleared", goal: { ...goal, status: "cleared" } },
+        },
+      ] as unknown as SessionEventEnvelope[],
+      "session-1",
+    );
+
+    expect(Object.keys(state.itemsById)).toEqual([]);
+    expect(state.turnOrder).toEqual([]);
+    expect(state.unknownEvents).toEqual([]);
+    expect(state.lastSeq).toBe(3);
+  });
+
+  it("closes orphaned assistant and reasoning streams when a turn ends", () => {
+    const state = reduceEvents(
+      [
+        turnStarted(1),
+        assistantStarted(2, "assistant-1", "Still typing"),
+        reasoningStarted(3, "reasoning-1", "Thinking"),
+        turnEnded(4),
+      ],
+      "session-1",
+    );
+
+    expect(state.openAssistantItemId).toBeNull();
+    expect(state.openThoughtItemId).toBeNull();
+    expect(state.isStreaming).toBe(false);
+    const assistantItem = state.itemsById["assistant-1"];
+    expect(assistantItem.kind).toBe("assistant_prose");
+    if (assistantItem.kind !== "assistant_prose") {
+      throw new Error("expected assistant prose item");
+    }
+    expect(assistantItem.isStreaming).toBe(false);
+    const thoughtItem = state.itemsById["reasoning-1"] as ThoughtItem;
+    expect(thoughtItem.kind).toBe("thought");
+    expect(thoughtItem.isStreaming).toBe(false);
+  });
+
+  it("preserves transient status thoughts and updates them in place", () => {
+    const state = reduceEvents(
+      [
+        turnStarted(1),
+        reasoningStarted(2, "status-1", "Authenticating MCP", true),
+        {
+          sessionId: "session-1",
+          seq: 3,
+          timestamp: "2026-04-04T00:00:03Z",
+          turnId: "turn-1",
+          itemId: "status-1",
+          event: {
+            type: "item_delta",
+            delta: {
+              isTransient: true,
+              replaceContentParts: [
+                { type: "reasoning", text: "Waiting for browser auth", visibility: "private" },
+              ],
+            },
+          },
+        },
+      ],
+      "session-1",
+    );
+
+    const item = state.itemsById["status-1"] as ThoughtItem;
+    expect(item.kind).toBe("thought");
+    expect(item.isTransient).toBe(true);
+    expect(item.text).toBe("Waiting for browser auth");
+    expect(state.turnsById["turn-1"].itemOrder).toEqual(["status-1"]);
+  });
+
+  it("keeps ordinary reasoning non-transient", () => {
+    const state = reduceEvents(
+      [
+        turnStarted(1),
+        reasoningStarted(2, "reasoning-1", "Thinking"),
+      ],
+      "session-1",
+    );
+
+    const item = state.itemsById["reasoning-1"] as ThoughtItem;
+    expect(item.kind).toBe("thought");
+    expect(item.isTransient).toBe(false);
+  });
+
+  it("merges tool deltas and re-derives semantic kind from file changes", () => {
+    const state = reduceEvents(
+      [
+        turnStarted(1),
+        {
+          sessionId: "session-1",
+          seq: 2,
+          timestamp: "2026-04-04T00:00:02Z",
+          turnId: "turn-1",
+          itemId: "tool-1",
+          event: {
+            type: "item_started",
+            item: {
+              kind: "tool_invocation",
+              status: "in_progress",
+              sourceAgentKind: "claude",
+              toolCallId: "tool-1",
+              title: "Edit file",
+              contentParts: [
+                {
+                  type: "tool_call",
+                  toolCallId: "tool-1",
+                  title: "Edit file",
+                  toolKind: "edit",
+                },
+              ],
+            },
+          },
+        },
+        {
+          sessionId: "session-1",
+          seq: 3,
+          timestamp: "2026-04-04T00:00:03Z",
+          turnId: "turn-1",
+          itemId: "tool-1",
+          event: {
+            type: "item_delta",
+            delta: {
+              replaceContentParts: [
+                {
+                  type: "tool_call",
+                  toolCallId: "tool-1",
+                  title: "Edit file",
+                  toolKind: "edit",
+                },
+                {
+                  type: "file_change",
+                  operation: "edit",
+                  path: "src/app.ts",
+                  workspacePath: "src/app.ts",
+                  additions: 5,
+                  deletions: 1,
+                },
+              ],
+            },
+          },
+        },
+      ],
+      "session-1",
+    );
+
+    const item = state.itemsById["tool-1"] as ToolCallItem;
+    expect(item.kind).toBe("tool_call");
+    expect(item.semanticKind).toBe("file_change");
+    expect(item.contentParts.filter((part) => part.type === "tool_call")).toHaveLength(1);
+    expect(item.contentParts.filter((part) => part.type === "file_change")).toHaveLength(1);
+  });
+
+  it("preserves file change truncation metadata through merge deltas", () => {
+    const state = reduceEvents(
+      [
+        turnStarted(1),
+        {
+          sessionId: "session-1",
+          seq: 2,
+          timestamp: "2026-04-04T00:00:02Z",
+          turnId: "turn-1",
+          itemId: "tool-1",
+          event: {
+            type: "item_started",
+            item: {
+              kind: "tool_invocation",
+              status: "in_progress",
+              sourceAgentKind: "claude",
+              toolCallId: "tool-1",
+              title: "Edit file",
+              contentParts: [
+                {
+                  type: "tool_call",
+                  toolCallId: "tool-1",
+                  title: "Edit file",
+                  toolKind: "edit",
+                },
+                {
+                  type: "file_change",
+                  operation: "edit",
+                  path: "src/app.ts",
+                  workspacePath: "src/app.ts",
+                  patch: "@@ truncated",
+                  patchTruncated: true,
+                  patchOriginalBytes: 40000,
+                  preview: "old preview",
+                  previewTruncated: true,
+                  previewOriginalBytes: 22000,
+                },
+              ],
+            },
+          },
+        },
+        {
+          sessionId: "session-1",
+          seq: 3,
+          timestamp: "2026-04-04T00:00:03Z",
+          turnId: "turn-1",
+          itemId: "tool-1",
+          event: {
+            type: "item_delta",
+            delta: {
+              replaceContentParts: [
+                {
+                  type: "tool_call",
+                  toolCallId: "tool-1",
+                  title: "Edit file",
+                  toolKind: "edit",
+                },
+                {
+                  type: "file_change",
+                  operation: "edit",
+                  path: "src/app.ts",
+                  workspacePath: "src/app.ts",
+                  additions: 5,
+                  deletions: 1,
+                },
+              ],
+            },
+          },
+        },
+      ],
+      "session-1",
+    );
+
+    const item = state.itemsById["tool-1"] as ToolCallItem;
+    const fileChange = item.contentParts.find((part) => part.type === "file_change");
+    expect(fileChange?.type).toBe("file_change");
+    if (!fileChange || fileChange.type !== "file_change") return;
+    expect(fileChange.patchTruncated).toBe(true);
+    expect(fileChange.patchOriginalBytes).toBe(40000);
+    expect(fileChange.previewTruncated).toBe(true);
+    expect(fileChange.previewOriginalBytes).toBe(22000);
+  });
+
+  it("tracks permission requests and resolutions against tool items", () => {
+    const state = reduceEvents(
+      [
+        turnStarted(1),
+        completedToolItem(2, "tool-1"),
+        permissionRequested(3, "tool-1"),
+        {
+          sessionId: "session-1",
+          seq: 4,
+          timestamp: "2026-04-04T00:00:04Z",
+          turnId: "turn-1",
+          event: {
+            type: "interaction_resolved",
+            requestId: "perm-1",
+            kind: "permission",
+            outcome: {
+              outcome: "selected",
+              optionId: "allow",
+            },
+          },
+        },
+      ],
+      "session-1",
+    );
+
+    expect(selectPendingApprovalInteraction(state)).toBeNull();
+    expect((state.itemsById["tool-1"] as ToolCallItem).approvalState).toBe("approved");
+  });
+
+  it("treats cancelled permission resolutions as cleared rather than rejected", () => {
+    const state = reduceEvents(
+      [
+        turnStarted(1),
+        completedToolItem(2, "tool-1"),
+        permissionRequested(3, "tool-1"),
+        {
+          sessionId: "session-1",
+          seq: 4,
+          timestamp: "2026-04-04T00:00:04Z",
+          turnId: "turn-1",
+          event: {
+            type: "interaction_resolved",
+            requestId: "perm-1",
+            kind: "permission",
+            outcome: {
+              outcome: "cancelled",
+            },
+          },
+        },
+      ],
+      "session-1",
+    );
+
+    expect(selectPendingApprovalInteraction(state)).toBeNull();
+    expect((state.itemsById["tool-1"] as ToolCallItem).approvalState).toBe("none");
+  });
+
+  it("preserves toolKind on pending approval interaction", () => {
+    const state = reduceEvents(
+      [
+        turnStarted(1),
+        completedToolItem(2, "tool-1"),
+        {
+          sessionId: "session-1",
+          seq: 3,
+          timestamp: "2026-04-04T00:00:03Z",
+          turnId: "turn-1",
+          itemId: "tool-1",
+          event: {
+            type: "interaction_requested",
+            requestId: "perm-1",
+            kind: "permission",
+            title: "Run command",
+            description: null,
+            source: {
+              toolCallId: "tool-1",
+              toolKind: "switch_mode",
+              toolStatus: null,
+            },
+            payload: {
+              type: "permission",
+              context: {
+                displayName: "Write access",
+                blockedPath: "/tmp/output.txt",
+                decisionReason: "Needs write permission",
+                agentId: "agent-1",
+              },
+              options: [{ optionId: "allow", label: "Allow", kind: "allow_once" }],
+            },
+          },
+        },
+      ],
+      "session-1",
+    );
+
+    expect(selectPendingApprovalInteraction(state)).toMatchObject({
+      requestId: "perm-1",
+      toolCallId: "tool-1",
+      toolKind: "switch_mode",
+      title: "Run command",
+      context: {
+        displayName: "Write access",
+        blockedPath: "/tmp/output.txt",
+        decisionReason: "Needs write permission",
+        agentId: "agent-1",
+      },
+    });
+  });
+
+  it("defaults pending approval toolKind to null when absent on the event", () => {
+    const state = reduceEvents(
+      [
+        turnStarted(1),
+        completedToolItem(2, "tool-1"),
+        {
+          sessionId: "session-1",
+          seq: 3,
+          timestamp: "2026-04-04T00:00:03Z",
+          turnId: "turn-1",
+          itemId: "tool-1",
+          event: {
+            type: "interaction_requested",
+            requestId: "perm-1",
+            kind: "permission",
+            title: "Run command",
+            description: null,
+            source: {
+              toolCallId: "tool-1",
+              toolKind: null,
+              toolStatus: null,
+            },
+            payload: {
+              type: "permission",
+              options: [{ optionId: "allow", label: "Allow", kind: "allow_once" }],
+            },
+          },
+        },
+      ],
+      "session-1",
+    );
+
+    expect(selectPendingApprovalInteraction(state)?.toolKind).toBeNull();
+  });
+
+  it("tracks user input interactions without storing answers", () => {
+    const state = reduceEvents(
+      [
+        turnStarted(1),
+        {
+          sessionId: "session-1",
+          seq: 2,
+          timestamp: "2026-04-04T00:00:02Z",
+          turnId: "turn-1",
+          event: {
+            type: "interaction_requested",
+            requestId: "input-1",
+            kind: "user_input",
+            title: "Provider",
+            description: "Which provider should be used?",
+            source: {
+              toolCallId: null,
+              toolKind: null,
+              toolStatus: null,
+            },
+            payload: {
+              type: "user_input",
+              questions: [{
+                questionId: "provider",
+                header: "Provider",
+                question: "Which provider should be used?",
+                isOther: true,
+                isSecret: false,
+                options: [{ label: "Recommended", description: "Use the default" }],
+              }],
+            },
+          },
+        },
+      ],
+      "session-1",
+    );
+
+    expect(selectPendingApprovalInteraction(state)).toBeNull();
+    expect(selectPrimaryPendingInteraction(state)).toMatchObject({
+      requestId: "input-1",
+      kind: "user_input",
+    });
+    expect(selectPendingUserInputInteraction(state)).toMatchObject({
+      requestId: "input-1",
+      questions: [{
+        questionId: "provider",
+        isOther: true,
+      }],
+    });
+    expect(JSON.stringify(state)).not.toContain("submitted answer");
+  });
+
+  it("clears user input interactions on submitted resolution", () => {
+    const state = reduceEvents(
+      [
+        turnStarted(1),
+        {
+          sessionId: "session-1",
+          seq: 2,
+          timestamp: "2026-04-04T00:00:02Z",
+          turnId: "turn-1",
+          event: {
+            type: "interaction_requested",
+            requestId: "input-1",
+            kind: "user_input",
+            title: "Provider",
+            description: null,
+            source: {
+              toolCallId: null,
+              toolKind: null,
+              toolStatus: null,
+            },
+            payload: {
+              type: "user_input",
+              questions: [{
+                questionId: "provider",
+                header: "Provider",
+                question: "Which provider should be used?",
+                isOther: false,
+                isSecret: false,
+                options: [],
+              }],
+            },
+          },
+        },
+        {
+          sessionId: "session-1",
+          seq: 3,
+          timestamp: "2026-04-04T00:00:03Z",
+          turnId: "turn-1",
+          event: {
+            type: "interaction_resolved",
+            requestId: "input-1",
+            kind: "user_input",
+            outcome: {
+              outcome: "submitted",
+              answeredQuestionIds: ["provider"],
+            },
+          },
+        },
+      ],
+      "session-1",
+    );
+
+    expect(selectPendingUserInputInteraction(state)).toBeNull();
+    expect(JSON.stringify(state)).not.toContain("secret answer");
+  });
+
+  it("tracks MCP elicitations without storing raw values", () => {
+    const state = reduceEvents(
+      [
+        turnStarted(1),
+        {
+          sessionId: "session-1",
+          seq: 2,
+          timestamp: "2026-04-04T00:00:02Z",
+          turnId: "turn-1",
+          event: {
+            type: "interaction_requested",
+            requestId: "mcp-1",
+            kind: "mcp_elicitation",
+            title: "MCP input needed",
+            description: null,
+            source: {
+              toolCallId: null,
+              toolKind: null,
+              toolStatus: null,
+            },
+            payload: {
+              type: "mcp_elicitation",
+              serverName: "Google",
+              mode: {
+                mode: "form",
+                message: "Pick account",
+                fields: [{
+                  fieldType: "single_select",
+                  fieldId: "field_1",
+                  label: "Account",
+                  required: true,
+                  options: [{ optionId: "field_1_option_1", label: "Work" }],
+                }],
+              },
+            },
+          },
+        },
+      ],
+      "session-1",
+    );
+
+    expect(selectPendingMcpElicitationInteraction(state)).toMatchObject({
+      requestId: "mcp-1",
+      kind: "mcp_elicitation",
+      mcpElicitation: {
+        serverName: "Google",
+        mode: {
+          mode: "form",
+        },
+      },
+    });
+    expect(selectPrimaryPendingInteraction(state)?.kind).toBe("mcp_elicitation");
+    expect(JSON.stringify(state)).not.toContain("acct_");
+    expect(JSON.stringify(state)).not.toContain("original-request-id");
+  });
+
+  it("clears MCP elicitations on accepted resolution without values", () => {
+    const state = reduceEvents(
+      [
+        turnStarted(1),
+        {
+          sessionId: "session-1",
+          seq: 2,
+          timestamp: "2026-04-04T00:00:02Z",
+          turnId: "turn-1",
+          event: {
+            type: "interaction_requested",
+            requestId: "mcp-1",
+            kind: "mcp_elicitation",
+            title: "MCP input needed",
+            description: null,
+            source: {
+              toolCallId: null,
+              toolKind: null,
+              toolStatus: null,
+            },
+            payload: {
+              type: "mcp_elicitation",
+              serverName: "Google",
+              mode: {
+                mode: "form",
+                message: "Pick account",
+                fields: [],
+              },
+            },
+          },
+        },
+        {
+          sessionId: "session-1",
+          seq: 3,
+          timestamp: "2026-04-04T00:00:03Z",
+          turnId: "turn-1",
+          event: {
+            type: "interaction_resolved",
+            requestId: "mcp-1",
+            kind: "mcp_elicitation",
+            outcome: {
+              outcome: "accepted",
+              acceptedFieldIds: ["field_1"],
+            },
+          },
+        },
+      ],
+      "session-1",
+    );
+
+    expect(selectPendingMcpElicitationInteraction(state)).toBeNull();
+    expect(JSON.stringify(state)).not.toContain("submitted-secret");
+  });
+
+  it("aggregates file badges when the turn ends", () => {
+    const state = reduceEvents(
+      [
+        turnStarted(1),
+        completedToolItem(2, "tool-1", {
+          type: "file_change",
+          operation: "edit",
+          path: "src/app.ts",
+          workspacePath: "src/app.ts",
+          additions: 2,
+          deletions: 1,
+        }),
+        completedToolItem(3, "tool-2", {
+          type: "file_change",
+          operation: "edit",
+          path: "src/app.ts",
+          workspacePath: "src/app.ts",
+          additions: 4,
+          deletions: 3,
+        }),
+        turnEnded(4),
+      ],
+      "session-1",
+    );
+
+    expect(state.turnsById["turn-1"].fileBadges).toEqual([
+      {
+        path: "src/app.ts",
+        additions: 6,
+        deletions: 4,
+      },
+    ]);
+  });
+
+  it("clears pending approval on error as a defensive fallback", () => {
+    const state = reduceEvents(
+      [
+        turnStarted(1),
+        completedToolItem(2, "tool-1"),
+        permissionRequested(3, "tool-1"),
+        {
+          sessionId: "session-1",
+          seq: 4,
+          timestamp: "2026-04-04T00:00:04Z",
+          turnId: "turn-1",
+          itemId: "error-1",
+          event: {
+            type: "error",
+            message: "server shut down unexpectedly",
+            code: null,
+            details: {
+              kind: "provider_rate_limit",
+              provider: "anthropic",
+              providerModel: "claude-opus-4-7",
+              limit: 30000,
+              unit: "input_tokens_per_minute",
+              fallbackModelId: "claude-opus-4-6",
+            },
+          },
+        },
+      ],
+      "session-1",
+    );
+
+    expect(selectPendingApprovalInteraction(state)).toBeNull();
+    expect((state.itemsById["tool-1"] as ToolCallItem).approvalState).toBe("none");
+    expect(state.itemsById["error-1"]).toMatchObject({
+      kind: "error",
+      code: null,
+      details: {
+        kind: "provider_rate_limit",
+        fallbackModelId: "claude-opus-4-6",
+      },
+    });
+  });
+
+  it("clears pending approval on session_ended fallback replay", () => {
+    const state = reduceEvents(
+      [
+        turnStarted(1),
+        completedToolItem(2, "tool-1"),
+        permissionRequested(3, "tool-1"),
+        {
+          sessionId: "session-1",
+          seq: 4,
+          timestamp: "2026-04-04T00:00:04Z",
+          event: {
+            type: "session_ended",
+            reason: "error",
+          },
+        },
+      ],
+      "session-1",
+    );
+
+    expect(selectPendingApprovalInteraction(state)).toBeNull();
+    expect((state.itemsById["tool-1"] as ToolCallItem).approvalState).toBe("none");
+    expect(state.isStreaming).toBe(false);
+  });
+
+  it("replaces async launch text in place without reordering the turn", () => {
+    const state = reduceEvents(
+      [
+        turnStarted(1),
+        backgroundLaunchToolItem(2, "tool-1"),
+        assistantCompleted(3, "assistant-1", "Waiting on results now."),
+        {
+          sessionId: "session-1",
+          seq: 4,
+          timestamp: "2026-04-04T00:00:04Z",
+          turnId: "turn-1",
+          itemId: "tool-1",
+          event: {
+            type: "item_delta",
+            delta: {
+              status: "completed",
+              rawOutput: backgroundWorkRawOutput("completed"),
+              replaceContentParts: [
+                {
+                  type: "tool_result_text",
+                  text: "Final synthesized subagent report.",
+                },
+              ],
+            },
+          },
+        },
+        {
+          sessionId: "session-1",
+          seq: 5,
+          timestamp: "2026-04-04T00:00:05Z",
+          turnId: "turn-1",
+          itemId: "tool-1",
+          event: {
+            type: "item_completed",
+            item: {
+              kind: "tool_invocation",
+              status: "completed",
+              sourceAgentKind: "claude",
+              toolCallId: "tool-1",
+              rawOutput: backgroundWorkRawOutput("completed"),
+              contentParts: [
+                {
+                  type: "tool_result_text",
+                  text: "Final synthesized subagent report.",
+                },
+              ],
+            },
+          },
+        },
+      ],
+      "session-1",
+    );
+
+    const item = state.itemsById["tool-1"] as ToolCallItem;
+    const resultTexts = item.contentParts
+      .filter((part): part is Extract<typeof item.contentParts[number], { type: "tool_result_text" }> => part.type === "tool_result_text")
+      .map((part) => part.text);
+
+    expect(resultTexts).toEqual(["Final synthesized subagent report."]);
+    expect(state.turnsById["turn-1"].itemOrder).toEqual(["tool-1", "assistant-1"]);
+    expect(item.lastUpdatedSeq).toBe(5);
+    expect((item.rawOutput as { _anyharness?: { backgroundWork?: { state?: string } } })._anyharness?.backgroundWork?.state).toBe("completed");
+  });
+
+  it("classifies Claude cowork artifact create tool calls from captured MCP names", () => {
+    const state = reduceEvents(
+      [
+        turnStarted(1),
+        claudeCoworkArtifactCreateStarted(),
+        claudeCoworkArtifactCreateCompleted(),
+      ],
+      "session-1",
+    );
+
+    const item = state.itemsById["tool-artifact-create"] as ToolCallItem;
+    expect(item.kind).toBe("tool_call");
+    expect(item.semanticKind).toBe("cowork_artifact_create");
+    expect(item.nativeToolName).toBe("mcp__cowork__create_artifact");
+  });
+
+  it("classifies AnyHarness create_cowork_agent MCP calls as cowork coding activity", () => {
+    const state = reduceEvents(
+      [
+        turnStarted(1),
+        {
+          sessionId: "session-1",
+          seq: 2,
+          timestamp: "2026-04-04T00:00:02Z",
+          turnId: "turn-1",
+          itemId: "tool-cowork-agent-create",
+          event: {
+            type: "item_completed",
+            item: {
+              kind: "tool_invocation",
+              status: "completed",
+              sourceAgentKind: "claude",
+              title: "mcp__cowork__create_cowork_agent",
+              toolCallId: "tool-cowork-agent-create",
+              nativeToolName: "mcp__cowork__create_cowork_agent",
+              rawInput: {
+                coworkWorkspaceId: "cowork_workspace_1",
+                label: "api-surface-check",
+                prompt: "Review the API surface.",
+              },
+              contentParts: [
+                {
+                  type: "tool_call",
+                  toolCallId: "tool-cowork-agent-create",
+                  title: "mcp__cowork__create_cowork_agent",
+                  toolKind: "other",
+                  nativeToolName: "mcp__cowork__create_cowork_agent",
+                },
+              ],
+            },
+          },
+        },
+      ],
+      "session-1",
+    );
+
+    const item = state.itemsById["tool-cowork-agent-create"] as ToolCallItem;
+    expect(item.kind).toBe("tool_call");
+    expect(item.semanticKind).toBe("cowork_coding");
+    expect(item.nativeToolName).toBe("mcp__cowork__create_cowork_agent");
+  });
+
+  it("classifies Claude cowork artifact update tool calls from captured MCP names", () => {
+    const state = reduceEvents(
+      [
+        turnStarted(1),
+        claudeCoworkArtifactUpdateStarted(),
+        claudeCoworkArtifactUpdateCompleted(),
+      ],
+      "session-1",
+    );
+
+    const item = state.itemsById["tool-artifact-update"] as ToolCallItem;
+    expect(item.kind).toBe("tool_call");
+    expect(item.semanticKind).toBe("cowork_artifact_update");
+    expect(item.nativeToolName).toBe("mcp__cowork__update_artifact");
+  });
+
+  it("does not classify unverified plain create_artifact names as cowork artifact tools", () => {
+    const state = reduceEvents(
+      [
+        turnStarted(1),
+        {
+          sessionId: "session-1",
+          seq: 2,
+          timestamp: "2026-04-04T00:00:02Z",
+          turnId: "turn-1",
+          itemId: "tool-plain-artifact",
+          event: {
+            type: "item_completed",
+            item: {
+              kind: "tool_invocation",
+              status: "completed",
+              sourceAgentKind: "claude",
+              toolCallId: "tool-plain-artifact",
+              title: "create_artifact",
+              nativeToolName: "create_artifact",
+              contentParts: [
+                {
+                  type: "tool_call",
+                  toolCallId: "tool-plain-artifact",
+                  title: "create_artifact",
+                  toolKind: "other",
+                  nativeToolName: "create_artifact",
+                },
+              ],
+            },
+          },
+        },
+      ],
+      "session-1",
+    );
+
+    const item = state.itemsById["tool-plain-artifact"] as ToolCallItem;
+    expect(item.kind).toBe("tool_call");
+    expect(item.semanticKind).toBe("other");
+  });
+});
+
+function turnStarted(seq: number): SessionEventEnvelope {
+  return {
+    sessionId: "session-1",
+    seq,
+    timestamp: `2026-04-04T00:00:0${seq}Z`,
+    turnId: "turn-1",
+    event: { type: "turn_started" },
+  };
+}
+
+function turnEnded(seq: number): SessionEventEnvelope {
+  return {
+    sessionId: "session-1",
+    seq,
+    timestamp: `2026-04-04T00:00:0${seq}Z`,
+    turnId: "turn-1",
+    event: { type: "turn_ended", stopReason: "end_turn" },
+  };
+}
+
+function assistantStarted(
+  seq: number,
+  itemId: string,
+  text: string,
+): SessionEventEnvelope {
+  return {
+    sessionId: "session-1",
+    seq,
+    timestamp: `2026-04-04T00:00:0${seq}Z`,
+    turnId: "turn-1",
+    itemId,
+    event: {
+      type: "item_started",
+      item: {
+        kind: "assistant_message",
+        status: "in_progress",
+        sourceAgentKind: "claude",
+        contentParts: [{ type: "text", text }],
+      },
+    },
+  };
+}
+
+function assistantDelta(
+  seq: number,
+  itemId: string,
+  appendText: string,
+): SessionEventEnvelope {
+  return {
+    sessionId: "session-1",
+    seq,
+    timestamp: `2026-04-04T00:00:0${seq}Z`,
+    turnId: "turn-1",
+    itemId,
+    event: {
+      type: "item_delta",
+      delta: {
+        appendText,
+      },
+    },
+  };
+}
+
+function assistantCompleted(
+  seq: number,
+  itemId: string,
+  text: string,
+): SessionEventEnvelope {
+  return {
+    sessionId: "session-1",
+    seq,
+    timestamp: `2026-04-04T00:00:0${seq}Z`,
+    turnId: "turn-1",
+    itemId,
+    event: {
+      type: "item_completed",
+      item: {
+        kind: "assistant_message",
+        status: "completed",
+        sourceAgentKind: "claude",
+        contentParts: [{ type: "text", text }],
+      },
+    },
+  };
+}
+
+function userMessageStarted(
+  seq: number,
+  itemId: string,
+  contentParts: ContentPart[],
+  promptId: string | null = null,
+): SessionEventEnvelope {
+  return {
+    sessionId: "session-1",
+    seq,
+    timestamp: `2026-04-04T00:00:0${seq}Z`,
+    turnId: "turn-1",
+    itemId,
+    event: {
+      type: "item_started",
+      item: {
+        kind: "user_message",
+        status: "completed",
+        sourceAgentKind: "claude",
+        promptId,
+        contentParts,
+      },
+    },
+  };
+}
+
+function userMessageCompleted(
+  seq: number,
+  itemId: string,
+  contentParts: ContentPart[],
+  promptId: string | null = null,
+): SessionEventEnvelope {
+  return {
+    sessionId: "session-1",
+    seq,
+    timestamp: `2026-04-04T00:00:0${seq}Z`,
+    turnId: "turn-1",
+    itemId,
+    event: {
+      type: "item_completed",
+      item: {
+        kind: "user_message",
+        status: "completed",
+        sourceAgentKind: "claude",
+        promptId,
+        contentParts,
+      },
+    },
+  };
+}
+
+function reasoningStarted(
+  seq: number,
+  itemId: string,
+  text: string,
+  isTransient = false,
+): SessionEventEnvelope {
+  return {
+    sessionId: "session-1",
+    seq,
+    timestamp: `2026-04-04T00:00:0${seq}Z`,
+    turnId: "turn-1",
+    itemId,
+    event: {
+      type: "item_started",
+      item: {
+        kind: "reasoning",
+        status: "in_progress",
+        sourceAgentKind: "claude",
+        isTransient,
+        contentParts: [{ type: "reasoning", text, visibility: "private" }],
+      },
+    },
+  };
+}
+
+function completedToolItem(
+  seq: number,
+  itemId: string,
+  extraContentPart?: SessionEventEnvelope["event"] extends never ? never : {
+    type: "file_change";
+    operation: "edit" | "create" | "delete" | "move";
+    path: string;
+    workspacePath?: string;
+    additions?: number;
+    deletions?: number;
+  },
+): SessionEventEnvelope {
+  return {
+    sessionId: "session-1",
+    seq,
+    timestamp: `2026-04-04T00:00:0${seq}Z`,
+    turnId: "turn-1",
+    itemId,
+    event: {
+      type: "item_completed",
+      item: {
+        kind: "tool_invocation",
+        status: "completed",
+        sourceAgentKind: "claude",
+        toolCallId: itemId,
+        title: "Tool call",
+        contentParts: [
+          {
+            type: "tool_call",
+            toolCallId: itemId,
+            title: "Tool call",
+            toolKind: "other",
+          },
+          ...(extraContentPart ? [extraContentPart] : []),
+        ],
+      },
+    },
+  };
+}
+
+function backgroundLaunchToolItem(
+  seq: number,
+  itemId: string,
+): SessionEventEnvelope {
+  return {
+    sessionId: "session-1",
+    seq,
+    timestamp: `2026-04-04T00:00:0${seq}Z`,
+    turnId: "turn-1",
+    itemId,
+    event: {
+      type: "item_completed",
+      item: {
+        kind: "tool_invocation",
+        status: "completed",
+        sourceAgentKind: "claude",
+        toolCallId: itemId,
+        title: "Agent task",
+        rawOutput: backgroundWorkRawOutput("pending"),
+        contentParts: [
+          {
+            type: "tool_call",
+            toolCallId: itemId,
+            title: "Agent task",
+            toolKind: "other",
+          },
+          {
+            type: "tool_input_text",
+            text: "Investigate this repo.",
+          },
+          {
+            type: "tool_result_text",
+            text: "Async agent launched successfully.\nThe agent is working in the background.",
+          },
+        ],
+      },
+    },
+  };
+}
+
+function backgroundWorkRawOutput(state: "pending" | "completed" | "expired") {
+  return {
+    isAsync: true,
+    agentId: "agent-1",
+    outputFile: "/tmp/agent.output",
+    _anyharness: {
+      backgroundWork: {
+        trackerKind: "claude_async_agent",
+        state,
+      },
+    },
+  };
+}
+
+function permissionRequested(
+  seq: number,
+  toolCallId: string,
+): SessionEventEnvelope {
+  return {
+    sessionId: "session-1",
+    seq,
+    timestamp: `2026-04-04T00:00:0${seq}Z`,
+    turnId: "turn-1",
+    itemId: toolCallId,
+    event: {
+      type: "interaction_requested",
+      requestId: "perm-1",
+      kind: "permission",
+      title: "Run command",
+      description: null,
+      source: {
+        toolCallId,
+        toolKind: "execute",
+        toolStatus: null,
+      },
+      payload: {
+        type: "permission",
+        options: [{ optionId: "allow", label: "Allow", kind: "allow_once" }],
+      },
+    },
+  };
+}
+
+function claudeCoworkArtifactCreateStarted(): SessionEventEnvelope {
+  return {
+    sessionId: "session-1",
+    seq: 2,
+    timestamp: "2026-04-12T19:13:00.100000+00:00",
+    turnId: "turn-1",
+    itemId: "tool-artifact-create",
+    event: {
+      type: "item_started",
+      item: {
+        kind: "tool_invocation",
+        status: "in_progress",
+        sourceAgentKind: "claude",
+        title: "mcp__cowork__create_artifact",
+        toolCallId: "tool-artifact-create",
+        nativeToolName: "mcp__cowork__create_artifact",
+        rawInput: {},
+        contentParts: [
+          {
+            type: "tool_call",
+            toolCallId: "tool-artifact-create",
+            title: "mcp__cowork__create_artifact",
+            toolKind: "other",
+            nativeToolName: "mcp__cowork__create_artifact",
+          },
+        ],
+      },
+    },
+  };
+}
+
+function claudeCoworkArtifactCreateCompleted(): SessionEventEnvelope {
+  return {
+    sessionId: "session-1",
+    seq: 3,
+    timestamp: "2026-04-12T19:13:01.353997+00:00",
+    turnId: "turn-1",
+    itemId: "tool-artifact-create",
+    event: {
+      type: "item_completed",
+      item: {
+        kind: "tool_invocation",
+        status: "completed",
+        sourceAgentKind: "claude",
+        title: "mcp__cowork__create_artifact",
+        toolCallId: "tool-artifact-create",
+        nativeToolName: "mcp__cowork__create_artifact",
+        rawInput: {
+          path: "aurora.jsx",
+          title: "Aurora - Interactive Ambient Display",
+          description:
+            "A beautiful interactive ambient display with flowing aurora gradients, floating particles, and a real-time clock.",
+        },
+        rawOutput:
+          "{\"createdAt\":\"2026-04-12T19:13:01.353997+00:00\",\"description\":\"A beautiful interactive ambient display with flowing aurora gradients, floating particles, and a real-time clock.\",\"exists\":true,\"id\":\"art_001386b254d0414a8f96f2baa8d976c2\",\"modifiedAt\":\"2026-04-12T19:13:01.354198186+00:00\",\"path\":\"aurora.jsx\",\"sizeBytes\":9792,\"title\":\"Aurora - Interactive Ambient Display\",\"type\":\"application/vnd.proliferate.react\",\"updatedAt\":\"2026-04-12T19:13:01.353997+00:00\"}",
+        contentParts: [
+          {
+            type: "tool_call",
+            toolCallId: "tool-artifact-create",
+            title: "mcp__cowork__create_artifact",
+            toolKind: "other",
+            nativeToolName: "mcp__cowork__create_artifact",
+          },
+          {
+            type: "tool_result_text",
+            text:
+              "{\"createdAt\":\"2026-04-12T19:13:01.353997+00:00\",\"description\":\"A beautiful interactive ambient display with flowing aurora gradients, floating particles, and a real-time clock.\",\"exists\":true,\"id\":\"art_001386b254d0414a8f96f2baa8d976c2\",\"modifiedAt\":\"2026-04-12T19:13:01.354198186+00:00\",\"path\":\"aurora.jsx\",\"sizeBytes\":9792,\"title\":\"Aurora - Interactive Ambient Display\",\"type\":\"application/vnd.proliferate.react\",\"updatedAt\":\"2026-04-12T19:13:01.353997+00:00\"}",
+          },
+        ],
+      },
+    },
+  };
+}
+
+function claudeCoworkArtifactUpdateStarted(): SessionEventEnvelope {
+  return {
+    sessionId: "session-1",
+    seq: 2,
+    timestamp: "2026-04-12T19:14:10.100000+00:00",
+    turnId: "turn-1",
+    itemId: "tool-artifact-update",
+    event: {
+      type: "item_started",
+      item: {
+        kind: "tool_invocation",
+        status: "in_progress",
+        sourceAgentKind: "claude",
+        title: "mcp__cowork__update_artifact",
+        toolCallId: "tool-artifact-update",
+        nativeToolName: "mcp__cowork__update_artifact",
+        rawInput: {},
+        contentParts: [
+          {
+            type: "tool_call",
+            toolCallId: "tool-artifact-update",
+            title: "mcp__cowork__update_artifact",
+            toolKind: "other",
+            nativeToolName: "mcp__cowork__update_artifact",
+          },
+        ],
+      },
+    },
+  };
+}
+
+function claudeCoworkArtifactUpdateCompleted(): SessionEventEnvelope {
+  return {
+    sessionId: "session-1",
+    seq: 3,
+    timestamp: "2026-04-12T19:14:11.353997+00:00",
+    turnId: "turn-1",
+    itemId: "tool-artifact-update",
+    event: {
+      type: "item_completed",
+      item: {
+        kind: "tool_invocation",
+        status: "completed",
+        sourceAgentKind: "claude",
+        title: "mcp__cowork__update_artifact",
+        toolCallId: "tool-artifact-update",
+        nativeToolName: "mcp__cowork__update_artifact",
+        rawInput: {
+          id: "art_001386b254d0414a8f96f2baa8d976c2",
+          title: "Aurora - Interactive Ambient Display",
+          description:
+            "A beautiful interactive ambient display with flowing aurora gradients, floating particles, and a real-time clock.",
+        },
+        rawOutput:
+          "{\"createdAt\":\"2026-04-12T19:13:01.353997+00:00\",\"description\":\"A beautiful interactive ambient display with flowing aurora gradients, floating particles, and a real-time clock.\",\"exists\":true,\"id\":\"art_001386b254d0414a8f96f2baa8d976c2\",\"modifiedAt\":\"2026-04-12T19:14:11.354198186+00:00\",\"path\":\"aurora.jsx\",\"sizeBytes\":9792,\"title\":\"Aurora - Interactive Ambient Display\",\"type\":\"application/vnd.proliferate.react\",\"updatedAt\":\"2026-04-12T19:14:11.353997+00:00\"}",
+        contentParts: [
+          {
+            type: "tool_call",
+            toolCallId: "tool-artifact-update",
+            title: "mcp__cowork__update_artifact",
+            toolKind: "other",
+            nativeToolName: "mcp__cowork__update_artifact",
+          },
+          {
+            type: "tool_result_text",
+            text:
+              "{\"createdAt\":\"2026-04-12T19:13:01.353997+00:00\",\"description\":\"A beautiful interactive ambient display with flowing aurora gradients, floating particles, and a real-time clock.\",\"exists\":true,\"id\":\"art_001386b254d0414a8f96f2baa8d976c2\",\"modifiedAt\":\"2026-04-12T19:14:11.354198186+00:00\",\"path\":\"aurora.jsx\",\"sizeBytes\":9792,\"title\":\"Aurora - Interactive Ambient Display\",\"type\":\"application/vnd.proliferate.react\",\"updatedAt\":\"2026-04-12T19:14:11.353997+00:00\"}",
+          },
+        ],
+      },
+    },
+  };
+}

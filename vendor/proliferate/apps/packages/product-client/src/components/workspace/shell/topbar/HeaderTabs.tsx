@@ -1,0 +1,388 @@
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import { DebugProfiler } from "#product/components/diagnostics/DebugProfiler";
+import {
+  ManualChatGroupEditorPopover,
+  type ManualChatGroupEditorAnchorRect,
+} from "#product/components/workspace/shell/tabs/ManualChatGroupEditorPopover";
+import { WorkspaceTabStrip } from "#product/components/workspace/shell/tabs/WorkspaceTabStrip";
+import { NewChatButton, ClosedSessionsTrigger } from "#product/components/workspace/shell/topbar/HeaderTabsActions";
+import { HeaderTabsClosingGhosts } from "#product/components/workspace/shell/topbar/HeaderTabsClosingGhosts";
+import { HeaderTabsStripRows } from "#product/components/workspace/shell/topbar/HeaderTabsStripRows";
+import { useShortcutHandler } from "#product/hooks/shortcuts/lifecycle/use-shortcut-handler";
+import { useSessionForkActions } from "#product/hooks/sessions/workflows/use-session-fork-actions";
+import { useSessionTitleActions } from "#product/hooks/sessions/workflows/use-session-title-actions";
+import { useDebugRenderCount } from "#product/hooks/ui/debug/use-debug-render-count";
+import { useResizeObserverWidth } from "#product/hooks/ui/layout/use-resize-observer-width";
+import { useHeaderTabsCloseActions } from "#product/hooks/workspaces/workflows/tabs/use-header-tabs-close-actions";
+import { useHeaderTabCloseTransition } from "#product/hooks/workspaces/ui/tabs/use-header-tab-close-transition";
+import { useHeaderTabsGroupEditor } from "#product/hooks/workspaces/ui/tabs/use-header-tabs-group-editor";
+import {
+  useHeaderTabsLayout,
+} from "#product/hooks/workspaces/ui/tabs/use-header-tabs-layout";
+import { useHeaderTabsMultiSelect } from "#product/hooks/workspaces/ui/tabs/use-header-tabs-multi-select";
+import { useManualChatGroupActions } from "#product/hooks/workspaces/workflows/tabs/use-manual-chat-group-actions";
+import { useChatTabVisibilityActions } from "#product/hooks/workspaces/workflows/tabs/use-chat-tab-visibility-actions";
+import { useTabGroupActions } from "#product/hooks/workspaces/workflows/tabs/use-tab-group-actions";
+import { useShellTabOrderActions } from "#product/hooks/workspaces/workflows/tabs/use-shell-tab-order-actions";
+import { useShellTabDrag } from "#product/hooks/workspaces/ui/tabs/use-tab-drag";
+import {
+  useOptionalWorkspaceHeaderTabsViewModelContext,
+} from "#product/components/workspace/shell/providers/WorkspaceHeaderTabsViewModelContext";
+import { useWorkspaceTabActions } from "#product/hooks/workspaces/workflows/tabs/use-workspace-tab-actions";
+import { useHeaderTabsUrgentHighlight } from "#product/hooks/workspaces/ui/use-header-tabs-urgent-highlight";
+import { computeActiveTabScrollLeft } from "#product/lib/domain/workspaces/tabs/chrome-layout";
+import type { ManualChatGroupId } from "#product/lib/domain/workspaces/tabs/manual-groups";
+import { useWorkspaceViewerTabsStore } from "#product/stores/editor/workspace-viewer-tabs-store";
+import { startMeasurementOperation } from "#product/lib/infra/measurement/measurement-port";
+import { useShortcutRevealVisible } from "#product/providers/ShortcutRevealProvider";
+import { isWorkspaceSetupSessionId } from "#product/lib/domain/workspaces/selection/setup-session";
+
+type HeaderTabsViewModel = NonNullable<
+  ReturnType<typeof useOptionalWorkspaceHeaderTabsViewModelContext>
+>;
+
+// reservedWidth calculation: "+" button + its gap + flex-1 spacer gap + history button when visible + its gap.
+// The 28px button size mirrors --workspace-shell-action-size (1.75rem) in apps/packages/design/src/css/product.css — if that token changes, these must change.
+const PLUS_BUTTON_RESERVED = 28 + 6 + 6;
+const HISTORY_BUTTON_RESERVED = 28 + 6;
+
+export const HeaderTabs = memo(function HeaderTabs() {
+  const viewModel = useOptionalWorkspaceHeaderTabsViewModelContext();
+  if (!viewModel) {
+    return null;
+  }
+  return <HeaderTabsInner viewModel={viewModel} />;
+});
+
+const HeaderTabsInner = memo(function HeaderTabsInner({
+  viewModel,
+}: {
+  viewModel: HeaderTabsViewModel;
+}) {
+  useDebugRenderCount("header-tabs");
+  const chatVisibilityActions = useChatTabVisibilityActions({
+    workspaceUiKey: viewModel.workspaceUiKey,
+    materializedWorkspaceId: viewModel.materializedWorkspaceId,
+    visibleIds: viewModel.visibleChatSessionIds,
+    liveIds: viewModel.liveChatSessionIds,
+    childToParent: viewModel.childToParent,
+  });
+  const tabGroupActions = useTabGroupActions();
+  const tabActions = useWorkspaceTabActions(viewModel);
+  const { updateSessionTitle } = useSessionTitleActions();
+  const shortcutRevealVisible = useShortcutRevealVisible();
+  const {
+    deleteGroup: deleteManualChatGroup,
+  } = useManualChatGroupActions();
+
+  const closeTarget = useWorkspaceViewerTabsStore((state) => state.closeTarget);
+
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+  const outerMeasure = useResizeObserverWidth<HTMLDivElement>();
+  const stripScrollRef = useRef<HTMLDivElement | null>(null);
+  const closedCount = viewModel.closedChatTabs.length;
+  const reservedWidth = PLUS_BUTTON_RESERVED + (closedCount > 0 ? HISTORY_BUTTON_RESERVED : 0);
+  const shellTabOrderActions = useShellTabOrderActions({
+    workspaceId: viewModel.workspaceUiKey,
+  });
+  const handleSessionForked = useCallback((response: { session: { id: string } }) => {
+    chatVisibilityActions.showChatSessionTab(response.session.id, { select: true });
+  }, [chatVisibilityActions.showChatSessionTab]);
+  const { forkSession } = useSessionForkActions({
+    workspaceId: viewModel.selectedWorkspaceId,
+    onForked: handleSessionForked,
+  });
+
+  useShortcutHandler("session.rename", () => {
+    if (viewModel.activeSessionId) {
+      setRenamingSessionId(viewModel.activeSessionId);
+    }
+  });
+
+  const multiSelect = useHeaderTabsMultiSelect({
+    workspaceId: viewModel.workspaceUiKey,
+    chatTabs: viewModel.chatTabs,
+    stripChatSessionIds: viewModel.stripChatSessionIds,
+  });
+  const groupEditorWorkflow = useHeaderTabsGroupEditor({
+    workspaceId: viewModel.workspaceUiKey,
+    displayManualGroups: viewModel.displayManualGroups,
+    onCreateComplete: multiSelect.clearSelection,
+  });
+
+  const {
+    layout,
+    chatGroupUnderlines,
+    dragRows,
+    dragUnitsBySourceId,
+  } = useHeaderTabsLayout({
+    width: outerMeasure.width,
+    shellRows: viewModel.shellRows,
+    reservedWidth,
+  });
+  const {
+    closingTabs,
+    contentWidth,
+    beginCloseChatTab,
+  } = useHeaderTabCloseTransition({
+    shellRows: viewModel.shellRows,
+    positions: layout.positions,
+    widths: layout.widths,
+  });
+
+  const activeTabIndex = viewModel.shellRows.findIndex((shellRow) =>
+    shellRow.kind === "chat"
+    && shellRow.row.kind === "tab"
+    && shellRow.row.tab.isActive
+  );
+
+  useEffect(() => {
+    const strip = stripScrollRef.current;
+    if (!strip || activeTabIndex < 0) {
+      return;
+    }
+    const scrollLeft = computeActiveTabScrollLeft({
+      tabLeft: layout.positions[activeTabIndex] ?? 0,
+      tabWidth: layout.widths[activeTabIndex] ?? 0,
+      scrollLeft: strip.scrollLeft,
+      clientWidth: strip.clientWidth,
+    });
+    if (scrollLeft !== null) {
+      strip.scrollTo({ left: scrollLeft, behavior: "smooth" });
+    }
+  }, [activeTabIndex, layout.positions, layout.widths]);
+
+  const dismissChatSession = useCallback((sessionId: string) => {
+    return chatVisibilityActions.archiveChatSessionTab(sessionId).then((archived) => {
+      if (archived) {
+        multiSelect.clearSelection();
+      }
+      return archived;
+    });
+  }, [
+    chatVisibilityActions.archiveChatSessionTab,
+    multiSelect.clearSelection,
+  ]);
+
+  const {
+    closeOtherWorkspaceTabs,
+    closeWorkspaceTabsToRight,
+  } = useHeaderTabsCloseActions({
+    selectedWorkspaceId: viewModel.selectedWorkspaceId,
+    shellWorkspaceId: viewModel.workspaceUiKey,
+    activeShellTab: viewModel.activeShellTab,
+    orderedTabs: viewModel.orderedTabs,
+    buffersByPath: viewModel.buffersByPath,
+    closeTarget,
+    showChatSessionTab: chatVisibilityActions.showChatSessionTab,
+    canHideChatSessionTabs: chatVisibilityActions.canHideChatSessionTabs,
+    hideChatSessionTabs: chatVisibilityActions.hideChatSessionTabs,
+  });
+
+  const shellDrag = useShellTabDrag({
+    stripRef: stripScrollRef,
+    rows: dragRows,
+    orderedIds: viewModel.orderedShellTabKeys,
+    unitsBySourceId: dragUnitsBySourceId,
+    onDragStart: multiSelect.clearSelection,
+    onReorder: shellTabOrderActions.reorderShellTabs,
+  });
+  const handleHeaderTabHover = useCallback(() => {
+    startMeasurementOperation({
+      kind: "hover_sample",
+      sampleKey: "header_tab",
+      surfaces: ["header-tab", "header-tabs"],
+      maxDurationMs: 750,
+      cooldownMs: 2000,
+    });
+  }, []);
+  const activateChatSessionFromHeader = useCallback((sessionId: string) => {
+    chatVisibilityActions.showChatSessionTab(sessionId, { select: true });
+  }, [chatVisibilityActions.showChatSessionTab]);
+  const {
+    urgentHighlightedChatSessionId,
+    clearUrgentChatHighlight,
+    previewHeaderChatTab,
+    activateHeaderChatTab,
+  } = useHeaderTabsUrgentHighlight({
+    workspaceUiKey: viewModel.workspaceUiKey,
+    activeShellTab: viewModel.activeShellTab,
+    onActivateChatSession: activateChatSessionFromHeader,
+  });
+  const handleRenameManualGroup = useCallback((
+    groupId: ManualChatGroupId,
+    anchorRect: ManualChatGroupEditorAnchorRect,
+  ) => {
+    groupEditorWorkflow.openEditGroupEditor(groupId, "rename", anchorRect);
+  }, [groupEditorWorkflow.openEditGroupEditor]);
+  const handleChangeManualGroupColor = useCallback((
+    groupId: ManualChatGroupId,
+    anchorRect: ManualChatGroupEditorAnchorRect,
+  ) => {
+    groupEditorWorkflow.openEditGroupEditor(groupId, "color", anchorRect);
+  }, [groupEditorWorkflow.openEditGroupEditor]);
+  const handleUngroupManualGroup = useCallback((groupId: ManualChatGroupId) => {
+    if (!viewModel.workspaceUiKey) {
+      return;
+    }
+    deleteManualChatGroup(viewModel.workspaceUiKey, groupId);
+    multiSelect.clearSelection();
+  }, [
+    deleteManualChatGroup,
+    multiSelect.clearSelection,
+    viewModel.workspaceUiKey,
+  ]);
+  const handleRenameOpenChange = useCallback((_sessionId: string, isOpen: boolean) => {
+    if (!isOpen) {
+      setRenamingSessionId(null);
+    }
+  }, []);
+  const handleStartRename = useCallback((sessionId: string) => {
+    setRenamingSessionId(sessionId);
+  }, []);
+  const handleRenameChatTab = useCallback((sessionId: string, title: string) =>
+    updateSessionTitle(sessionId, title), [updateSessionTitle]);
+  const handleCreateGroup = useCallback((sessionIds: readonly string[]) => {
+    groupEditorWorkflow.openCreateGroupEditor([...sessionIds]);
+  }, [groupEditorWorkflow.openCreateGroupEditor]);
+  const handleChatContextMenuTarget = useCallback((
+    sessionId: string,
+    anchorRect: ManualChatGroupEditorAnchorRect,
+  ) => {
+    groupEditorWorkflow.rememberAnchorRect(anchorRect);
+    if (!multiSelect.multiSelectedSessionIds.has(sessionId)) {
+      multiSelect.clearSelection();
+    }
+  }, [
+    groupEditorWorkflow.rememberAnchorRect,
+    multiSelect.clearSelection,
+    multiSelect.multiSelectedSessionIds,
+  ]);
+  const handleForkChatTab = useCallback((sessionId: string) => {
+    multiSelect.clearSelection();
+    forkSession(sessionId);
+  }, [forkSession, multiSelect.clearSelection]);
+  const handleCloseChatTab = useCallback((sessionId: string) => {
+    if (!chatVisibilityActions.canHideChatSessionTabs([sessionId])) {
+      return;
+    }
+    beginCloseChatTab(sessionId);
+    multiSelect.clearSelection();
+    chatVisibilityActions.hideChatSessionTabs([sessionId], { selectFallback: true });
+  }, [
+    beginCloseChatTab,
+    chatVisibilityActions.canHideChatSessionTabs,
+    chatVisibilityActions.hideChatSessionTabs,
+    multiSelect.clearSelection,
+  ]);
+  const handleCloseOtherChatTabs = useCallback((sessionId: string) => {
+    closeOtherWorkspaceTabs({ kind: "chat", sessionId });
+  }, [closeOtherWorkspaceTabs]);
+  const handleCloseChatTabsToRight = useCallback((sessionId: string) => {
+    closeWorkspaceTabsToRight({ kind: "chat", sessionId });
+  }, [closeWorkspaceTabsToRight]);
+
+  return (
+    <DebugProfiler id="header-tabs">
+      <div
+        ref={outerMeasure.ref}
+        className="flex h-full min-w-0 flex-1 items-stretch gap-1.5 overflow-hidden pl-1"
+      >
+        <DebugProfiler id="header-tabs-strip">
+          <WorkspaceTabStrip
+            label="Workspace tabs"
+            stripRef={stripScrollRef}
+            contentWidth={contentWidth}
+            data-workspace-tab-strip
+            className="workspace-shell-tab-strip__viewport h-full min-w-0 shrink"
+            style={{ maxWidth: contentWidth }}
+            {...shellDrag.stripDragProps}
+          >
+            {chatGroupUnderlines.map((range) => (
+              <span
+                key={`group-line-${range.groupId}`}
+                aria-hidden="true"
+                className="pointer-events-none absolute bottom-0 z-raised h-0.5 rounded-full"
+                style={{
+                  left: range.left + shellDrag.getRowDragOffset(`pill:${range.groupId}`),
+                  width: range.width,
+                  backgroundColor: range.color,
+                }}
+              />
+            ))}
+            <HeaderTabsClosingGhosts closingTabs={closingTabs} />
+            <HeaderTabsStripRows
+              shellRows={viewModel.shellRows}
+              widths={layout.widths}
+              positions={layout.positions}
+              shellDrag={shellDrag}
+              renamingSessionId={renamingSessionId}
+              urgentHighlightedChatSessionId={urgentHighlightedChatSessionId}
+              multiSelectedSessionIds={multiSelect.multiSelectedSessionIds}
+              selectedTopLevelSessionIds={multiSelect.selectedTopLevelSessionIds}
+              onHeaderTabHover={handleHeaderTabHover}
+              onToggleGroup={tabGroupActions.toggleGroupCollapsed}
+              onRenameManualGroup={handleRenameManualGroup}
+              onChangeManualGroupColor={handleChangeManualGroupColor}
+              onUngroupManualGroup={handleUngroupManualGroup}
+              onRenameOpenChange={handleRenameOpenChange}
+              onStartRename={handleStartRename}
+              onRenameChatTab={handleRenameChatTab}
+              onCreateGroup={handleCreateGroup}
+              onChatContextMenuTarget={handleChatContextMenuTarget}
+              onForkChatTab={handleForkChatTab}
+              onPreviewChatTab={previewHeaderChatTab}
+              onActivateChatTab={activateHeaderChatTab}
+              onSuppressChatTabSelect={clearUrgentChatHighlight}
+              canCloseChatTab={(sessionId) =>
+                !isWorkspaceSetupSessionId(sessionId)
+                && chatVisibilityActions.canHideChatSessionTabs([sessionId])}
+              onCloseChatTab={handleCloseChatTab}
+              onCloseOtherChatTabs={handleCloseOtherChatTabs}
+              onCloseChatTabsToRight={handleCloseChatTabsToRight}
+              onDismissChatSession={dismissChatSession}
+              shortcutRevealVisible={shortcutRevealVisible}
+              clearSelection={multiSelect.clearSelection}
+              toggleSelection={multiSelect.toggleSelection}
+              suppressNextSelectClick={multiSelect.suppressNextSelectClick}
+              consumeSuppressedSelectClick={multiSelect.consumeSuppressedSelectClick}
+            />
+          </WorkspaceTabStrip>
+        </DebugProfiler>
+
+        <NewChatButton
+          canOpenNewSessionTab={tabActions.canOpenNewSessionTab}
+          newSessionDisabledReason={tabActions.newSessionDisabledReason}
+          onOpenNewSessionTab={() => tabActions.openNewSessionTab()}
+        />
+
+        <div className="min-w-0 flex-1" />
+
+        <ClosedSessionsTrigger
+          closedChatTabs={viewModel.closedChatTabs}
+          onRestoreSession={(sessionId) => {
+            chatVisibilityActions.showChatSessionTab(sessionId, { select: true });
+          }}
+          onDeleteSession={dismissChatSession}
+        />
+
+        {groupEditorWorkflow.groupEditor && (
+          <ManualChatGroupEditorPopover
+            title={groupEditorWorkflow.groupEditor.mode === "create" ? "Create Group" : "Edit Group"}
+            anchorRect={groupEditorWorkflow.groupEditor.anchorRect}
+            initialLabel={groupEditorWorkflow.groupEditor.label}
+            initialColorId={groupEditorWorkflow.groupEditor.colorId}
+            onClose={groupEditorWorkflow.closeGroupEditor}
+            onConfirm={groupEditorWorkflow.confirmGroupEditor}
+          />
+        )}
+      </div>
+    </DebugProfiler>
+  );
+});

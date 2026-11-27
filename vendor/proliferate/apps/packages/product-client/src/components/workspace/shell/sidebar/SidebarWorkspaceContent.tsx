@@ -1,0 +1,339 @@
+import type { ReactNode } from "react";
+import type {
+  CloudRepoActionState,
+  CloudWorkspaceRepoTarget,
+} from "#product/lib/domain/workspaces/cloud/cloud-workspace-creation";
+import { cloudWorkspaceMenuLabel } from "#product/lib/domain/workspaces/cloud/cloud-workspace-creation";
+import { cloudRepositoryKey } from "#product/lib/domain/settings/repositories";
+import {
+  SIDEBAR_REPO_GROUP_ITEM_LIMIT,
+  type SidebarEmptyState,
+  type SidebarGroupState,
+} from "#product/lib/domain/workspaces/sidebar/sidebar-model";
+import { buildSidebarNewWorkspaceCommandScope } from "#product/lib/domain/workspaces/creation/new-workspace-command";
+import {
+  sidebarGroupRowItems,
+  visibleSidebarGroupItems,
+} from "#product/lib/domain/workspaces/sidebar/sidebar-visible-items";
+import type { SidebarIndicatorAction } from "#product/lib/domain/workspaces/sidebar/sidebar-indicators";
+import type { WorkspaceAvailabilityCommandKind } from "#product/lib/domain/workspaces/cloud/workspace-availability-commands";
+import type { SidebarWorkspaceItemState } from "#product/lib/domain/workspaces/sidebar/sidebar-model";
+import { SkeletonBlock } from "#product/primitives/Skeleton";
+import { LoadingBoundary } from "#product/primitives/LoadingBoundary";
+import { RepoGroup, type RepoGroupEnvironmentKind } from "#product/components/workspace/shell/sidebar/RepoGroup";
+import { ProductSidebarShowToggleRow } from "#product/components/workspace/shell/sidebar/ProductSidebarShowToggleRow";
+import { SidebarWorkspaceItems } from "#product/components/workspace/shell/sidebar/SidebarWorkspaceItems";
+import { useCloudRepoActionState } from "#product/hooks/cloud/derived/use-cloud-repo-action-state";
+
+interface SidebarWorkspaceContentProps {
+  emptyState: SidebarEmptyState;
+  isLoading: boolean;
+  groups: SidebarGroupState[];
+  collapsedRepoGroupKeys: ReadonlySet<string>;
+  repoGroupsShownMore: ReadonlySet<string>;
+  onToggleRepoCollapsed: (sourceRoot: string) => void;
+  onToggleRepoShowMore: (sourceRoot: string) => void;
+  configuredCloudRepoKeys: ReadonlySet<string>;
+  cloudRepoConfigsInitialLoading: boolean;
+  cloudConnected: boolean;
+  cloudWorkspaceEnabled: boolean;
+  cloudWorkspaceTooltip: string;
+  onCreateWorktreeWorkspace: (repoRootId: string | null, repoGroupKeyToExpand: string) => void;
+  onCreateLocalWorkspace: (sourceRoot: string | null, repoGroupKeyToExpand: string) => void;
+  onCreateCloudWorkspace: (
+    target: CloudWorkspaceRepoTarget,
+    repoGroupKeyToExpand: string,
+  ) => void;
+  onNewChatForRepository: (sourceRoot: string) => void;
+  onSelectWorkspace: (workspaceId: string) => void;
+  onIndicatorAction: (action: SidebarIndicatorAction) => void;
+  onOpenPullRequest: (url: string) => void;
+  onMarkWorkspaceDone: (workspaceId: string, logicalWorkspaceId: string) => void;
+  /** Begin a workspace-copy availability action (PR 5) for the given item. */
+  onWorkspaceAvailabilityCommand: (
+    item: SidebarWorkspaceItemState,
+    kind: WorkspaceAvailabilityCommandKind,
+  ) => void;
+  onWorkspaceHover?: () => void;
+  shortcutLabelByWorkspaceId: ReadonlyMap<string, string>;
+  shortcutRevealVisible: boolean;
+  onArchiveWorkspace: (workspaceId: string) => void;
+  onUnarchiveWorkspace: (workspaceId: string) => void;
+  onPinWorkspace: (workspaceId: string) => void;
+  onUnpinWorkspace: (pinnedIds: string[]) => void;
+  onRenameWorkspace: (
+    workspaceId: string,
+    displayName: string | null,
+  ) => Promise<unknown>;
+  onRemoveRepo: (sourceRoot: string) => Promise<void>;
+  onOpenRepoSettings: (sourceRoot: string) => void;
+  /** Desktop host + non-disabled managed Cloud → the `…` menu can offer Cloud
+   * setup/add-to-mac. */
+  isDesktopHost: boolean;
+  managedCloudAvailable: boolean;
+  /** Opens the repo's Cloud settings surface (existing environment config). */
+  onOpenCloudRepoSettingsForGroup: (target: CloudWorkspaceRepoTarget) => void;
+  /** Begins the connected Cloud action intent (readiness → set up in Cloud). */
+  onSetUpCloudForGroup: (target: CloudWorkspaceRepoTarget) => void;
+}
+
+// FR-1 carve-out (UX Latency + Transitions ADR §4 Rung 4): the sidebar
+// workspace list keeps its fixed-geometry row skeleton because the final row
+// geometry is genuinely known. Routing it through `LoadingBoundary` as the
+// treatment slot buys the Class C show-delay for free, so a sub-200ms load no
+// longer flashes the skeleton, without rebuilding the sidebar.
+function SidebarLoadingState() {
+  return (
+    <LoadingBoundary
+      state="pending"
+      diagnostics={{ flow: "sidebar_workspaces" }}
+      treatment={
+        <div className="flex flex-col gap-1 px-3 py-3" aria-label="Loading workspaces" role="status">
+          <SkeletonBlock className="h-7 w-full bg-surface-control" />
+          <SkeletonBlock className="h-7 w-[88%] bg-surface-control/80" />
+          <SkeletonBlock className="h-7 w-[72%] bg-surface-control/70" />
+          <p className="sr-only">Loading workspaces</p>
+        </div>
+      }
+    />
+  );
+}
+
+export function SidebarWorkspaceContent({
+  emptyState,
+  isLoading,
+  groups,
+  collapsedRepoGroupKeys,
+  repoGroupsShownMore,
+  onToggleRepoCollapsed,
+  onToggleRepoShowMore,
+  configuredCloudRepoKeys,
+  cloudRepoConfigsInitialLoading,
+  cloudConnected,
+  cloudWorkspaceEnabled,
+  cloudWorkspaceTooltip,
+  onCreateWorktreeWorkspace,
+  onCreateLocalWorkspace,
+  onCreateCloudWorkspace,
+  onNewChatForRepository,
+  onSelectWorkspace,
+  onIndicatorAction,
+  onOpenPullRequest,
+  onMarkWorkspaceDone,
+  onWorkspaceAvailabilityCommand,
+  onWorkspaceHover,
+  shortcutLabelByWorkspaceId,
+  shortcutRevealVisible,
+  onArchiveWorkspace,
+  onUnarchiveWorkspace,
+  onPinWorkspace,
+  onUnpinWorkspace,
+  onRenameWorkspace,
+  onRemoveRepo,
+  onOpenRepoSettings,
+  isDesktopHost,
+  managedCloudAvailable,
+  onOpenCloudRepoSettingsForGroup,
+  onSetUpCloudForGroup,
+}: SidebarWorkspaceContentProps) {
+  if (isLoading && emptyState === "noWorkspaces") {
+    return <SidebarLoadingState />;
+  }
+
+  if (emptyState === "noWorkspaces") {
+    return (
+      <div className="px-3 py-6 text-center">
+        <p className="text-ui-sm text-sidebar-muted-foreground">
+          No workspaces yet
+        </p>
+        <p className="text-ui-sm text-sidebar-muted-foreground mt-1">
+          Add a repository to get started
+        </p>
+      </div>
+    );
+  }
+
+  if (emptyState === "filteredOut") {
+    return (
+      <div className="px-3 py-6 text-center">
+        <p className="text-ui-sm text-sidebar-muted-foreground">
+          No workspaces match the current filters
+        </p>
+        <p className="text-ui-sm text-sidebar-muted-foreground mt-1">
+          Adjust the sidebar filters to show more workspaces
+        </p>
+      </div>
+    );
+  }
+
+  return groups.map((group, groupIndex) => {
+    const rowItems = sidebarGroupRowItems(group);
+    const overLimit = rowItems.length > SIDEBAR_REPO_GROUP_ITEM_LIMIT;
+    const isShownMore = repoGroupsShownMore.has(group.sourceRoot);
+    const visibleItems = visibleSidebarGroupItems({
+      group,
+      isShownMore,
+      itemLimit: SIDEBAR_REPO_GROUP_ITEM_LIMIT,
+    });
+    // Counted against the group's rendered rows: pinned rows live in the
+    // Pinned section, so they are neither visible here nor "hidden".
+    const hiddenItemCount = rowItems.length - visibleItems.length;
+    const toggleLabel: "Show less" | `Show ${number} more` | null =
+      overLimit && isShownMore
+        ? "Show less"
+        : hiddenItemCount > 0
+          ? `Show ${hiddenItemCount} more`
+          : null;
+    const cloudRepoTarget = group.cloudRepoTarget;
+    const hasArchivedHiddenItems =
+      group.items.length === 0 && group.allLogicalWorkspaceIds.length > 0;
+    const newWorkspaceCommandScope = buildSidebarNewWorkspaceCommandScope({
+      sourceRoot: group.sourceRoot,
+      localSourceRoot: group.localSourceRoot,
+      repoRootId: group.repoRootId,
+      cloudRepoTarget: group.cloudRepoTarget,
+    });
+    const environmentKind = resolveRepoGroupEnvironmentKind(group, configuredCloudRepoKeys);
+    // Local workspaces need both a local checkout for this repo and a host that
+    // can run one. Where neither holds, the create popover offers exactly one
+    // kind of workspace and must not qualify it as "cloud".
+    const localWorkspacesAvailable = isDesktopHost && environmentKind !== "cloud";
+
+    return (
+      <CloudRepoActionGate
+        key={`${group.sourceRoot}:${group.repoRootId ?? "no-repo-root"}:${groupIndex}`}
+        repoTarget={group.cloudRepoTarget}
+        configuredRepoKeys={configuredCloudRepoKeys}
+        isInitialConfigLoad={cloudRepoConfigsInitialLoading}
+        cloudConnected={cloudConnected}
+      >
+        {(cloudRepoAction) => (
+      <RepoGroup
+        name={group.name}
+        collapsed={collapsedRepoGroupKeys.has(group.sourceRoot)}
+        environmentKind={environmentKind}
+        localWorkspacesSupported={isDesktopHost}
+        onToggleCollapsed={() => onToggleRepoCollapsed(group.sourceRoot)}
+        onNewChat={() => onNewChatForRepository(group.sourceRoot)}
+        onNewWorkspace={() => onCreateWorktreeWorkspace(group.repoRootId, group.sourceRoot)}
+        onNewLocalWorkspace={() => onCreateLocalWorkspace(group.localSourceRoot, group.sourceRoot)}
+        newWorkspaceCommandScope={newWorkspaceCommandScope}
+        cloudWorkspaceEnabled={cloudWorkspaceEnabled && cloudRepoAction.kind !== "loading"}
+        cloudWorkspaceTooltip={
+          cloudRepoAction.kind === "loading"
+            ? "Loading cloud configuration..."
+            : cloudWorkspaceTooltip
+        }
+        cloudWorkspaceLabel={cloudWorkspaceMenuLabel({
+          action: cloudRepoAction,
+          localWorkspacesAvailable,
+        })}
+        // Cloud is culled from Desktop (PRO-10, FR-3): the Desktop sidebar
+        // offers no cloud-workspace creation, no "Set up Cloud"/GitHub App
+        // authorize, no "Add to this Mac", and no cloud settings. Web keeps its
+        // cloud affordances, gated by the host capability (`!isDesktopHost`).
+        onCloudWorkspaceAction={!isDesktopHost && cloudRepoTarget
+          ? () => {
+            if (cloudRepoAction.kind === "create") {
+              onCreateCloudWorkspace(cloudRepoTarget, group.sourceRoot);
+              return;
+            }
+            if (cloudRepoAction.kind === "configure") {
+              onSetUpCloudForGroup(cloudRepoTarget);
+            }
+          }
+          : undefined}
+        onRemoveRepo={() => onRemoveRepo(group.sourceRoot)}
+        onOpenSettings={() => onOpenRepoSettings(group.sourceRoot)}
+        isGitHubRepo={Boolean(cloudRepoTarget)}
+        canSetUpCloud={!isDesktopHost && managedCloudAvailable}
+        onSetUpCloud={!isDesktopHost && cloudRepoTarget
+          ? () => onSetUpCloudForGroup(cloudRepoTarget)
+          : undefined}
+        onOpenCloudSettings={!isDesktopHost && cloudRepoTarget
+          ? () => onOpenCloudRepoSettingsForGroup(cloudRepoTarget)
+          : undefined}
+      >
+        {group.items.length === 0 ? (
+          <p className="px-3 py-2 text-ui-sm text-sidebar-muted-foreground">
+            {hasArchivedHiddenItems
+              ? "Archived chats are available in Settings."
+              : "This repository has no workspaces yet."}
+          </p>
+        ) : (
+          <>
+            <SidebarWorkspaceItems
+              items={visibleItems}
+              repoName={group.name}
+              shortcutLabelByWorkspaceId={shortcutLabelByWorkspaceId}
+              shortcutRevealVisible={shortcutRevealVisible}
+              onSelectWorkspace={onSelectWorkspace}
+              onIndicatorAction={onIndicatorAction}
+              onOpenPullRequest={onOpenPullRequest}
+              onMarkWorkspaceDone={onMarkWorkspaceDone}
+              onWorkspaceAvailabilityCommand={onWorkspaceAvailabilityCommand}
+              onWorkspaceHover={onWorkspaceHover}
+              onArchiveWorkspace={onArchiveWorkspace}
+              onUnarchiveWorkspace={onUnarchiveWorkspace}
+              onPinWorkspace={onPinWorkspace}
+              onUnpinWorkspace={onUnpinWorkspace}
+              onRenameWorkspace={onRenameWorkspace}
+            />
+            {toggleLabel && (
+              <ProductSidebarShowToggleRow
+                label={toggleLabel}
+                onClick={() => onToggleRepoShowMore(group.sourceRoot)}
+              />
+            )}
+          </>
+        )}
+      </RepoGroup>
+        )}
+      </CloudRepoActionGate>
+    );
+  });
+}
+
+function CloudRepoActionGate({
+  repoTarget,
+  configuredRepoKeys,
+  isInitialConfigLoad,
+  cloudConnected,
+  children,
+}: {
+  repoTarget: CloudWorkspaceRepoTarget | null;
+  configuredRepoKeys: ReadonlySet<string>;
+  isInitialConfigLoad: boolean;
+  cloudConnected: boolean;
+  children: (state: CloudRepoActionState) => ReactNode;
+}) {
+  const state = useCloudRepoActionState({
+    repoTarget,
+    configuredRepoKeys,
+    isInitialConfigLoad,
+    cloudConnected,
+  });
+  return children(state);
+}
+
+function resolveRepoGroupEnvironmentKind(
+  group: SidebarGroupState,
+  configuredCloudRepoKeys: ReadonlySet<string>,
+): RepoGroupEnvironmentKind {
+  const hasLocal = Boolean(group.localSourceRoot);
+  const hasCloudWorkspace = group.items.some((item) => item.variant === "cloud");
+  const hasConfiguredCloud = group.cloudRepoTarget
+    ? configuredCloudRepoKeys.has(
+      cloudRepositoryKey(group.cloudRepoTarget.gitOwner, group.cloudRepoTarget.gitRepoName),
+    )
+    : false;
+  const hasCloud = hasCloudWorkspace || hasConfiguredCloud;
+
+  if (hasCloud && !hasLocal) {
+    return "cloud";
+  }
+  if (hasCloud) {
+    return "local_cloud";
+  }
+  return "local";
+}

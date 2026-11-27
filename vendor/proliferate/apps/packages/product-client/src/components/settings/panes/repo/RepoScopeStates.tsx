@@ -1,0 +1,103 @@
+import { Folder } from "#product/primitives/icons/workspace";
+import { Laptop } from "#product/primitives/icons/platform";
+import { parseGitRepoId } from "#product/domain/repos/repo-id";
+import { SettingsEmptyState } from "#product/primitives/patterns/settings/SettingsEmptyState";
+import { Button } from "#product/primitives/Button";
+import { useProductHost } from "@proliferate/product-client/host/ProductHostProvider";
+import { type RepoSettingsContext } from "#product/lib/domain/settings/repo-scope-selection";
+import { type SettingsRepositoryEntry } from "#product/lib/domain/settings/repositories";
+import {
+  useAddRepoFlowStore,
+  type AddRepoFlowCompletion,
+} from "#product/stores/ui/add-repo-flow-store";
+
+export interface RepoScopeSelectionCallbacks {
+  onSelectRepo: (sourceRoot: string) => void;
+  onSelectCloudEnvironment: (gitOwner: string, gitRepoName: string) => void;
+}
+
+/** Prop shape shared by the repo-scope settings panes (Configure / Actions). */
+export interface RepoScopePaneProps extends RepoScopeSelectionCallbacks {
+  repository: SettingsRepositoryEntry | null;
+  context: RepoSettingsContext;
+  controlPlaneReachable: boolean;
+  cloudActive: boolean;
+  cloudSignInChecking: boolean;
+  cloudSignInAvailable: boolean;
+}
+
+/** Unified add-repo flow completion → select the repo that was just added. */
+function buildAddRepoCompletionHandler({
+  onSelectRepo,
+  onSelectCloudEnvironment,
+}: RepoScopeSelectionCallbacks) {
+  return (completion: AddRepoFlowCompletion) => {
+    if (completion.kind === "local") {
+      onSelectRepo(completion.sourceRoot);
+      return;
+    }
+    const parsed = parseGitRepoId(completion.repoId);
+    if (parsed) {
+      onSelectCloudEnvironment(parsed.gitOwner, parsed.gitRepoName);
+    }
+  };
+}
+
+/** Repo scope with zero repositories — every repo-scope pane renders this. */
+export function RepoScopeEmptyState(callbacks: RepoScopeSelectionCallbacks) {
+  const openFlow = useAddRepoFlowStore((state) => state.openFlow);
+  // Cloud workspaces are culled from desktop (PRO-10, FR-2/FR-3): the desktop
+  // add-repo flow only registers a local checkout, so the empty-state copy must
+  // not advertise a "runs in Proliferate Cloud" repo. Web keeps its cloud copy.
+  const host = useProductHost();
+  const cloudReachable = host.surface === "web";
+  return (
+    <SettingsEmptyState
+      icon={<Folder aria-hidden="true" />}
+      title="No repositories yet"
+      description={
+        cloudReachable
+          ? "Add a local checkout or a GitHub repo that runs in Proliferate Cloud."
+          : "Add a local checkout to get started."
+      }
+      action={
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={() => openFlow({ onCompleted: buildAddRepoCompletionHandler(callbacks) })}
+        >
+          Add repository
+        </Button>
+      }
+    />
+  );
+}
+
+/** Local side of a cloud-only repo: no checkout on this machine to configure. */
+export function LocalNoCheckoutState({
+  repository,
+  ...callbacks
+}: RepoScopeSelectionCallbacks & {
+  repository: SettingsRepositoryEntry;
+}) {
+  const openFlow = useAddRepoFlowStore((state) => state.openFlow);
+  const repoLabel = repository.gitOwner && repository.gitRepoName
+    ? `${repository.gitOwner}/${repository.gitRepoName}`
+    : repository.name;
+  return (
+    <SettingsEmptyState
+      icon={<Laptop aria-hidden="true" />}
+      title="No local checkout on this machine"
+      description={`Clone ${repoLabel} locally, then link the folder to configure local settings.`}
+      action={
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={() => openFlow({ onCompleted: buildAddRepoCompletionHandler(callbacks) })}
+        >
+          Link local folder…
+        </Button>
+      }
+    />
+  );
+}

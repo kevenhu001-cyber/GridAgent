@@ -1,0 +1,172 @@
+use std::fmt;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionLinkRelation {
+    Subagent,
+    CoworkCodingSession,
+    ReviewAgent,
+    Fork,
+}
+
+impl SessionLinkRelation {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Subagent => "subagent",
+            Self::CoworkCodingSession => "cowork_coding_session",
+            Self::ReviewAgent => "review_agent",
+            Self::Fork => "fork",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, SessionLinkParseError> {
+        match value {
+            "subagent" => Ok(Self::Subagent),
+            "cowork_coding_session" => Ok(Self::CoworkCodingSession),
+            "review_agent" => Ok(Self::ReviewAgent),
+            "fork" => Ok(Self::Fork),
+            other => Err(SessionLinkParseError::UnknownRelation(other.to_string())),
+        }
+    }
+
+    pub fn public_id_prefix(self) -> &'static str {
+        match self {
+            Self::Subagent => "subagent",
+            Self::CoworkCodingSession => "cowork_agent",
+            Self::ReviewAgent => "reviewer",
+            Self::Fork => "session_link",
+        }
+    }
+}
+
+impl fmt::Display for SessionLinkRelation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionLinkWorkspaceRelation {
+    SameWorkspace,
+    CoworkManagedWorkspace,
+}
+
+impl SessionLinkWorkspaceRelation {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::SameWorkspace => "same_workspace",
+            Self::CoworkManagedWorkspace => "cowork_managed_workspace",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, SessionLinkParseError> {
+        match value {
+            "same_workspace" => Ok(Self::SameWorkspace),
+            "cowork_managed_workspace" => Ok(Self::CoworkManagedWorkspace),
+            other => Err(SessionLinkParseError::UnknownWorkspaceRelation(
+                other.to_string(),
+            )),
+        }
+    }
+}
+
+impl fmt::Display for SessionLinkWorkspaceRelation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionLinkRecord {
+    pub id: String,
+    pub public_id: Option<String>,
+    pub relation: SessionLinkRelation,
+    pub parent_session_id: String,
+    pub child_session_id: String,
+    pub workspace_relation: SessionLinkWorkspaceRelation,
+    pub label: Option<String>,
+    pub created_by_turn_id: Option<String>,
+    pub created_by_tool_call_id: Option<String>,
+    pub created_at: String,
+    /// Reversible subagent operability gate. Unlike `closed_at`, this does not
+    /// end the relationship or the child session's durable conversation.
+    pub subagent_closed_at: Option<String>,
+    pub closed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubagentLinkCloseResult {
+    pub link: SessionLinkRecord,
+    pub was_already_closed: bool,
+    pub purged_pending_prompt_count: usize,
+    pub removed_wake_schedule: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubagentLinkCloseOutcome {
+    NotFound,
+    Closed(SubagentLinkCloseResult),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubagentLinkOpenResult {
+    pub link: SessionLinkRecord,
+    pub was_already_open: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubagentLinkOpenOutcome {
+    NotFound,
+    Opened(SubagentLinkOpenResult),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum SessionLinkParseError {
+    #[error("unknown session link relation: {0}")]
+    UnknownRelation(String),
+    #[error("unknown session link workspace relation: {0}")]
+    UnknownWorkspaceRelation(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SessionLinkRelation, SessionLinkWorkspaceRelation};
+
+    #[test]
+    fn relation_strings_round_trip() {
+        assert_eq!(SessionLinkRelation::Subagent.as_str(), "subagent");
+        assert_eq!(
+            SessionLinkRelation::CoworkCodingSession.as_str(),
+            "cowork_coding_session"
+        );
+        assert_eq!(
+            SessionLinkRelation::parse("cowork_coding_session").expect("parse relation"),
+            SessionLinkRelation::CoworkCodingSession
+        );
+        assert_eq!(
+            SessionLinkRelation::parse("review_agent").expect("parse relation"),
+            SessionLinkRelation::ReviewAgent
+        );
+        assert_eq!(SessionLinkRelation::Fork.as_str(), "fork");
+        assert_eq!(
+            SessionLinkRelation::parse("fork").expect("parse relation"),
+            SessionLinkRelation::Fork
+        );
+    }
+
+    #[test]
+    fn workspace_relation_strings_round_trip() {
+        assert_eq!(
+            SessionLinkWorkspaceRelation::SameWorkspace.as_str(),
+            "same_workspace"
+        );
+        assert_eq!(
+            SessionLinkWorkspaceRelation::CoworkManagedWorkspace.as_str(),
+            "cowork_managed_workspace"
+        );
+        assert_eq!(
+            SessionLinkWorkspaceRelation::parse("cowork_managed_workspace")
+                .expect("parse workspace relation"),
+            SessionLinkWorkspaceRelation::CoworkManagedWorkspace
+        );
+    }
+}

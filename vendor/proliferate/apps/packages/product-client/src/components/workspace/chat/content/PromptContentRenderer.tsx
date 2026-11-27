@@ -1,0 +1,165 @@
+import type { ContentPart } from "@anyharness/sdk";
+import { PlanReferenceAttachmentCard } from "#product/components/workspace/chat/content/PlanReferenceAttachmentCard";
+import { PromptAttachmentCard } from "#product/components/workspace/chat/content/PromptAttachmentCard";
+import {
+  normalizeContentParts,
+  normalizeDraftAttachments,
+  type PromptDisplayAttachmentPart,
+  type PromptDisplayPart,
+} from "#product/domain/chats/composer/prompt-display-parts";
+import type { PromptDraftAttachmentDescriptor } from "#product/domain/chats/composer/prompt-attachment-rules";
+import { MarkdownBody } from "#product/components/workspace/chat/transcript/MarkdownBody";
+import { renderTranscriptLink } from "#product/components/workspace/chat/transcript/transcript-markdown";
+
+type PromptContentRendererVariant = "transcript" | "compact";
+type PromptContentRendererLayout = "stack" | "wrap" | "auto";
+export type PromptAttachmentPreviewPart = Exclude<
+  PromptDisplayAttachmentPart,
+  { type: "link" | "plan_reference" }
+>;
+export type PromptAttachmentPreviewHandler = (part: PromptAttachmentPreviewPart) => void;
+
+export interface PromptContentRendererProps {
+  sessionId: string | null;
+  parts: readonly ContentPart[];
+  fallbackText?: string;
+  compact?: boolean;
+  variant?: PromptContentRendererVariant;
+  includeText?: boolean;
+  includeAttachments?: boolean;
+  layout?: PromptContentRendererLayout;
+  onOpenAttachment?: PromptAttachmentPreviewHandler;
+}
+
+export function PromptContentRenderer({
+  sessionId,
+  parts,
+  fallbackText = "",
+  compact = false,
+  variant,
+  includeText = true,
+  includeAttachments = true,
+  layout = "stack",
+  onOpenAttachment,
+}: PromptContentRendererProps) {
+  const displayParts = normalizeContentParts(parts, fallbackText);
+  const visibleParts = displayParts.filter((part) => (
+    part.type === "text" ? includeText : includeAttachments
+  ));
+  const resolvedVariant = variant ?? (compact ? "compact" : "transcript");
+  const resolvedLayout = resolvePromptContentLayout(layout, visibleParts);
+
+  if (visibleParts.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className={promptContentContainerClassName(resolvedVariant, resolvedLayout)}>
+      {visibleParts.map((part) => (
+        <PromptDisplayPartView
+          key={part.id}
+          sessionId={sessionId}
+          part={part}
+          variant={resolvedVariant}
+          onOpenAttachment={onOpenAttachment}
+        />
+      ))}
+    </div>
+  );
+}
+
+export interface DraftAttachmentPreviewListProps {
+  attachments: readonly PromptDraftAttachmentDescriptor[];
+  onRemove: (id: string) => void;
+  onOpenAttachment?: PromptAttachmentPreviewHandler;
+}
+
+export function DraftAttachmentPreviewList({
+  attachments,
+  onRemove,
+  onOpenAttachment,
+}: DraftAttachmentPreviewListProps) {
+  const displayParts = normalizeDraftAttachments(attachments);
+
+  if (displayParts.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="flex w-full flex-wrap items-start justify-start gap-2 px-2 pt-2 pb-1" data-telemetry-mask>
+      {displayParts.map((part) => (
+        <PromptAttachmentCard
+          key={part.id}
+          sessionId={null}
+          part={part}
+          variant="draft"
+          onRemove={onRemove}
+          onOpenAttachment={onOpenAttachment}
+        />
+      ))}
+    </div>
+  );
+}
+
+function PromptDisplayPartView({
+  sessionId,
+  part,
+  variant,
+  onOpenAttachment,
+}: {
+  sessionId: string | null;
+  part: PromptDisplayPart;
+  variant: PromptContentRendererVariant;
+  onOpenAttachment?: PromptAttachmentPreviewHandler;
+}) {
+  if (part.type === "text") {
+    return <FileLinkedText text={part.text} />;
+  }
+
+  if (part.type === "plan_reference") {
+    return <PlanReferenceAttachmentCard plan={part} variant={variant} />;
+  }
+
+  return (
+    <PromptAttachmentCard
+      sessionId={sessionId}
+      part={part}
+      variant={variant}
+      onOpenAttachment={onOpenAttachment}
+    />
+  );
+}
+
+function FileLinkedText({ text }: { text: string }) {
+  return (
+    <MarkdownBody
+      content={text}
+      renderLink={renderTranscriptLink}
+      enableContentSearch
+      className="[&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+    />
+  );
+}
+
+function promptContentContainerClassName(
+  variant: PromptContentRendererVariant,
+  layout: "stack" | "wrap",
+): string {
+  if (layout === "wrap") {
+    return "flex min-w-0 flex-wrap items-end justify-end gap-2";
+  }
+
+  return variant === "compact"
+    ? "flex min-w-0 flex-col gap-1"
+    : "flex min-w-0 flex-col gap-2";
+}
+
+function resolvePromptContentLayout(
+  layout: PromptContentRendererLayout,
+  parts: readonly PromptDisplayPart[],
+): "stack" | "wrap" {
+  if (layout !== "auto") {
+    return layout;
+  }
+  return parts.some((part) => part.type === "plan_reference") ? "stack" : "wrap";
+}

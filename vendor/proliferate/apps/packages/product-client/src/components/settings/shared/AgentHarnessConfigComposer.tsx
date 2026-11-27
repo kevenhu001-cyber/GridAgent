@@ -1,0 +1,101 @@
+import { Button } from "#product/primitives/Button";
+import { ChatComposerSurface } from "#product/components/workspace/chat/composer/ChatComposerSurface";
+import { ComposerTextarea } from "#product/primitives/patterns/composer/ComposerTextarea";
+import { ComposerTextareaFrame } from "#product/primitives/patterns/composer/ComposerTextareaFrame";
+import {
+  AgentHarnessModelSelector,
+  type AgentHarnessModelGroup,
+  type AgentHarnessModelOption,
+} from "#product/components/agents/AgentHarnessModelSelector";
+import { SessionConfigControls } from "#product/components/workspace/chat/input/SessionConfigControls";
+import { CHAT_COMPOSER_LABELS } from "#product/copy/chat/chat-copy";
+import type { LiveSessionControlDescriptor } from "#product/lib/domain/chat/session-controls/session-controls";
+
+export type AgentHarnessConfigModelOption = AgentHarnessModelOption;
+export type AgentHarnessConfigModelGroup = AgentHarnessModelGroup;
+
+interface AgentHarnessConfigComposerProps {
+  agentKind: string | null;
+  agentDisplayName: string | null;
+  selectedModelId: string | null;
+  selectedModelLabel: string | null;
+  modelGroups: AgentHarnessConfigModelGroup[];
+  controls: LiveSessionControlDescriptor[];
+  disabled?: boolean;
+  saving?: boolean;
+  actionLabel?: string;
+  placeholder?: string;
+  onSelectModel: (agentKind: string, modelId: string) => void;
+  onAction?: () => void;
+}
+
+export function AgentHarnessConfigComposer({
+  agentKind,
+  agentDisplayName,
+  selectedModelId,
+  selectedModelLabel,
+  modelGroups,
+  controls,
+  disabled = false,
+  saving = false,
+  actionLabel,
+  placeholder = CHAT_COMPOSER_LABELS.placeholder,
+  onSelectModel,
+  onAction,
+}: AgentHarnessConfigComposerProps) {
+  const modelLabel = selectedModelLabel ?? "Model";
+  const effectiveModelGroups = modelGroups.length > 0
+    ? modelGroups
+    : agentKind
+      ? [{ agentKind, agentDisplayName: agentDisplayName ?? "Agent", models: [] }]
+      : [];
+  const canSelectModel = !disabled && effectiveModelGroups.some((group) => group.models.length > 0);
+  const canUseControls = !disabled && agentKind !== null;
+
+  return (
+    <ChatComposerSurface overflowMode="clip" className="[--radius-composer:0.875rem]">
+      <ComposerTextareaFrame topInset="standard">
+        <ComposerTextarea
+          data-telemetry-mask
+          readOnly
+          tabIndex={-1}
+          rows={1}
+          value=""
+          placeholder={placeholder}
+          className="pointer-events-none h-[1.125rem] min-h-[1.125rem] overflow-hidden"
+        />
+      </ComposerTextareaFrame>
+      {/* [CHAT-02] (D-V2-4): 8px control-cluster gaps, matching
+          ChatComposerControlRowFrame — this preview renders through the same
+          .chat-composer-surface, so it must read as the same control row. */}
+      <div className="mb-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-2">
+        <div className={`flex min-w-0 flex-wrap items-center gap-2 ${
+          canUseControls ? "" : "pointer-events-none opacity-55"
+        }`}
+        >
+          <AgentHarnessModelSelector
+            label={modelLabel}
+            agentKind={agentKind}
+            selectedModelId={selectedModelId}
+            disabled={!canSelectModel}
+            modelGroups={effectiveModelGroups}
+            onSelectModel={onSelectModel}
+          />
+          <SessionConfigControls agentKind={agentKind} controls={controls} />
+        </div>
+        {actionLabel && onAction ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            loading={saving}
+            disabled={disabled || saving || !agentKind || !selectedModelId}
+            onClick={onAction}
+          >
+            {actionLabel}
+          </Button>
+        ) : null}
+      </div>
+    </ChatComposerSurface>
+  );
+}

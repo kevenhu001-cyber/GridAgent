@@ -1,0 +1,447 @@
+use super::*;
+
+fn hosted_env_lookup(key: &str) -> Option<String> {
+    match key {
+        "ANYHARNESS_SENTRY_DSN" => Some("https://example.invalid/1".to_string()),
+        "ANYHARNESS_SENTRY_ENVIRONMENT" => Some("production".to_string()),
+        "ANYHARNESS_SENTRY_RELEASE" => Some("anyharness@1.2.3".to_string()),
+        "ANYHARNESS_SENTRY_TRACES_SAMPLE_RATE" => Some("0.5".to_string()),
+        _ => None,
+    }
+}
+
+#[test]
+fn sidecar_launch_env_is_empty_outside_hosted_product() {
+    assert!(default_anyharness_launch_env_for_mode(
+        DesktopTelemetryMode::Disabled,
+        hosted_env_lookup
+    )
+    .is_empty());
+    assert!(default_anyharness_launch_env_for_mode(
+        DesktopTelemetryMode::LocalDev,
+        hosted_env_lookup
+    )
+    .is_empty());
+    assert!(default_anyharness_launch_env_for_mode(
+        DesktopTelemetryMode::SelfManaged,
+        hosted_env_lookup,
+    )
+    .is_empty());
+}
+
+#[test]
+fn sidecar_launch_env_includes_sentry_values_in_hosted_product() {
+    let env = default_anyharness_launch_env_for_mode(
+        DesktopTelemetryMode::HostedProduct,
+        hosted_env_lookup,
+    );
+
+    assert_eq!(
+        env.get("ANYHARNESS_SENTRY_DSN"),
+        Some(&"https://example.invalid/1".to_string())
+    );
+    assert_eq!(
+        env.get("ANYHARNESS_SENTRY_ENVIRONMENT"),
+        Some(&"production".to_string())
+    );
+    assert_eq!(
+        env.get("ANYHARNESS_SENTRY_RELEASE"),
+        Some(&"anyharness@1.2.3".to_string())
+    );
+    assert_eq!(
+        env.get("ANYHARNESS_SENTRY_TRACES_SAMPLE_RATE"),
+        Some(&"0.5".to_string())
+    );
+}
+
+#[test]
+fn sidecar_observer_generation_replacement_makes_old_task_inert() {
+    let first = observer::next_generation(0);
+    let replacement = observer::next_generation(first);
+    assert!(observer::generation_matches(first, first));
+    assert!(!observer::generation_matches(first, replacement));
+}
+
+#[cfg(all(
+    target_os = "macos",
+    any(target_arch = "aarch64", target_arch = "x86_64")
+))]
+#[test]
+fn protected_anyharness_requires_a_canonical_executable_native_image() {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = std::env::temp_dir().join(format!(
+        "protected-anyharness-image-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir(&directory).expect("create fixture directory");
+    let native = directory.join("native-anyharness");
+    let script = directory.join("script-anyharness");
+    let cpu = if cfg!(target_arch = "aarch64") {
+        0x0100_000c_u32
+    } else {
+        0x0100_0007_u32
+    };
+    let mut native_header = vec![0xcf, 0xfa, 0xed, 0xfe];
+    native_header.extend_from_slice(&cpu.to_le_bytes());
+    std::fs::File::create(&native)
+        .expect("native fixture")
+        .write_all(&native_header)
+        .expect("native header");
+    std::fs::write(&script, b"#!/bin/sh\nexit 0\n").expect("script fixture");
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o755))
+        .expect("native permissions");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+        .expect("script permissions");
+
+    assert_eq!(
+        diagnostics::protected_anyharness_binary(native.to_str().expect("utf8")),
+        Some(
+            std::fs::canonicalize(&native)
+                .expect("canonical native")
+                .to_str()
+                .expect("utf8 canonical native")
+                .to_owned()
+        )
+    );
+    assert!(diagnostics::protected_anyharness_binary(script.to_str().expect("utf8")).is_none());
+    assert!(diagnostics::protected_anyharness_binary("anyharness").is_none());
+    std::fs::remove_dir_all(directory).expect("cleanup fixture directory");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn observer_is_installed_for_a_retained_nonhealthy_child() {
+    let sidecar = create_sidecar(8_457);
+    let child = Command::new("/bin/sh")
+        .args(["-c", "sleep 0.2"])
+        .kill_on_drop(true)
+        .spawn()
+        .expect("spawn retained AnyHarness fixture");
+    {
+        let mut guard = sidecar.lock().await;
+        guard.child = Some(child);
+        guard.info.status = RuntimeStatus::Failed;
+        guard.suppress_runtime_info_persistence = true;
+    }
+
+    observer::start(&sidecar).await;
+    let guard = sidecar.lock().await;
+    assert!(guard.child.is_some());
+    assert!(guard.exit_observer.is_some());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn terminal_shutdown_arm_rejects_setup_boot_before_spawn() {
+    let sidecar = create_sidecar(8_457);
+    arm_terminal_shutdown(&sidecar);
+
+    // The rejected boot must never consult the collector supervisor, so a
+    // fake launcher-error supervisor is sufficient here.
+    let root = std::env::temp_dir().join(format!("sidecar-boot-reject-{}", uuid::Uuid::new_v4()));
+    let fallback =
+        crate::diagnostics_collector::fallback::FallbackDiagnosticsWriter::open_for_test(
+            root.join("desktop-native.log"),
+        )
+        .expect("fallback");
+    let producer = TauriDiagnosticsProducer::new(fallback.clone(), "test".into(), "test".into());
+    let supervisor = DiagnosticsCollectorSupervisor::with_fake_launch_error(
+        producer,
+        fallback,
+        crate::diagnostics_collector::process::CollectorLaunchError::new(
+            crate::diagnostics_collector::process::CollectorLaunchErrorKind::UnsupportedTarget,
+            "fake unsupported launcher",
+        ),
+    );
+
+    assert!(matches!(
+        lifecycle::boot_inner(&sidecar, &supervisor).await,
+        BootOutcome::Rejected
+    ));
+    assert!(sidecar.lock().await.child.is_none());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[cfg(all(
+    target_os = "macos",
+    any(target_arch = "aarch64", target_arch = "x86_64")
+))]
+#[tokio::test]
+async fn arm_signals_anyharness_while_process_owner_is_held() {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+
+    let sidecar = create_sidecar(8_457);
+    let mut descriptors = [0_i32; 2];
+    assert_eq!(unsafe { libc::pipe(descriptors.as_mut_ptr()) }, 0);
+    let (reader, writer) = unsafe {
+        (
+            OwnedFd::from_raw_fd(descriptors[0]),
+            OwnedFd::from_raw_fd(descriptors[1]),
+        )
+    };
+    sidecar.set_child_shutdown_signal(Some(
+        crate::diagnostics_collector::child_bridge::shutdown_signal::ChildShutdownSignal::for_test(
+            writer,
+        ),
+    ));
+    let _owner = sidecar.lock().await;
+
+    let started = std::time::Instant::now();
+    arm_terminal_shutdown(&sidecar);
+    let mut byte = [0_u8; 1];
+    assert_eq!(
+        unsafe { libc::read(reader.as_raw_fd(), byte.as_mut_ptr().cast(), 1) },
+        1
+    );
+    assert_eq!(byte, [1]);
+    assert!(started.elapsed() < Duration::from_millis(500));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn sole_sidecar_observer_reaps_natural_exit_after_healthy_startup() {
+    let sidecar = create_sidecar(8_457);
+    let child = Command::new("/bin/sh")
+        .args(["-c", "exit 0"])
+        .kill_on_drop(true)
+        .spawn()
+        .expect("spawn natural-exit AnyHarness fixture");
+    {
+        let mut guard = sidecar.lock().await;
+        guard.child = Some(child);
+        guard.info.status = RuntimeStatus::Healthy;
+        guard.suppress_runtime_info_persistence = true;
+    }
+    observer::start(&sidecar).await;
+    let first_generation = sidecar.lock().await.observer_generation;
+    observer::start(&sidecar).await;
+    {
+        let guard = sidecar.lock().await;
+        assert!(guard.observer_generation > first_generation);
+        assert!(guard.exit_observer.is_some());
+    }
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if sidecar.lock().await.child.is_none() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("natural-exit observer must reconcile AnyHarness");
+    let guard = sidecar.lock().await;
+    assert!(guard.exit_observer.is_none());
+    assert_eq!(guard.info.status, RuntimeStatus::Failed);
+}
+
+#[cfg(all(debug_assertions, unix))]
+mod dev_env_republish {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use tokio::sync::watch;
+
+    use super::diagnostics::{
+        dev_diagnostics_env_republish_loop, render_dev_diagnostics_env_snippet,
+        write_dev_diagnostics_env,
+    };
+    use crate::diagnostics_collector::supervisor::DesktopDiagnosticsSupervisorStateV1 as State;
+
+    fn ready(collector_boot_id: &str, restart_count: u64) -> State {
+        State::Ready {
+            collector_boot_id: collector_boot_id.to_owned(),
+            schema_major: 1,
+            restart_count,
+        }
+    }
+
+    fn degraded() -> State {
+        State::Degraded {
+            classification: "collector_exited".to_owned(),
+            restart_count: 1,
+            retry_exhausted: false,
+        }
+    }
+
+    fn snippet_path(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "proliferate-dev-env-test-{}-{name}.env",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn snippet_carries_all_four_lines_including_its_own_path() {
+        let path = std::path::Path::new("/tmp/app/diagnostics-dev.env");
+        let snippet =
+            render_dev_diagnostics_env_snippet(path, "http://127.0.0.1:53421/", "cap", "boot-a");
+        let lines: Vec<&str> = snippet.lines().collect();
+        assert_eq!(
+            lines,
+            vec![
+                "PROLIFERATE_DIAGNOSTICS_BRIDGE_ENDPOINT=http://127.0.0.1:53421/",
+                "PROLIFERATE_DIAGNOSTICS_BRIDGE_TOKEN=cap",
+                "PROLIFERATE_DIAGNOSTICS_BRIDGE_COLLECTOR_BOOT_ID=boot-a",
+                "PROLIFERATE_DIAGNOSTICS_DEV_ENV_PATH=/tmp/app/diagnostics-dev.env",
+            ]
+        );
+    }
+
+    /// The publish is an atomic replace: 0600 on the target, and no staged
+    /// sibling left behind — a polling reader must never see a torn snippet.
+    #[test]
+    fn write_replaces_atomically_with_owner_only_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = snippet_path("atomic");
+        write_dev_diagnostics_env(&path, "A=1\n").expect("first write");
+        write_dev_diagnostics_env(&path, "A=2\n").expect("replace");
+        assert_eq!(std::fs::read_to_string(&path).expect("target"), "A=2\n");
+        let mode = std::fs::metadata(&path)
+            .expect("metadata")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+        let mut staged = path.clone().into_os_string();
+        staged.push(".tmp");
+        assert!(!std::path::Path::new(&staged).exists());
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// Ready(a) → Degraded → Ready(b) rewrites the published file with the new
+    /// endpoint and boot id, exactly once per new Ready boot id — the seeded
+    /// boot id from the boot-time publish and a repeated Ready with the same
+    /// boot id publish nothing.
+    #[tokio::test]
+    async fn new_ready_boot_id_republishes_exactly_once() {
+        let path = snippet_path("republish");
+        write_dev_diagnostics_env(
+            &path,
+            &render_dev_diagnostics_env_snippet(&path, "http://127.0.0.1:1111/", "cap-a", "boot-a"),
+        )
+        .expect("seed boot-time publish");
+
+        let (state_tx, state_rx) = watch::channel(ready("boot-a", 0));
+        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+        let publishes = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&publishes);
+        let publish_path = path.clone();
+        let republisher = tokio::spawn(dev_diagnostics_env_republish_loop(
+            state_rx,
+            shutdown_rx,
+            Some("boot-a".to_owned()),
+            move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+                write_dev_diagnostics_env(
+                    &publish_path,
+                    &render_dev_diagnostics_env_snippet(
+                        &publish_path,
+                        "http://127.0.0.1:2222/",
+                        "cap-b",
+                        "boot-b",
+                    ),
+                )
+                .expect("republish");
+                Some("boot-b".to_owned())
+            },
+        ));
+        // Let the loop inspect the seeding Ready before any transition is sent
+        // (current-thread runtime).
+        tokio::task::yield_now().await;
+
+        state_tx.send_replace(degraded());
+        state_tx.send_replace(ready("boot-b", 1));
+        // A repeated Ready for the same collector boot must not republish.
+        state_tx.send_replace(ready("boot-b", 2));
+        drop(state_tx);
+        republisher.await.expect("republish loop exits cleanly");
+
+        assert_eq!(publishes.load(Ordering::SeqCst), 1);
+        let content = std::fs::read_to_string(&path).expect("published file");
+        assert!(content.contains("PROLIFERATE_DIAGNOSTICS_BRIDGE_ENDPOINT=http://127.0.0.1:2222/"));
+        assert!(content.contains("PROLIFERATE_DIAGNOSTICS_BRIDGE_COLLECTOR_BOOT_ID=boot-b"));
+        assert!(!content.contains("boot-a"));
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// A Ready that landed before the watcher started (or whose boot-time
+    /// publish failed, seeding `None`) is published on the loop's first
+    /// inspection rather than silently treated as already covered.
+    #[tokio::test]
+    async fn ready_not_covered_by_the_boot_publish_is_published_immediately() {
+        let (_state_tx, state_rx) = watch::channel(ready("boot-b", 1));
+        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+        let publishes = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&publishes);
+        let republisher = tokio::spawn(dev_diagnostics_env_republish_loop(
+            state_rx,
+            shutdown_rx,
+            Some("boot-a".to_owned()),
+            move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+                Some("boot-b".to_owned())
+            },
+        ));
+        tokio::task::yield_now().await;
+        assert_eq!(publishes.load(Ordering::SeqCst), 1);
+        drop(_state_tx);
+        republisher.await.expect("republish loop exits cleanly");
+        assert_eq!(publishes.load(Ordering::SeqCst), 1);
+    }
+
+    /// Non-Ready transitions alone must never trigger a publish: keying on the
+    /// generation counter instead of Ready state would republish (and warn)
+    /// here.
+    #[tokio::test]
+    async fn degraded_transitions_do_not_republish() {
+        let (state_tx, state_rx) = watch::channel(ready("boot-a", 0));
+        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+        let publishes = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&publishes);
+        let republisher = tokio::spawn(dev_diagnostics_env_republish_loop(
+            state_rx,
+            shutdown_rx,
+            Some("boot-a".to_owned()),
+            move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+                None
+            },
+        ));
+        tokio::task::yield_now().await;
+
+        state_tx.send_replace(degraded());
+        state_tx.send_replace(State::Stopped { orderly: false });
+        drop(state_tx);
+        republisher.await.expect("republish loop exits cleanly");
+
+        assert_eq!(publishes.load(Ordering::SeqCst), 0);
+    }
+
+    /// Arming shutdown ends the watch like the tail/export lease tasks, even
+    /// while the state sender stays alive.
+    #[tokio::test]
+    async fn armed_shutdown_exits_the_loop() {
+        let (_state_tx, state_rx) = watch::channel(degraded());
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let publishes = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&publishes);
+        let republisher = tokio::spawn(dev_diagnostics_env_republish_loop(
+            state_rx,
+            shutdown_rx,
+            None,
+            move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+                None
+            },
+        ));
+        tokio::task::yield_now().await;
+
+        shutdown_tx.send_replace(true);
+        republisher.await.expect("republish loop exits on shutdown");
+        assert_eq!(publishes.load(Ordering::SeqCst), 0);
+    }
+}

@@ -1,0 +1,33 @@
+import { useMemo } from "react";
+import type { LogicalWorkspace } from "#product/lib/domain/workspaces/cloud/logical-workspace-model";
+import { useSessionSelectionStore } from "#product/stores/sessions/session-selection-store";
+import { buildLogicalWorkspaces } from "#product/lib/domain/workspaces/cloud/logical-workspaces";
+import { useStandardRepoProjection } from "#product/hooks/workspaces/derived/use-standard-repo-projection";
+import { useDesktopInstallId } from "#product/hooks/workspaces/derived/use-desktop-install-id";
+
+const EMPTY_LOGICAL_WORKSPACES: LogicalWorkspace[] = [];
+
+export function useLogicalWorkspaces() {
+  const selectedWorkspaceId = useSessionSelectionStore((state) => state.selectedWorkspaceId);
+  const desktopInstallId = useDesktopInstallId();
+  const { repoRoots, localWorkspaces, cloudWorkspaces, isLoading } = useStandardRepoProjection();
+
+  const logicalWorkspaces = useMemo(() => {
+    if (repoRoots.length === 0 && localWorkspaces.length === 0 && cloudWorkspaces.length === 0) {
+      return EMPTY_LOGICAL_WORKSPACES;
+    }
+
+    return buildLogicalWorkspaces({
+      localWorkspaces,
+      repoRoots,
+      cloudWorkspaces,
+      currentSelectionId: selectedWorkspaceId,
+      desktopInstallId,
+    });
+  }, [cloudWorkspaces, desktopInstallId, localWorkspaces, repoRoots, selectedWorkspaceId]);
+
+  return {
+    logicalWorkspaces,
+    isLoading,
+  };
+}

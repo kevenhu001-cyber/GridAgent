@@ -1,0 +1,275 @@
+import { useMemo } from "react";
+import { PageHeader } from "#product/primitives/patterns/PageHeader";
+import { SettingsPageBody } from "#product/primitives/patterns/settings/SettingsPageBody";
+import {
+  SETTINGS_CONTROL_WIDTH_CLASS,
+  SettingsRow,
+} from "#product/primitives/patterns/settings/SettingsRow";
+import { SettingsSaveFooter } from "#product/primitives/patterns/settings/SettingsSaveFooter";
+import { SettingsSection } from "#product/primitives/patterns/settings/SettingsSection";
+import {
+  EnvironmentSearchSelect,
+  type EnvironmentSearchSelectOption,
+} from "#product/primitives/patterns/EnvironmentSearchSelect";
+import { useCloudRepoEnvironmentEditor } from "#product/hooks/settings/workflows/use-cloud-repo-environment-editor";
+import { useRepositorySettings } from "#product/hooks/settings/workflows/use-repository-settings";
+import { type SettingsRepositoryEntry } from "#product/lib/domain/settings/repositories";
+import { RepoCloudGate } from "./RepoCloudGate";
+import { RepoCommitInstructionsSection } from "./RepoCommitInstructionsSection";
+import {
+  LocalNoCheckoutState,
+  RepoScopeEmptyState,
+  type RepoScopePaneProps,
+  type RepoScopeSelectionCallbacks,
+} from "./RepoScopeStates";
+
+/**
+ * Repo → Configure: defaults applied when agents create workspaces for this
+ * repo, per the picked Cloud|Local context.
+ *
+ * HONEST OMISSIONS vs the design-system bench (no backing API anywhere):
+ * "Base for new branches" (the API has one `defaultBranch` field, no second
+ * base-branch field), the WORKSPACES section (base workspace type, clone
+ * depth), and the PREFERENCES switches (auto-create worktree, fetch before
+ * new workspace, run-setup-on-create). They render nothing here rather than
+ * fake controls.
+ */
+export function RepoConfigurePane({
+  repository,
+  context,
+  controlPlaneReachable,
+  cloudActive,
+  cloudSignInChecking,
+  cloudSignInAvailable,
+  onSelectRepo,
+  onSelectCloudEnvironment,
+}: RepoScopePaneProps) {
+  if (!repository) {
+    return (
+      <RepoScopeEmptyState
+        onSelectRepo={onSelectRepo}
+        onSelectCloudEnvironment={onSelectCloudEnvironment}
+      />
+    );
+  }
+  return (
+    <SettingsPageBody>
+      <PageHeader
+        variant="flat"
+        title="Configure"
+        description="Workspace defaults for this repo."
+      />
+      {context === "cloud" ? (
+        <ConfigureCloud
+          repository={repository}
+          controlPlaneReachable={controlPlaneReachable}
+          cloudActive={cloudActive}
+          cloudSignInChecking={cloudSignInChecking}
+          cloudSignInAvailable={cloudSignInAvailable}
+        />
+      ) : (
+        <ConfigureLocal
+          repository={repository}
+          onSelectRepo={onSelectRepo}
+          onSelectCloudEnvironment={onSelectCloudEnvironment}
+        />
+      )}
+      {/* Repo-level, context-independent: commit-message generation applies
+          to local and cloud workspaces alike. Needs a signed-in account
+          (the instructions live on the product server's RepoConfig). */}
+      {repository.gitOwner && repository.gitRepoName && (
+        <RepoCommitInstructionsSection
+          gitOwner={repository.gitOwner}
+          gitRepoName={repository.gitRepoName}
+        />
+      )}
+    </SettingsPageBody>
+  );
+}
+
+function ConfigureCloud({
+  repository,
+  controlPlaneReachable,
+  cloudActive,
+  cloudSignInChecking,
+  cloudSignInAvailable,
+}: {
+  repository: SettingsRepositoryEntry;
+  controlPlaneReachable: boolean;
+  cloudActive: boolean;
+  cloudSignInChecking: boolean;
+  cloudSignInAvailable: boolean;
+}) {
+  const editor = useCloudRepoEnvironmentEditor({ repository, cloudActive });
+  const { draft, branches } = editor;
+  const branchesLoading = branches.loading || editor.repoConfigsLoading;
+  const savedBranch = draft.defaultBranch;
+  const hasStaleSavedBranch = Boolean(savedBranch && !branches.names.includes(savedBranch));
+  const branchOptions: EnvironmentSearchSelectOption[] = [
+    {
+      id: "__github__",
+      label: "GitHub default",
+      detail: branches.defaultBranch ? `Current: ${branches.defaultBranch}` : null,
+      selected: savedBranch === null,
+      onSelect: () => draft.setDefaultBranch(null),
+    },
+    ...(hasStaleSavedBranch && savedBranch ? [{
+      id: savedBranch,
+      label: `${savedBranch} · unavailable`,
+      selected: true,
+      onSelect: () => draft.setDefaultBranch(savedBranch),
+    }] : []),
+    ...branches.names.map((branch) => ({
+      id: branch,
+      label: branch,
+      selected: savedBranch === branch,
+      onSelect: () => draft.setDefaultBranch(branch),
+    })),
+  ];
+
+  return (
+    <RepoCloudGate
+      editor={editor}
+      controlPlaneReachable={controlPlaneReachable}
+      cloudActive={cloudActive}
+      cloudSignInChecking={cloudSignInChecking}
+      cloudSignInAvailable={cloudSignInAvailable}
+    >
+      <SettingsSection title="Branch">
+        <SettingsRow
+          label="Default branch"
+          description={cloudBranchHelperText({
+            branchesLoading,
+            branchError: branches.error,
+            githubDefaultBranch: branches.defaultBranch,
+          })}
+        >
+          <EnvironmentSearchSelect
+            label={savedBranch
+              ?? (branches.defaultBranch ? `GitHub default (${branches.defaultBranch})` : "GitHub default")}
+            options={branchOptions}
+            searchPlaceholder="Search branches"
+            emptyLabel="No branches"
+            className={SETTINGS_CONTROL_WIDTH_CLASS}
+            menuClassName={SETTINGS_CONTROL_WIDTH_CLASS}
+            disabled={branchesLoading}
+          />
+        </SettingsRow>
+      </SettingsSection>
+      <SettingsSaveFooter
+        statusLabel={editor.status.label}
+        statusTone={editor.status.tone}
+        error={editor.saveError}
+        saving={editor.saving}
+        saveDisabled={!cloudActive || editor.repoConfigsLoading || editor.saving || !draft.canSave}
+        revertDisabled={editor.saving || !draft.dirty}
+        onSave={() => {
+          void editor.save();
+        }}
+        onRevert={draft.revert}
+      />
+    </RepoCloudGate>
+  );
+}
+
+function cloudBranchHelperText({
+  branchesLoading,
+  branchError,
+  githubDefaultBranch,
+}: {
+  branchesLoading: boolean;
+  branchError: string | null;
+  githubDefaultBranch: string | null;
+}): string {
+  if (branchError) {
+    return branchError;
+  }
+  if (branchesLoading) {
+    return "Loading branches…";
+  }
+  if (githubDefaultBranch) {
+    return `Uses GitHub's default branch (${githubDefaultBranch}).`;
+  }
+  return "Uses the repository's current default branch.";
+}
+
+function ConfigureLocal({
+  repository,
+  ...callbacks
+}: RepoScopeSelectionCallbacks & {
+  repository: SettingsRepositoryEntry;
+}) {
+  if (repository.availability === "cloud") {
+    return <LocalNoCheckoutState repository={repository} {...callbacks} />;
+  }
+  return <ConfigureLocalEditor repository={repository} />;
+}
+
+function ConfigureLocalEditor({ repository }: { repository: SettingsRepositoryEntry }) {
+  const {
+    branches,
+    explicitDefaultBranch,
+    effectiveAutoDetectedBranch,
+    setExplicitDefaultBranch,
+    canSave,
+    canRevert,
+    save,
+    revert,
+  } = useRepositorySettings(repository);
+
+  const effectiveBranchLabel = explicitDefaultBranch
+    ?? effectiveAutoDetectedBranch
+    ?? "No branches found";
+  const branchButtonLabel = explicitDefaultBranch
+    ? explicitDefaultBranch
+    : effectiveAutoDetectedBranch
+      ? `Auto-detect (${effectiveAutoDetectedBranch})`
+      : "Auto-detect";
+
+  const branchOptions = useMemo(() => [
+    {
+      id: "__auto__",
+      label: "Auto-detect",
+      detail: effectiveAutoDetectedBranch ? `Current: ${effectiveAutoDetectedBranch}` : "No branches",
+    },
+    ...branches.map((branch) => ({
+      id: branch.name,
+      label: branch.name,
+      detail: null,
+    })),
+  ], [branches, effectiveAutoDetectedBranch]);
+
+  return (
+    <>
+      <SettingsSection title="Branch">
+        <SettingsRow
+          label="Default branch"
+          description={`Base for new worktrees and pull requests · Effective: ${effectiveBranchLabel}`}
+        >
+          <EnvironmentSearchSelect
+            label={branchButtonLabel}
+            searchPlaceholder="Search branches"
+            emptyLabel="No branches"
+            className={SETTINGS_CONTROL_WIDTH_CLASS}
+            menuClassName={SETTINGS_CONTROL_WIDTH_CLASS}
+            options={branchOptions.map((option) => ({
+              id: option.id,
+              label: option.label,
+              detail: option.detail,
+              selected: option.id === "__auto__"
+                ? explicitDefaultBranch === null
+                : explicitDefaultBranch === option.id,
+              onSelect: () => setExplicitDefaultBranch(option.id === "__auto__" ? null : option.id),
+            }))}
+          />
+        </SettingsRow>
+      </SettingsSection>
+      <SettingsSaveFooter
+        saveDisabled={!canSave}
+        revertDisabled={!canRevert}
+        onSave={save}
+        onRevert={revert}
+      />
+    </>
+  );
+}

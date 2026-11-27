@@ -1,0 +1,147 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { WorkspaceSession } from "#product/hooks/access/anyharness/sessions/use-workspace-session-cache";
+import { selectSessionWithShellIntentRollback } from "#product/hooks/sessions/workflows/session-shell-selection";
+import { handleRememberedWorkspaceSessionBootstrap } from "#product/hooks/workspaces/workflows/workspace-bootstrap-remembered-session";
+
+vi.mock("#product/hooks/sessions/workflows/session-shell-selection", () => ({
+  selectSessionWithShellIntentRollback: vi.fn(),
+}));
+
+function session(id: string): WorkspaceSession {
+  return {
+    id,
+    workspaceId: "workspace-1",
+    updatedAt: "2026-06-01T12:00:00.000Z",
+  } as unknown as WorkspaceSession;
+}
+
+describe("handleRememberedWorkspaceSessionBootstrap", () => {
+  beforeEach(() => {
+    vi.mocked(selectSessionWithShellIntentRollback).mockReset();
+  });
+
+  it("asks the parent bootstrap flow to return when remembered selection is stale", async () => {
+    vi.mocked(selectSessionWithShellIntentRollback).mockResolvedValueOnce({
+      result: "stale",
+      sessionId: "session-1",
+      guard: {
+        workspaceId: "workspace-1",
+        workspaceSelectionNonce: 1,
+        token: 1,
+      },
+      reason: "selection-replaced",
+    });
+    const rehydrateSessionSlotFromHistory = vi.fn();
+    const patchSessionRecord = vi.fn();
+
+    const result = await handleRememberedWorkspaceSessionBootstrap({
+      lastViewedSessionByWorkspace: {
+        "logical-workspace-1": "session-1",
+      },
+      latencyFlowId: null,
+      logicalWorkspaceId: "logical-workspace-1",
+      measurementOperationId: null,
+      sessions: [session("session-1")],
+      startedAt: performance.now(),
+      workspaceId: "workspace-1",
+      isCurrent: () => true,
+    }, {
+      clearLastViewedSession: vi.fn(),
+      getActiveSessionId: () => null,
+      getSessionRecord: vi.fn(),
+      patchSessionRecord,
+      rehydrateSessionSlotFromHistory: rehydrateSessionSlotFromHistory as never,
+      removeSessionRecord: vi.fn(),
+      selectSession: vi.fn() as never,
+      setActiveSessionId: vi.fn(),
+    });
+
+    expect(result.shouldReturn).toBe(true);
+    expect(selectSessionWithShellIntentRollback).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: "workspace-1",
+      sessionId: "session-1",
+    }));
+    expect(rehydrateSessionSlotFromHistory).not.toHaveBeenCalled();
+    expect(patchSessionRecord).not.toHaveBeenCalled();
+  });
+
+  it("replaces a setup surface with an authoritative real session without clearing first", async () => {
+    vi.mocked(selectSessionWithShellIntentRollback).mockImplementationOnce(async () => {
+      expect(setActiveSessionId).not.toHaveBeenCalledWith(null);
+      setActiveSessionId("session-1");
+      return undefined;
+    });
+    const setupSessionId = "client-session:workspace-setup:workspace-1";
+    const setActiveSessionId = vi.fn();
+    const removeSessionRecord = vi.fn();
+
+    const result = await handleRememberedWorkspaceSessionBootstrap({
+      lastViewedSessionByWorkspace: {},
+      latencyFlowId: null,
+      logicalWorkspaceId: "logical-workspace-1",
+      measurementOperationId: null,
+      sessions: [session("session-1")],
+      startedAt: performance.now(),
+      workspaceId: "workspace-1",
+      isCurrent: () => true,
+    }, {
+      clearLastViewedSession: vi.fn(),
+      getActiveSessionId: () => setupSessionId,
+      getSessionRecord: vi.fn(() => ({
+        sessionId: setupSessionId,
+        workspaceId: "workspace-1",
+      })) as never,
+      patchSessionRecord: vi.fn(),
+      rehydrateSessionSlotFromHistory: vi.fn() as never,
+      removeSessionRecord,
+      selectSession: vi.fn() as never,
+      setActiveSessionId,
+    });
+
+    expect(result.shouldReturn).toBe(false);
+    expect(setActiveSessionId).not.toHaveBeenCalledWith(null);
+    expect(removeSessionRecord).toHaveBeenCalledWith(setupSessionId);
+  });
+
+  it("finishes without awaiting transcript hydration and hands the content_stable session to the pane", async () => {
+    // R14: session selection stays on the critical path; the history fetch does
+    // not. This resolves even though rehydration never settles.
+    vi.mocked(selectSessionWithShellIntentRollback).mockResolvedValueOnce(undefined);
+    let hydrationSettled = false;
+    const rehydrateSessionSlotFromHistory = vi.fn(
+      () => new Promise<boolean>(() => {
+        // Deliberately never resolves within the test.
+        hydrationSettled = true;
+      }),
+    );
+    const patchSessionRecord = vi.fn();
+
+    const result = await handleRememberedWorkspaceSessionBootstrap({
+      lastViewedSessionByWorkspace: { "logical-workspace-1": "session-1" },
+      latencyFlowId: null,
+      logicalWorkspaceId: "logical-workspace-1",
+      measurementOperationId: null,
+      sessions: [session("session-1")],
+      startedAt: performance.now(),
+      workspaceId: "workspace-1",
+      isCurrent: () => true,
+    }, {
+      clearLastViewedSession: vi.fn(),
+      getActiveSessionId: () => null,
+      getSessionRecord: vi.fn(),
+      patchSessionRecord,
+      rehydrateSessionSlotFromHistory: rehydrateSessionSlotFromHistory as never,
+      removeSessionRecord: vi.fn(),
+      selectSession: vi.fn() as never,
+      setActiveSessionId: vi.fn(),
+    });
+
+    expect(result.shouldReturn).toBe(false);
+    expect(result.contentStableSessionId).toBe("session-1");
+    // Hydration was kicked off (fire-and-forget) but never awaited: the record
+    // is not patched hydrated synchronously, since the fetch has not resolved.
+    expect(rehydrateSessionSlotFromHistory).toHaveBeenCalledTimes(1);
+    expect(hydrationSettled).toBe(true);
+    expect(patchSessionRecord).not.toHaveBeenCalled();
+  });
+});

@@ -1,0 +1,104 @@
+import type { RepoRoot, Workspace } from "@anyharness/sdk";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useCallback } from "react";
+import {
+  type WorkspaceCollections,
+  upsertLocalWorkspaceCollections,
+  upsertRepoRootCollections,
+} from "#product/lib/domain/workspaces/cloud/collections";
+import {
+  workspaceCollectionsScopeKey,
+} from "#product/hooks/workspaces/cache/query-keys";
+
+export interface WorkspaceCollectionsLocalUpsertSummary {
+  previousLocalCount: number;
+  nextLocalCount: number;
+  alreadyPresent: boolean;
+}
+
+function upsertLocalWorkspaceForRuntime(
+  queryClient: QueryClient,
+  runtimeUrl: string,
+  workspace: Workspace,
+  repoRoot?: RepoRoot | null,
+): WorkspaceCollectionsLocalUpsertSummary {
+  let previousLocalCount = 0;
+  let nextLocalCount = 0;
+  let alreadyPresent = false;
+
+  queryClient.setQueriesData<WorkspaceCollections | undefined>(
+    { queryKey: workspaceCollectionsScopeKey(runtimeUrl) },
+    (collections) => {
+      previousLocalCount = collections?.localWorkspaces.length ?? 0;
+      alreadyPresent = collections?.localWorkspaces.some(
+        (existing) => existing.id === workspace.id,
+      ) ?? false;
+      const nextCollections = upsertLocalWorkspaceCollections(collections, workspace, repoRoot);
+      nextLocalCount = nextCollections?.localWorkspaces.length ?? previousLocalCount;
+      return nextCollections;
+    },
+  );
+
+  return {
+    previousLocalCount,
+    nextLocalCount,
+    alreadyPresent,
+  };
+}
+
+function upsertRepoRootForRuntime(
+  queryClient: QueryClient,
+  runtimeUrl: string,
+  repoRoot: RepoRoot,
+): void {
+  queryClient.setQueriesData<WorkspaceCollections | undefined>(
+    { queryKey: workspaceCollectionsScopeKey(runtimeUrl) },
+    (collections) => upsertRepoRootCollections(collections, repoRoot),
+  );
+}
+
+export function useWorkspaceCollectionsMutationCache(runtimeUrl: string) {
+  const queryClient = useQueryClient();
+
+  const upsertLocalWorkspace = useCallback(
+    (
+      workspace: Workspace,
+      repoRoot?: RepoRoot | null,
+    ): WorkspaceCollectionsLocalUpsertSummary =>
+      upsertLocalWorkspaceForRuntime(queryClient, runtimeUrl, workspace, repoRoot),
+    [queryClient, runtimeUrl],
+  );
+
+  const upsertRepoRoot = useCallback((repoRoot: RepoRoot) => {
+    upsertRepoRootForRuntime(queryClient, runtimeUrl, repoRoot);
+  }, [queryClient, runtimeUrl]);
+
+  return {
+    upsertLocalWorkspace,
+    upsertRepoRoot,
+  };
+}
+
+export function useWorkspaceCollectionsMutationCacheActions() {
+  const queryClient = useQueryClient();
+
+  const upsertLocalWorkspaceInWorkspaceCollections = useCallback((
+    runtimeUrl: string,
+    workspace: Workspace,
+    repoRoot?: RepoRoot | null,
+  ): WorkspaceCollectionsLocalUpsertSummary =>
+    upsertLocalWorkspaceForRuntime(queryClient, runtimeUrl, workspace, repoRoot),
+  [queryClient]);
+
+  const upsertRepoRootInWorkspaceCollections = useCallback((
+    runtimeUrl: string,
+    repoRoot: RepoRoot,
+  ) => {
+    upsertRepoRootForRuntime(queryClient, runtimeUrl, repoRoot);
+  }, [queryClient]);
+
+  return {
+    upsertLocalWorkspaceInWorkspaceCollections,
+    upsertRepoRootInWorkspaceCollections,
+  };
+}

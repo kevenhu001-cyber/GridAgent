@@ -1,0 +1,379 @@
+import type {
+  TranscriptState,
+  TurnRecord,
+} from "@anyharness/sdk";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useRevertGitPatchesMutation } from "@anyharness/sdk-react";
+import { TurnDiffPanel } from "#product/components/workspace/chat/transcript/TurnDiffPanel";
+import { TranscriptPatchTurnDiffPanel } from "#product/components/workspace/chat/transcript/TranscriptPatchTurnDiffPanel";
+import {
+  ASSISTANT_ACTION_SLOT_HEIGHT,
+  TurnAssistantActionRow,
+  TURN_ITEM_GAP_CLASS,
+  TurnGoalMetMarker,
+  TurnShell,
+  resolveTurnTrailingStatus,
+} from "#product/components/workspace/chat/transcript/TranscriptTurnChrome";
+import { goalMetMarkerLabel } from "#product/domain/activity/goal";
+import { useSessionGoal } from "#product/hooks/activity/derived/use-session-goal";
+import { useTranscriptPaneLifecycle } from "#product/components/workspace/chat/transcript/TranscriptContexts";
+import { TurnItemSequence } from "#product/components/workspace/chat/transcript/TurnItemSequence";
+import { hostsSynthesizedReceiptDisclosure } from "#product/components/workspace/chat/transcript/TurnWorkspaceReceiptSlot";
+import {
+  findTailAssistantProseRootId,
+  getAssistantProseContent,
+  resolveTurnAssistantFooterModeForRow,
+  resolveTurnPromptTiming,
+} from "#product/domain/chats/transcript/transcript-rendering";
+import {
+  latestTransientStatusText,
+  shouldAllowTurnTrailingStatus,
+} from "#product/domain/chats/transcript/transcript-trailing-status";
+import {
+  resolveAssistantTurnActionTime,
+} from "#product/domain/chats/transcript/transcript-action-time";
+import {
+  collectTurnFileRevertPatchEntries,
+} from "#product/domain/chats/transcript/turn-file-patches";
+import {
+  resolveTurnStoppedNotice,
+} from "#product/domain/chats/transcript/turn-stopped-presentation";
+import {
+  resolveTranscriptTurnDiffPanelKind,
+  resolveTurnFrontierStatusMode,
+  shouldRenderAssistantEndResource,
+  shouldRenderStandaloneStoppedNotice,
+} from "#product/domain/chats/transcript/turn-row-presentation";
+import type { TranscriptVirtualRow } from "#product/domain/chats/transcript/transcript-virtual-rows";
+import type { TurnDisplayBlock } from "#product/domain/chats/transcript/transcript-presentation";
+import type { PromptPlanAttachmentDescriptor } from "#product/domain/chats/composer/prompt-plan-attachments";
+import type { SessionViewState } from "#product/domain/sessions/activity";
+import { useToastStore } from "#product/stores/toast/toast-store";
+import { useAssistantRevealFrontier } from "#product/hooks/chat/ui/use-assistant-reveal-frontier";
+import { TurnDocumentReferenceCard } from "#product/components/workspace/chat/transcript/TurnDocumentReferenceCard";
+import { resolveAssistantMarkdownEndResource } from "#product/lib/domain/chat/assistant-markdown-end-resource";
+
+type PlanHandoffHandler = (plan: PromptPlanAttachmentDescriptor) => void;
+
+export function TranscriptTurnRow({
+  row,
+  rowIndex,
+  turn,
+  transcript,
+  latestTurnId,
+  latestCompletedTurnId,
+  latestLiveExplorationBlock,
+  latestLiveStatus,
+  outboxStartedAtByPromptId,
+  selectedWorkspaceId,
+  sessionViewState,
+  onOpenFile,
+  onOpenTurnChanges,
+  onOpenArtifact,
+  onOpenSubagent,
+  onOpenBackgroundTerminal,
+  onHandOffPlanToNewSession,
+  workspaceReceipt = null,
+}: {
+  row: Extract<TranscriptVirtualRow, { kind: "turn" }>;
+  rowIndex: number;
+  turn: TurnRecord;
+  transcript: TranscriptState;
+  latestTurnId: string | null;
+  latestCompletedTurnId: string | null;
+  latestLiveExplorationBlock: Extract<TurnDisplayBlock, { kind: "collapsed_actions" }> | null;
+  latestLiveStatus: ReactNode;
+  outboxStartedAtByPromptId: ReadonlyMap<string, string>;
+  selectedWorkspaceId: string | null;
+  sessionViewState: SessionViewState;
+  onOpenFile: (filePath: string) => void;
+  onOpenTurnChanges?: () => void;
+  onOpenArtifact: (workspaceId: string, artifactId: string) => void;
+  onOpenSubagent?: (subagentId: string) => void;
+  onOpenBackgroundTerminal?: (processId: string) => void;
+  onHandOffPlanToNewSession?: PlanHandoffHandler;
+  /** The workspace-creation receipt, when this row hosts it (see `hostsWorkspaceReceipt`). */
+  workspaceReceipt?: ReactNode;
+}) {
+  const isLatestTurn = row.turnId === latestTurnId;
+  const isLatestTurnInProgress = isLatestTurn && !turn.completedAt;
+  const sessionGoal = useSessionGoal();
+  const presentation = row.presentation;
+  const renderPresentation = row.renderPresentation;
+  const liveExplorationBlock = isLatestTurn ? latestLiveExplorationBlock : null;
+  const tailAssistantProseRootId = findTailAssistantProseRootId(
+    presentation,
+    transcript,
+  );
+  const tailAssistantCopyContent = getAssistantProseContent(
+    tailAssistantProseRootId,
+    transcript,
+  );
+  const tailAssistantItem = tailAssistantProseRootId
+    ? transcript.itemsById[tailAssistantProseRootId]
+    : null;
+  const tailAssistantTextLength = tailAssistantCopyContent?.length ?? 0;
+  const paneLifecycle = useTranscriptPaneLifecycle();
+  const {
+    animateAssistantRevealItemId,
+    assistantRevealComplete,
+    handleAssistantRevealStateChange,
+  } = useAssistantRevealFrontier({
+    itemId: tailAssistantProseRootId,
+    isLatestTurn,
+    targetLength: tailAssistantTextLength,
+    turnCompletedAt: turn.completedAt,
+    turnId: turn.turnId,
+    paneEstablishedAtMount: paneLifecycle.initialPaintComplete,
+  });
+  const visualTurnCompleted = !!turn.completedAt && assistantRevealComplete;
+  const assistantEndResource = useMemo(
+    () => resolveAssistantMarkdownEndResource(tailAssistantCopyContent),
+    [tailAssistantCopyContent],
+  );
+  const diffPanelKind = resolveTranscriptTurnDiffPanelKind({
+    rowIsLastTurnRow: row.isLastTurnRow,
+    turnCompleted: visualTurnCompleted,
+    turnId: turn.turnId,
+    latestCompletedTurnId,
+    hasFileBadges: turn.fileBadges.length > 0,
+  });
+  const isLatestCompletedTurnRow = diffPanelKind === "current";
+  // Completion chrome follows the assistant handoff point. The final word can
+  // still be finishing its opacity settle while the next transcript item starts.
+  const isFinalCompletedTurn = row.isLastTurnRow
+    && visualTurnCompleted
+    && turn.turnId === latestCompletedTurnId;
+  const metMarker = isFinalCompletedTurn
+    && sessionGoal?.goal?.status === "met"
+    ? <TurnGoalMetMarker label={goalMetMarkerLabel(sessionGoal.goal)} />
+    : null;
+  const tailAssistantActionTime = resolveAssistantTurnActionTime({
+    assistantItem: tailAssistantItem?.kind === "assistant_prose" ? tailAssistantItem : null,
+    turn,
+  });
+  // Hide the trailing indicator only while the assistant prose item itself is
+  // actively streaming. If the agent closes prose but keeps working internally,
+  // the trailing indicator should return.
+  const turnTiming = resolveTurnPromptTiming(
+    turn,
+    transcript,
+    outboxStartedAtByPromptId,
+  );
+  const trailingStatus = !row.isLastTurnRow
+    ? null
+    : isLatestTurn
+    ? latestLiveStatus
+    : shouldAllowTurnTrailingStatus({
+        turn,
+        transcript,
+        isLatestTurnInProgress,
+      })
+        ? resolveTurnTrailingStatusForRow({
+            turn,
+            transcript,
+            startedAt: turnTiming.startedAt,
+            sessionViewState,
+          })
+        : null;
+  // ANCHOR INVARIANT: Thinking, a live tool, and streaming/final prose all own
+  // the same frontier position. A separate fixed-height footer stays below
+  // that frontier and swaps from empty to copy/timestamp controls on completion.
+  // Tool-only, stopped, and errored completions have no copyable prose, so
+  // their last row keeps the empty footer instead of dropping 24px at handoff.
+  // The end-of-turn diff panel is completion-only and renders BELOW the final
+  // prose, directly above that footer — it appears in the same paint as the
+  // footer swap, so nothing shifts under a live stream.
+  // The runtime drops the completion tail (item_completed + turn_ended) for
+  // injected wake turns, so the footer cannot rely on turn/item completion
+  // stamps. The session's own view state is the authority for "still live":
+  // only the latest turn of a session that is actively "working" is genuinely
+  // streaming. A reloaded or idle session leaves this false, so a dropped-tail
+  // wake message becomes copyable.
+  const turnIsActivelyStreaming = isLatestTurn && sessionViewState === "working";
+  const assistantFooterMode = resolveTurnAssistantFooterModeForRow({
+    rowIsLastTurnRow: row.isLastTurnRow,
+    turn,
+    transcript,
+    presentation,
+    assistantRevealComplete,
+    turnIsActivelyStreaming,
+  });
+  const frontierStatusMode = resolveTurnFrontierStatusMode({
+    hasTrailingStatus: trailingStatus !== null && trailingStatus !== undefined,
+    rowIsLastTurnRow: row.isLastTurnRow,
+    isLatestTurnInProgress,
+    turnIsActivelyStreaming,
+    assistantRevealComplete,
+  });
+  const revertPatchesMutation = useRevertGitPatchesMutation({ workspaceId: selectedWorkspaceId });
+  const showToast = useToastStore((state) => state.show);
+  const [undoneTurnIds, setUndoneTurnIds] = useState<ReadonlySet<string>>(() => new Set());
+  const turnRevertPatches = useMemo(
+    () => isLatestCompletedTurnRow
+      ? collectTurnFileRevertPatchEntries(turn, transcript)
+      : { entries: [], blockedReason: null },
+    [isLatestCompletedTurnRow, transcript, turn],
+  );
+  const turnUndoCompleted = undoneTurnIds.has(turn.turnId);
+  const undoDisabledReason = turnUndoCompleted
+    ? "Undo has already been applied for this turn."
+    : turnRevertPatches.blockedReason
+    ?? (!selectedWorkspaceId ? "Undo is unavailable until a workspace is selected." : null)
+    ?? (turnRevertPatches.entries.length === 0
+      ? "Undo is unavailable because this turn has no complete file patches."
+      : null);
+  const handleUndoTurnChanges = useCallback(() => {
+    if (undoDisabledReason || turnRevertPatches.entries.length === 0) {
+      return;
+    }
+    const fileCount = new Set(turnRevertPatches.entries.map((entry) => entry.path)).size;
+    const confirmed = typeof window === "undefined"
+      || window.confirm(`Undo file changes from the last turn? This will reverse ${fileCount} file${fileCount === 1 ? "" : "s"} as one operation.`);
+    if (!confirmed) {
+      return;
+    }
+    void revertPatchesMutation.mutateAsync({
+      sourceLabel: "last turn",
+      entries: turnRevertPatches.entries,
+    }).then(() => {
+      setUndoneTurnIds((current) => {
+        if (current.has(turn.turnId)) {
+          return current;
+        }
+        const next = new Set(current);
+        next.add(turn.turnId);
+        return next;
+      });
+      showToast("Undid last turn file changes.", "info");
+      onOpenTurnChanges?.();
+    }).catch((error) => {
+      showToast(formatUndoError(error));
+    });
+  }, [
+    onOpenTurnChanges,
+    revertPatchesMutation,
+    showToast,
+    turn.turnId,
+    turnRevertPatches.entries,
+    undoDisabledReason,
+  ]);
+
+  const stoppedNotice = row.isLastTurnRow ? resolveTurnStoppedNotice(turn) : null;
+  // A hosted workspace-creation receipt on a turn with no history of its own
+  // still surfaces as a "Worked for Ns" disclosure (TurnItemSequence's
+  // synthetic case) — that counts as owning the disclosure too, so the
+  // standalone stopped-notice line below doesn't duplicate its label.
+  const hasCompletedHistoryDisclosure = row.isLastTurnRow
+    && (renderPresentation.completedHistorySummary !== null
+      || hostsSynthesizedReceiptDisclosure({
+        hasWorkspaceReceipt: !!workspaceReceipt,
+        completedHistorySummary: renderPresentation.completedHistorySummary,
+        turnCompletedAt: turn.completedAt,
+      }));
+
+  return (
+    <TurnShell isFirst={rowIndex === 0}>
+      {/* Every prose/activity sibling uses the exact 16px conversation-item
+          gap. Pending rows share the same class. */}
+      <div className={`flex flex-col ${TURN_ITEM_GAP_CLASS} ${tailAssistantCopyContent ? "group/turn" : ""}`}>
+        <TurnItemSequence
+          turn={turn}
+          transcript={transcript}
+          isTurnComplete={!!turn.completedAt}
+          presentation={renderPresentation}
+          autoFollowCollapsedActionBlockId={liveExplorationBlock?.blockId ?? null}
+          tailAssistantProseRootId={tailAssistantProseRootId}
+          completedHistoryLabel={stoppedNotice}
+          animateActivityEntry={isLatestTurnInProgress}
+          animateAssistantRevealItemId={animateAssistantRevealItemId}
+          onAssistantRevealStateChange={handleAssistantRevealStateChange}
+          showCompletedArtifactFallback={row.isLastTurnRow}
+          workspaceId={selectedWorkspaceId}
+          onOpenArtifact={onOpenArtifact}
+          onOpenSubagent={onOpenSubagent}
+          onOpenBackgroundTerminal={onOpenBackgroundTerminal}
+          onHandOffPlanToNewSession={onHandOffPlanToNewSession}
+          workspaceReceipt={workspaceReceipt}
+        />
+        {shouldRenderAssistantEndResource({
+          rowIsLastTurnRow: row.isLastTurnRow,
+          visualTurnCompleted,
+          hasResource: assistantEndResource !== null,
+        }) && assistantEndResource && (
+          <TurnDocumentReferenceCard resource={assistantEndResource} />
+        )}
+        {frontierStatusMode !== "hidden" && (
+          <div
+            data-turn-frontier-status
+            className={frontierStatusMode === "reserved" ? ASSISTANT_ACTION_SLOT_HEIGHT : undefined}
+          >
+            {trailingStatus}
+          </div>
+        )}
+        {assistantRevealComplete
+          && shouldRenderStandaloneStoppedNotice(stoppedNotice, hasCompletedHistoryDisclosure) && (
+          <div className="flex flex-col items-start gap-2 text-chat text-foreground/60">
+            <span>{stoppedNotice}</span>
+            <div className="w-full border-t border-current/20" />
+          </div>
+        )}
+        {diffPanelKind === "current" ? (
+          <TurnDiffPanel
+            turn={turn}
+            transcript={transcript}
+            workspaceId={selectedWorkspaceId}
+            onOpenFile={onOpenFile}
+            onOpenReviewPane={onOpenTurnChanges}
+            onUndoTurnChanges={undoDisabledReason ? undefined : handleUndoTurnChanges}
+            undoDisabledReason={undoDisabledReason}
+            undoBusy={revertPatchesMutation.isPending}
+          />
+        ) : diffPanelKind === "transcript" ? (
+          <TranscriptPatchTurnDiffPanel
+            turn={turn}
+            transcript={transcript}
+            onOpenFile={onOpenFile}
+          />
+        ) : null}
+        <TurnAssistantActionRow
+          content={tailAssistantCopyContent}
+          showCopyButton={assistantFooterMode === "copy"}
+          reserveSlot={assistantFooterMode === "reserved"}
+          timestampLabel={tailAssistantActionTime}
+          // The permanent copy button is the "session is done" marker
+          // (PRO-119): only the transcript's final completed message carries
+          // it, and it yields back to hover-only the moment a newer turn
+          // takes the frontier.
+          alwaysVisible={isFinalCompletedTurn && isLatestTurn}
+          metMarker={metMarker}
+        />
+      </div>
+    </TurnShell>
+  );
+}
+
+function formatUndoError(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+  return "Could not undo last turn file changes.";
+}
+
+function resolveTurnTrailingStatusForRow({
+  turn,
+  transcript,
+  startedAt,
+  sessionViewState,
+}: {
+  turn: TurnRecord;
+  transcript: TranscriptState;
+  startedAt: string;
+  sessionViewState: SessionViewState;
+}) {
+  return resolveTurnTrailingStatus(
+    startedAt,
+    sessionViewState,
+    latestTransientStatusText(turn, transcript),
+  );
+}

@@ -1,0 +1,253 @@
+import {
+  parseDesktopMode,
+  parseQualificationWorld,
+  parseTargetLane,
+  type DesktopMode,
+  type QualificationWorld,
+  type TargetLane,
+} from "../config/types.js";
+import type { ResultBehavior } from "../runner/result.js";
+
+export interface CliArgs {
+  lane: TargetLane;
+  desktop: DesktopMode;
+  agents: string[] | "all";
+  scenarios: string[] | "all";
+  /** Bound the selector to one shipped qualification world's executable inventory. */
+  qualificationWorld?: QualificationWorld;
+  /**
+   * Optional matrix-cell filter: keep only planned cells whose `cell` dimension
+   * is in this list (e.g. `SH-GATEWAY`). Leaf (non-matrix) scenarios are
+   * unaffected. Used to run a single staged cell of a multi-cell scenario in
+   * isolation — e.g. SELFHOST-QUAL-1's SH-GATEWAY on a run-scoped origin
+   * without the fixed-lane SH-GITHUB-AUTH cell. "all" (default) keeps every
+   * planned cell.
+   */
+  cells: string[] | "all";
+  behavior: ResultBehavior;
+  dryRun: boolean;
+  fileIssues: boolean;
+  outputDir: string;
+  runId?: string;
+  shardId?: string;
+  attempt?: number;
+  /** Path to a CandidateBuildMapV1 JSON file. Required for strict real runs. */
+  candidateBuildMap?: string;
+  /**
+   * Synthesize a `CandidateBuildEvidenceV1` naming the source-built Server
+   * under test (VERSION file + `sha256(source_sha + "/server/<platform>")`)
+   * instead of materializing a candidate build map. For Tier-2 runs, which
+   * boot from source (venv uvicorn) and never build/package artifacts.
+   * Mutually exclusive with `--candidate-build-map`; satisfies the strict
+   * non-null `candidate_build` requirement without candidate-map machinery.
+   */
+  sourceCandidate: boolean;
+  help: boolean;
+}
+
+/** Invalid command-line syntax or an invalid invocation; the process exits 2. */
+export class CliUsageError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CliUsageError";
+  }
+}
+
+const DEFAULTS = {
+  lane: "local" as TargetLane,
+  desktop: "web" as DesktopMode,
+  agents: "all" as string[] | "all",
+  scenarios: "all" as string[] | "all",
+  cells: "all" as string[] | "all",
+  dryRun: false,
+  fileIssues: false,
+  sourceCandidate: false,
+  // Relative to this package's own cwd (`tests/release/`), which is what
+  // both `make release-e2e` and a direct `pnpm exec tsx src/cli/run.ts` use
+  // — found running this for real 2026-07-08: the previous default
+  // ("tests/release/.output") double-nested into
+  // tests/release/tests/release/.output instead.
+  outputDir: ".output",
+};
+
+/**
+ * Manual argv parser, matching this repo's existing script convention
+ * (see scripts/build-template.mjs) rather than adding a CLI-parsing
+ * dependency for a handful of flags. All syntax and invocation validation
+ * happens here, before any identity, setup, or scenario work.
+ */
+export function parseArgs(argv: readonly string[]): CliArgs {
+  const args: Omit<CliArgs, "behavior"> & { behavior?: ResultBehavior } = { ...DEFAULTS, help: false };
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    switch (arg) {
+      case "--lane":
+        args.lane = wrapUsage(() => parseTargetLane(requireValue(argv, i, arg)));
+        i += 1;
+        break;
+      case "--desktop":
+        args.desktop = wrapUsage(() => parseDesktopMode(requireValue(argv, i, arg)));
+        i += 1;
+        break;
+      case "--agents":
+        args.agents = parseListFlag(arg, requireValue(argv, i, arg));
+        i += 1;
+        break;
+      case "--scenarios":
+      case "--only":
+        // --only is sugar for --scenarios (per the tier-3 build task: "runner
+        // should support --only <id>"); both set the same field.
+        args.scenarios = parseListFlag(arg, requireValue(argv, i, arg));
+        i += 1;
+        break;
+      case "--qualification-world":
+        args.qualificationWorld = wrapUsage(() => parseQualificationWorld(requireValue(argv, i, arg)));
+        i += 1;
+        break;
+      case "--cells":
+        args.cells = parseListFlag(arg, requireValue(argv, i, arg));
+        i += 1;
+        break;
+      case "--behavior":
+        args.behavior = parseBehavior(requireValue(argv, i, arg));
+        i += 1;
+        break;
+      case "--run-id":
+        args.runId = requireValue(argv, i, arg);
+        i += 1;
+        break;
+      case "--shard-id":
+        args.shardId = requireValue(argv, i, arg);
+        i += 1;
+        break;
+      case "--attempt":
+        args.attempt = parseAttempt(requireValue(argv, i, arg));
+        i += 1;
+        break;
+      case "--candidate-build-map":
+        args.candidateBuildMap = requireValue(argv, i, arg);
+        i += 1;
+        break;
+      case "--source-candidate":
+        args.sourceCandidate = true;
+        break;
+      case "--dry-run":
+        args.dryRun = true;
+        break;
+      case "--file-issues":
+        args.fileIssues = true;
+        break;
+      case "--output-dir":
+        args.outputDir = requireValue(argv, i, arg);
+        i += 1;
+        break;
+      case "--help":
+      case "-h":
+        args.help = true;
+        break;
+      default:
+        throw new CliUsageError(`Unknown flag: ${arg}. Run with --help for usage.`);
+    }
+  }
+
+  if (args.help) {
+    return { ...args, behavior: args.behavior ?? "diagnostic" };
+  }
+  if (args.behavior === undefined) {
+    throw new CliUsageError("--behavior <diagnostic|strict> is required for direct command use.");
+  }
+  if (args.behavior === "strict" && args.dryRun) {
+    throw new CliUsageError("--behavior strict cannot be combined with --dry-run.");
+  }
+  if (args.candidateBuildMap !== undefined && args.sourceCandidate) {
+    throw new CliUsageError("--candidate-build-map and --source-candidate are mutually exclusive.");
+  }
+  // Strict real runs are fail-closed on artifact identity: without a
+  // candidate build map (or the source-candidate synthesis for from-source
+  // runs) the run cannot say which bytes it qualified.
+  if (args.behavior === "strict" && args.candidateBuildMap === undefined && !args.sourceCandidate) {
+    throw new CliUsageError("--candidate-build-map <path> (or --source-candidate) is required for strict runs.");
+  }
+  return { ...args, behavior: args.behavior };
+}
+
+function parseBehavior(value: string): ResultBehavior {
+  if (value === "diagnostic" || value === "strict") {
+    return value;
+  }
+  throw new CliUsageError(`--behavior must be "diagnostic" or "strict", got "${value}".`);
+}
+
+function parseAttempt(value: string): number {
+  const attempt = Number(value);
+  if (!Number.isInteger(attempt) || attempt < 1 || !/^\d+$/.test(value)) {
+    throw new CliUsageError(`--attempt must be a positive integer, got "${value}".`);
+  }
+  return attempt;
+}
+
+function parseListFlag(flag: string, value: string): string[] | "all" {
+  const entries = value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  if (entries.length === 0) {
+    throw new CliUsageError(`${flag} received an empty list.`);
+  }
+  if (entries.includes("all")) {
+    if (entries.length > 1) {
+      throw new CliUsageError(`${flag} cannot mix "all" with named values.`);
+    }
+    return "all";
+  }
+  const duplicates = entries.filter((entry, index) => entries.indexOf(entry) !== index);
+  if (duplicates.length > 0) {
+    throw new CliUsageError(`${flag} has duplicate value(s): ${[...new Set(duplicates)].join(", ")}.`);
+  }
+  return entries;
+}
+
+function requireValue(argv: readonly string[], index: number, flag: string): string {
+  const value = argv[index + 1];
+  if (value === undefined || value.startsWith("--")) {
+    throw new CliUsageError(`${flag} requires a value`);
+  }
+  return value;
+}
+
+function wrapUsage<T>(parse: () => T): T {
+  try {
+    return parse();
+  } catch (error) {
+    throw new CliUsageError(error instanceof Error ? error.message : String(error));
+  }
+}
+
+export const HELP_TEXT = `
+Usage: pnpm exec tsx src/cli/run.ts --behavior <diagnostic|strict> [flags]
+   or: make release-e2e BEHAVIOR=diagnostic|strict LANE=local|staging DESKTOP=web|native AGENTS=all SCENARIOS=all DRY_RUN=1
+
+Flags:
+  --behavior <diagnostic|strict>  Required. Diagnostic tolerates blocked/expected-fail; strict is a fail-closed gate.
+  --lane <local|staging|cloud|selfhost>  Which target the runtime lanes talk to (default: local); "cloud" was the
+                             run-scoped managed-cloud candidate API, deleted with the cloud sandbox stack
+                             (cull part 2; the flag value remains for compatibility); "selfhost" is the
+                             world-backed self-host lane (PR 7, provisions its own EC2 control plane)
+  --desktop <web|native>     Desktop lane to drive (default: web)
+  --agents <list|all>        Comma-separated harness kinds, or "all" (default: all)
+  --scenarios <list|all>     Comma-separated scenario ids, or "all" (default: all)
+  --qualification-world <local>  Bound selection to the shipped executable inventory for that world
+  --only <id>                Alias for --scenarios with a single id (e.g. --only T3-WT-1)
+  --cells <list|all>         Narrow MATRIX cells to those whose 'cell' dimension is listed (e.g. SH-GATEWAY);
+                             leaf (non-matrix) cells of a selected scenario are always kept; "all" = no filter (default: all)
+  --dry-run                  Plan every selected test (calls plan(), never run()); diagnostic only
+  --file-issues              File one GitHub issue per distinct failure via \`gh\` (default: off)
+  --output-dir <path>        Where the combined report is written, relative to tests/release/ (default: .output)
+  --run-id <safe-id>         Optional run identity override
+  --shard-id <safe-id>       Optional shard identity override
+  --attempt <n>              Optional attempt override (positive integer)
+  --candidate-build-map <path>  CandidateBuildMapV1 JSON (required for strict; optional and recorded when supplied)
+  --source-candidate         Synthesize candidate_build for a from-source run (Tier-2); exclusive with --candidate-build-map
+  --help                     Show this text
+`;

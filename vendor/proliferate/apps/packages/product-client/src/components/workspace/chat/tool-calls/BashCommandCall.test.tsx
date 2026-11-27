@@ -1,0 +1,34 @@
+// @vitest-environment jsdom
+
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import { BashCommandCall } from "#product/components/workspace/chat/tool-calls/BashCommandCall";
+
+afterEach(() => {
+  cleanup();
+});
+
+describe("BashCommandCall", () => {
+  it("keeps command output hidden until the row is clicked", () => {
+    render(
+      <BashCommandCall
+        command="pnpm test"
+        output="test output"
+        status="running"
+        duration="for 3s"
+      />,
+    );
+
+    const row = screen.getByRole("button", { name: /Running command pnpm test/i });
+    expect(row).toBeTruthy();
+    expect(row.className).toContain("leading-normal");
+    expect(row.firstElementChild?.className).toContain("icon-paired");
+    expect(row.firstElementChild?.innerHTML).toContain("[&amp;_svg]:size-full");
+    expect(row.firstElementChild?.innerHTML).not.toContain("text-xs");
+    expect(screen.queryByText("test output")).toBeNull();
+
+    fireEvent.click(row);
+
+    expect(screen.getByText("test output")).toBeTruthy();
+  });
+});

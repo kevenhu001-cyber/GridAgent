@@ -1,0 +1,42 @@
+{
+  "name": "@anyharness/sdk",
+  "version": "0.4.27",
+  "description": "TypeScript SDK for the AnyHarness runtime API",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "generated/openapi.json"
+  ],
+  "scripts": {
+    "generate:openapi": "node ../../scripts/generate-anyharness-openapi.mjs",
+    "generate:types": "npx openapi-typescript generated/openapi.json -o src/generated/openapi.ts",
+    "generate": "npm run generate:openapi && npm run generate:types",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "typecheck:contracts": "tsc -p tsconfig.type-tests.json",
+    "test": "npm run typecheck:contracts && vitest run",
+    "test:watch": "vitest"
+  },
+  "license": "AGPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/proliferate-ai/proliferate",
+    "directory": "anyharness/sdk"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.13.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.7"
+  }
+}

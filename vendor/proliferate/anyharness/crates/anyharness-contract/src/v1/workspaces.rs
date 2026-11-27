@@ -1,0 +1,401 @@
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+
+use super::OriginContext;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceExecutionPhase {
+    Running,
+    AwaitingInteraction,
+    Idle,
+    Errored,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceExecutionSummary {
+    pub phase: WorkspaceExecutionPhase,
+    pub total_session_count: usize,
+    pub live_session_count: usize,
+    pub running_count: usize,
+    pub awaiting_interaction_count: usize,
+    pub idle_count: usize,
+    pub errored_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceKind {
+    Worktree,
+    Local,
+}
+
+/// Whether a workspace can currently be operated on. Computed at read time
+/// from the on-disk checkout, so the frontend can detect a deleted checkout on
+/// workspace load/select rather than only when a session send fails.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceAvailability {
+    Available,
+    WorkspaceDirectoryMissing,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceSurface {
+    Standard,
+    Cowork,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceLifecycleState {
+    Active,
+    Archived,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum WorkspaceCreatorContext {
+    Human {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+    },
+    Automation {
+        #[serde(rename = "automationId")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        automation_id: Option<String>,
+        #[serde(rename = "automationRunId")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        automation_run_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+    },
+    Agent {
+        #[serde(rename = "sourceSessionId")]
+        source_session_id: String,
+        #[serde(rename = "sourceSessionWorkspaceId")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_session_workspace_id: Option<String>,
+        #[serde(rename = "sessionLinkId")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_link_id: Option<String>,
+        #[serde(rename = "sourceWorkspaceId")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_workspace_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+    },
+    /// An isolated workspace materialized for one Workflow run (spec
+    /// `workflow-workspace-placement`). Machine provenance that both names the
+    /// owning run and excludes the workspace from generic worktree retention.
+    Workflow {
+        #[serde(rename = "runId")]
+        run_id: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct Workspace {
+    pub id: String,
+    pub kind: WorkspaceKind,
+    pub repo_root_id: String,
+    pub path: String,
+    pub surface: WorkspaceSurface,
+    pub availability: WorkspaceAvailability,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub lifecycle_state: WorkspaceLifecycleState,
+    /// When this workspace was archived; the archived settings list orders by
+    /// it. Additive-optional, so a client that predates archiving reads the
+    /// same body it always did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archived_at: Option<String>,
+    /// HEAD at snapshot time. `None` on an archived row means "never
+    /// snapshotted" (an absorbed pre-archiving row), which is a different
+    /// restore shape, not a missing value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archived_head_sha: Option<String>,
+    /// The branch HEAD actually held at snapshot time. `None` alongside a
+    /// present `archived_head_sha` is the detached-at-archive marker.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archived_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_summary: Option<WorkspaceExecutionSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<OriginContext>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub creator_context: Option<WorkspaceCreatorContext>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceRetireBlockerCode {
+    UnsupportedWorkspace,
+    WorkspaceAccessBlocked,
+    DirtyWorkingTree,
+    ConflictedFiles,
+    ActiveGitOperation,
+    LiveSession,
+    PendingPrompt,
+    PendingInteraction,
+    ActiveTerminal,
+    RunningCommand,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceRetireBlockerSeverity {
+    Blocking,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceRetireBlocker {
+    pub code: WorkspaceRetireBlockerCode,
+    pub message: String,
+    pub severity: WorkspaceRetireBlockerSeverity,
+    pub retryable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command_run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paths: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation: Option<crate::v1::git::GitOperation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspacePurgeOutcome {
+    Deleted,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspacePurgeResponse {
+    pub outcome: WorkspacePurgeOutcome,
+    pub already_deleted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveWorkspaceResponse {
+    pub repo_root: crate::v1::RepoRoot,
+    pub workspace: Workspace,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateWorkspaceDisplayNameRequest {
+    /// New display name. `null` or an empty string clears the override and
+    /// restores the default branch- or repo-derived label.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveWorkspaceFromPathRequest {
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<OriginContext>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub creator_context: Option<WorkspaceCreatorContext>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateWorkspaceRequest {
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<OriginContext>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub creator_context: Option<WorkspaceCreatorContext>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorktreeNameConflictPolicy {
+    Fail,
+    SuffixPath,
+    SuffixPathAndBranch,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorktreeCheckoutMode {
+    NewBranch,
+    DetachedRef,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateWorktreeWorkspaceRequest {
+    pub repo_root_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_path: Option<String>,
+    pub new_branch_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checkout_mode: Option<WorktreeCheckoutMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name_conflict_policy: Option<WorktreeNameConflictPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub setup_script: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<OriginContext>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub creator_context: Option<WorkspaceCreatorContext>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SetupScriptStatus {
+    Queued,
+    Running,
+    Succeeded,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SetupScriptExecution {
+    pub command: String,
+    pub status: SetupScriptStatus,
+    pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
+    pub duration_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum WorktreeBaseFetch {
+    Fetched,
+    NoRemote,
+    Failed { message: String },
+    TimedOut,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateWorktreeWorkspaceResponse {
+    pub workspace: Workspace,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub setup_script: Option<SetupScriptExecution>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_fetch: Option<WorktreeBaseFetch>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RestoreWorktreeWorkspaceOutcome {
+    Restored,
+    AlreadyPresent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreWorktreeWorkspaceResponse {
+    pub workspace: Workspace,
+    pub outcome: RestoreWorktreeWorkspaceOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SetupHintCategory {
+    BuildTool,
+    SecretSync,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SetupHint {
+    pub id: String,
+    pub label: String,
+    pub suggested_command: String,
+    pub detected_file: String,
+    pub category: SetupHintCategory,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DetectProjectSetupResponse {
+    pub hints: Vec<SetupHint>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GetSetupStatusResponse {
+    pub status: SetupScriptStatus,
+    pub command: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stdout: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stderr: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command_run_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct StartWorkspaceSetupRequest {
+    pub command: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_ref: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WorktreeBaseFetch;
+
+    #[test]
+    fn worktree_base_fetch_serializes_camel_case_variants() {
+        assert_eq!(
+            serde_json::to_value(WorktreeBaseFetch::Fetched).expect("serialize fetched"),
+            serde_json::json!("fetched")
+        );
+        assert_eq!(
+            serde_json::to_value(WorktreeBaseFetch::NoRemote).expect("serialize no remote"),
+            serde_json::json!("noRemote")
+        );
+        assert_eq!(
+            serde_json::to_value(WorktreeBaseFetch::Failed {
+                message: "offline".to_string(),
+            })
+            .expect("serialize failed"),
+            serde_json::json!({ "failed": { "message": "offline" } })
+        );
+        assert_eq!(
+            serde_json::to_value(WorktreeBaseFetch::TimedOut).expect("serialize timed out"),
+            serde_json::json!("timedOut")
+        );
+    }
+}

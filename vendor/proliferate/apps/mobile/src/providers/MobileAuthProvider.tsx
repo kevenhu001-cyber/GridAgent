@@ -1,0 +1,377 @@
+import {
+  createContext,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { Linking, Platform } from "react-native";
+
+import {
+  loginMobileWithPassword,
+  refreshMobileSession,
+  type AuthProviderName,
+  type AuthSessionResponse,
+  type AuthUser,
+} from "@proliferate/cloud-sdk";
+
+import {
+  completeMobileWebOAuthFlow,
+  runMobileAppleFlow,
+  runMobileOAuthFlow,
+} from "../lib/access/cloud/auth/mobile-auth-flow";
+import { createMobileCloudClient } from "../lib/access/cloud/client";
+import {
+  deleteSecureMobileStorageItem,
+  getSecureMobileStorageItem,
+  setSecureMobileStorageItem,
+} from "../lib/access/mobile-storage";
+import { mobileEnv } from "../config/env";
+
+const ACCESS_TOKEN_KEY = "proliferate.mobile.accessToken";
+const REFRESH_TOKEN_KEY = "proliferate.mobile.refreshToken";
+const SIGNED_OUT_KEY = "proliferate.mobile.signedOutAt";
+const DEV_REFRESH_TOKEN_PARAM = "proliferateDevRefreshToken";
+
+export type MobileAuthState = "bootstrapping" | "signed_out" | "needs_github" | "active";
+export type MobileAuthAction = AuthProviderName | "github_link" | "password" | null;
+
+interface MobileAuthContextValue {
+  authState: MobileAuthState;
+  accessToken: string | null;
+  user: AuthUser | null;
+  loadingAction: MobileAuthAction;
+  error: string | null;
+  signInWithProvider: (provider: AuthProviderName) => Promise<void>;
+  signInWithPassword: (email: string, password: string) => Promise<void>;
+  connectGitHub: () => Promise<void>;
+  signOut: () => Promise<void>;
+  clearError: () => void;
+}
+
+const MobileAuthContext = createContext<MobileAuthContextValue | null>(null);
+
+export function MobileAuthProvider({ children }: { children: ReactNode }) {
+  const [authState, setAuthState] = useState<MobileAuthState>("bootstrapping");
+  const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [loadingAction, setLoadingAction] = useState<MobileAuthAction>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    bootstrapSession()
+      .then(async (session) => {
+        if (!cancelled && session) {
+          await applySession(session, setAccessToken, setUser, setAuthState);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          void clearStoredSession();
+          setAccessToken(null);
+          setUser(null);
+          setAuthState("signed_out");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setAuthState((state) => (state === "bootstrapping" ? "signed_out" : state));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS === "web" || !isDevRuntime()) {
+      return;
+    }
+
+    const applyDevRefreshToken = async (url: string | null) => {
+      const refreshToken = readDevRefreshTokenFromUrl(url);
+      if (!refreshToken) {
+        return;
+      }
+      setError(null);
+      try {
+        await deleteSecureMobileStorageItem(SIGNED_OUT_KEY).catch(() => undefined);
+        const client = createMobileCloudClient(mobileEnv.apiBaseUrl, null);
+        const session = await refreshMobileSession(
+          {
+            refreshToken,
+            grantType: "refresh_token",
+          },
+          client,
+        );
+        await applySession(session, setAccessToken, setUser, setAuthState);
+      } catch (authError) {
+        setError(errorMessage(authError));
+      }
+    };
+
+    const subscription = Linking.addEventListener("url", ({ url }) => {
+      void applyDevRefreshToken(url);
+    });
+    void Linking.getInitialURL().then((url) => void applyDevRefreshToken(url));
+    return () => subscription.remove();
+  }, []);
+
+  const value = useMemo<MobileAuthContextValue>(
+    () => ({
+      authState,
+      accessToken,
+      user,
+      loadingAction,
+      error,
+      clearError() {
+        setError(null);
+      },
+      async signInWithProvider(provider) {
+        if (loadingAction) {
+          return;
+        }
+        setError(null);
+        setLoadingAction(provider);
+        try {
+          const session =
+            provider === "apple"
+              ? await runMobileAppleFlow({})
+              : await runMobileOAuthFlow({ provider });
+          await applySession(session, setAccessToken, setUser, setAuthState);
+        } catch (authError) {
+          setError(errorMessage(authError));
+        } finally {
+          setLoadingAction(null);
+        }
+      },
+      async signInWithPassword(email, password) {
+        if (loadingAction) {
+          return;
+        }
+        setError(null);
+        setLoadingAction("password");
+        try {
+          const client = createMobileCloudClient(mobileEnv.apiBaseUrl, null);
+          const session = await loginMobileWithPassword(
+            {
+              email: email.trim(),
+              password,
+            },
+            client,
+          );
+          await applySession(session, setAccessToken, setUser, setAuthState);
+        } catch (authError) {
+          setError(errorMessage(authError));
+        } finally {
+          setLoadingAction(null);
+        }
+      },
+      async connectGitHub() {
+        if (!accessToken || loadingAction) {
+          return;
+        }
+        setError(null);
+        setLoadingAction("github_link");
+        try {
+          const session = await runMobileOAuthFlow({
+            provider: "github",
+            purpose: "required_github_link",
+            accessToken,
+          });
+          await applySession(session, setAccessToken, setUser, setAuthState);
+        } catch (authError) {
+          setError(errorMessage(authError));
+        } finally {
+          setLoadingAction(null);
+        }
+      },
+      async signOut() {
+        setLoadingAction(null);
+        setError(null);
+        let tombstoneWritten = false;
+        try {
+          await setSecureMobileStorageItem(SIGNED_OUT_KEY, new Date().toISOString());
+          tombstoneWritten = true;
+          await clearStoredSession();
+        } catch (signOutError) {
+          if (!tombstoneWritten) {
+            setError(errorMessage(signOutError));
+            return;
+          }
+        }
+        setAccessToken(null);
+        setUser(null);
+        setAuthState("signed_out");
+      },
+    }),
+    [accessToken, authState, error, loadingAction, user],
+  );
+
+  return (
+    <MobileAuthContext.Provider value={value}>
+      {children}
+    </MobileAuthContext.Provider>
+  );
+}
+
+export function useMobileAuth() {
+  const value = useContext(MobileAuthContext);
+  if (!value) {
+    throw new Error("useMobileAuth must be used within MobileAuthProvider.");
+  }
+  return value;
+}
+
+async function bootstrapSession(): Promise<AuthSessionResponse | null> {
+  console.log("[DEV-AUTH] bootstrap start, __DEV__=", typeof __DEV__ !== "undefined" && __DEV__, "platform=", Platform.OS, "apiBaseUrl=", mobileEnv.apiBaseUrl, "hasDevToken=", Boolean(mobileEnv.devRefreshToken));
+  const mobileWebAuthSession = await completeMobileWebOAuthFlow();
+  if (mobileWebAuthSession) {
+    console.log("[DEV-AUTH] using mobileWebAuthSession");
+    return mobileWebAuthSession;
+  }
+
+  const devRefreshTokenFromLocation = readDevWebRefreshTokenFromLocation();
+  const signedOut = await getSecureMobileStorageItem(SIGNED_OUT_KEY);
+  console.log("[DEV-AUTH] signedOutKey=", Boolean(signedOut), "devRefreshTokenFromLocation=", Boolean(devRefreshTokenFromLocation));
+  if (signedOut) {
+    if (devRefreshTokenFromLocation) {
+      await deleteSecureMobileStorageItem(SIGNED_OUT_KEY).catch(() => undefined);
+    } else {
+      console.log("[DEV-AUTH] returning null because signedOutKey is set");
+      await clearStoredSession().catch(() => undefined);
+      return null;
+    }
+  }
+  const devRefreshToken = devRefreshTokenFromLocation ?? mobileEnv.devRefreshToken;
+  console.log("[DEV-AUTH] devRefreshToken set?", Boolean(devRefreshToken), "isDevRuntime=", isDevRuntime());
+  if (devRefreshTokenFromLocation) {
+    await deleteSecureMobileStorageItem(SIGNED_OUT_KEY).catch(() => undefined);
+  } else if (devRefreshToken && !isDevRuntime()) {
+    console.log("[DEV-AUTH] clearing because devRefreshToken set but not dev runtime");
+    await clearStoredSession().catch(() => undefined);
+    return null;
+  }
+  const refreshToken = devRefreshToken ?? (await getSecureMobileStorageItem(REFRESH_TOKEN_KEY));
+  if (!refreshToken) {
+    console.log("[DEV-AUTH] no refresh token, returning null");
+    return null;
+  }
+  console.log("[DEV-AUTH] calling refreshMobileSession with token len=", refreshToken.length);
+  const client = createMobileCloudClient(mobileEnv.apiBaseUrl, null);
+  try {
+    const result = await refreshMobileSession(
+      {
+        refreshToken,
+        grantType: "refresh_token",
+      },
+      client,
+    );
+    console.log("[DEV-AUTH] refreshMobileSession success, user=", result?.user?.email);
+    return result;
+  } catch (err) {
+    console.log("[DEV-AUTH] refreshMobileSession FAILED:", err instanceof Error ? err.message : String(err));
+    throw err;
+  }
+}
+
+function isDevRuntime(): boolean {
+  return typeof __DEV__ !== "undefined" && __DEV__;
+}
+
+function readDevWebRefreshTokenFromLocation(): string | null {
+  const webWindow = typeof window !== "undefined" ? window : undefined;
+  const globalScope = typeof globalThis !== "undefined"
+    ? globalThis as {
+      history?: { replaceState?: (data: unknown, unused: string, url?: string) => void };
+      location?: {
+        hash: string;
+        hostname: string;
+        pathname: string;
+        search: string;
+      };
+    }
+    : undefined;
+  const location = webWindow?.location ?? globalScope?.location;
+  const history = webWindow?.history ?? globalScope?.history;
+  if (
+    Platform.OS !== "web"
+    || !location
+    || !isLocalDevWebHost(location.hostname)
+  ) {
+    return null;
+  }
+
+  const hash = location.hash.startsWith("#") ? location.hash.slice(1) : location.hash;
+  const params = new URLSearchParams(hash.startsWith("?") ? hash.slice(1) : hash);
+  const refreshToken = params.get(DEV_REFRESH_TOKEN_PARAM);
+  if (!refreshToken) {
+    return null;
+  }
+
+  params.delete(DEV_REFRESH_TOKEN_PARAM);
+  const nextHash = params.toString();
+  const nextUrl = `${location.pathname}${location.search}${nextHash ? `#${nextHash}` : ""}`;
+  if (history?.replaceState) {
+    history.replaceState(null, "", nextUrl);
+  } else {
+    try {
+      location.hash = nextHash ? `#${nextHash}` : "";
+    } catch {
+      // Some embedded web harnesses expose a read-only Location fragment.
+    }
+  }
+  return refreshToken;
+}
+
+function isLocalDevWebHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+function readDevRefreshTokenFromUrl(url: string | null): string | null {
+  if (!url) {
+    return null;
+  }
+  try {
+    const parsed = new URL(url);
+    return parsed.searchParams.get(DEV_REFRESH_TOKEN_PARAM)
+      ?? new URLSearchParams(parsed.hash.startsWith("#") ? parsed.hash.slice(1) : parsed.hash)
+        .get(DEV_REFRESH_TOKEN_PARAM);
+  } catch {
+    return null;
+  }
+}
+
+async function applySession(
+  session: AuthSessionResponse,
+  setAccessToken: (token: string | null) => void,
+  setUser: (user: AuthUser | null) => void,
+  setAuthState: (state: MobileAuthState) => void,
+): Promise<void> {
+  setAccessToken(session.accessToken);
+  setUser(session.user);
+  await Promise.all([
+    setSecureMobileStorageItem(ACCESS_TOKEN_KEY, session.accessToken),
+    deleteSecureMobileStorageItem(SIGNED_OUT_KEY),
+  ]);
+  if (session.refreshToken) {
+    await setSecureMobileStorageItem(REFRESH_TOKEN_KEY, session.refreshToken);
+  }
+  setAuthState(session.readiness.productReady ? "active" : "needs_github");
+}
+
+async function clearStoredSession(): Promise<void> {
+  await Promise.all([
+    deleteSecureMobileStorageItem(ACCESS_TOKEN_KEY),
+    deleteSecureMobileStorageItem(REFRESH_TOKEN_KEY),
+  ]);
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  return "Authentication could not be completed.";
+}

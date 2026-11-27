@@ -1,0 +1,165 @@
+import { useShortcutHandler } from "#product/hooks/shortcuts/lifecycle/use-shortcut-handler";
+import { getFocusZone, isRightPanelFocusZone } from "#product/lib/domain/focus-zone";
+import {
+  useContentSearchStore,
+  type ContentSearchSurface,
+} from "#product/stores/search/content-search-store";
+import {
+  requestRightPanelCloseActiveTab,
+  requestRightPanelRelativeTab,
+  requestRightPanelTabByIndex,
+} from "#product/lib/workflows/workspaces/right-panel-shortcut-requests";
+import type { WorkspaceTabActions } from "#product/hooks/workspaces/workflows/tabs/use-workspace-tab-actions";
+
+type WorkspaceContentShortcutActions = Pick<
+  WorkspaceTabActions,
+  | "activateRelativeTab"
+  | "activateTabByShortcutIndex"
+  | "closeActiveWorkspaceTab"
+  | "openNewSessionTab"
+  | "restoreLastDismissedTab"
+>;
+
+export function useWorkspaceContentShortcuts(
+  actions: WorkspaceContentShortcutActions,
+  options: { enabled?: boolean } = {},
+): void {
+  const openContentSearch = useContentSearchStore((state) => state.openSearch);
+  const enabled = options.enabled ?? true;
+  const {
+    activateRelativeTab,
+    activateTabByShortcutIndex,
+    closeActiveWorkspaceTab,
+    openNewSessionTab,
+    restoreLastDismissedTab,
+  } = actions;
+
+  useShortcutHandler("workspace.previous-tab", () => {
+    if (isRightPanelFocusZone(getFocusZone())) {
+      const handled = requestRightPanelRelativeTab(-1);
+      if (handled) {
+        return true;
+      }
+    }
+
+    return activateRelativeTab(-1);
+  }, { enabled });
+
+  useShortcutHandler("workspace.next-tab", () => {
+    if (isRightPanelFocusZone(getFocusZone())) {
+      const handled = requestRightPanelRelativeTab(1);
+      if (handled) {
+        return true;
+      }
+    }
+
+    return activateRelativeTab(1);
+  }, { enabled });
+
+  useShortcutHandler("workspace.restore-tab", () => {
+    return restoreLastDismissedTab();
+  }, { enabled });
+
+  useShortcutHandler("workspace.tab-by-index", ({ digit }) => {
+    if (!digit) {
+      return false;
+    }
+
+    if (isRightPanelFocusZone(getFocusZone())) {
+      const handled = requestRightPanelTabByIndex(digit);
+      if (handled) {
+        return true;
+      }
+    }
+
+    return activateTabByShortcutIndex(String(digit));
+  }, { enabled });
+
+  useShortcutHandler("workspace.new-session-tab", () => {
+    return openNewSessionTab();
+  }, { enabled });
+
+  useShortcutHandler("workspace.close-active-tab", () => {
+    if (isRightPanelFocusZone(getFocusZone())) {
+      const handled = requestRightPanelCloseActiveTab();
+      if (handled) {
+        return true;
+      }
+    }
+
+    return closeActiveWorkspaceTab() !== "noop";
+  }, { enabled });
+
+  useShortcutHandler("workspace.find-content", () => {
+    const activeElement = document.activeElement;
+    if (activeElement?.closest("[data-content-search-overlay]")) {
+      // Focus is already in the pill: Cmd+F cycles Chat <-> Diff when review
+      // search is available, rather than reopening/no-opping. On `file`,
+      // cycling must never fire — it stays on file and just reselects/
+      // refocuses the input.
+      const state = useContentSearchStore.getState();
+      if (state.surface !== "file" && state.surfaceAvailability.review) {
+        openContentSearch(state.surface === "review" ? "chat" : "review");
+      } else {
+        focusContentSearchInput();
+      }
+      return true;
+    }
+
+    const surface = resolveContentSearchSurfaceForShortcut();
+    if (!surface) {
+      return false;
+    }
+
+    openContentSearch(surface);
+    return true;
+  }, { enabled });
+}
+
+function focusContentSearchInput(): void {
+  const input = document.getElementById("content-search-input");
+  if (input instanceof HTMLInputElement) {
+    input.select();
+  }
+}
+
+function resolveContentSearchSurfaceForShortcut(): ContentSearchSurface | null {
+  const activeElement = document.activeElement;
+  // The docked file tree renders inside `[data-file-viewer-frame]`, but it is
+  // not the file-search owner: focus there is not the file surface, and it
+  // must not fall into the right-panel branch below either (that branch
+  // would still find the ancestor frame and re-route to `file`). It follows
+  // the plain global fallback instead — chat, since the dock can never also
+  // be a review document or the terminal.
+  if (activeElement?.closest("[data-docked-file-tree]")) {
+    return "chat";
+  }
+  // File availability derives from the settled read (`canFindInFile`,
+  // registered by `FileViewerFrame`): a `fileDiff`/binary/too-large/loading
+  // target reports unavailable, and the shortcut must not open file search
+  // on it — it declines rather than opening an ineligible surface.
+  const fileAvailable = useContentSearchStore.getState().surfaceAvailability.file;
+  if (activeElement?.closest("[data-file-viewer-frame]")) {
+    return fileAvailable ? "file" : null;
+  }
+  if (activeElement?.closest("[data-git-review-document]")) {
+    return "review";
+  }
+
+  const focusZone = getFocusZone();
+  if (focusZone === "right-panel") {
+    if (fileAvailable && document.querySelector("[data-file-viewer-frame]")) {
+      return "file";
+    }
+    if (document.querySelector("[data-git-review-document]")) {
+      return "review";
+    }
+    return null;
+  }
+
+  if (focusZone === "terminal") {
+    return null;
+  }
+
+  return "chat";
+}

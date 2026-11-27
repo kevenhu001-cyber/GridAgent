@@ -1,0 +1,331 @@
+import { useState, type ReactNode } from "react";
+import { Pause, Pencil, Play, Trash, X } from "#product/primitives/icons/core";
+import { Target } from "#product/primitives/icons/product";
+import { ChevronUp, CircleAlert, CircleCheck } from "#product/primitives/icons/status";
+import {
+  deriveGoalBarState,
+  goalStatusLabel,
+  type GoalCapabilities,
+  type GoalWire,
+} from "#product/domain/activity/goal";
+import { Button } from "#product/primitives/Button";
+import { PopoverButton } from "#product/primitives/PopoverButton";
+import { statusDotToneTextClass } from "#product/primitives/StatusDot";
+import { Tooltip } from "#product/primitives/Tooltip";
+import { twMerge } from "#product/primitives/utils/tw-merge";
+import { ComposerPopoverSurface } from "../chat/composer/ComposerPopoverSurface";
+import { GoalBarIconAction } from "./GoalBarIconAction";
+import { GoalBarObjectiveEditor } from "./GoalBarObjectiveEditor";
+import { GoalBarResultPopover } from "./GoalBarResultPopover";
+
+const PAUSE_UNSUPPORTED_TOOLTIP = "Not supported by this agent";
+const SET_GOAL_PLACEHOLDER = "Describe the goal to pursue";
+
+export interface GoalBarProps {
+  /** The mirrored native goal; null when no goal exists. */
+  goal: GoalWire | null;
+  capabilities: GoalCapabilities;
+  /** Empty-state create mode: renders the bar as an editor with no goal set. */
+  composing?: boolean;
+  /** Playground/dev: start in the in-place edit state. */
+  defaultEditing?: boolean;
+  /**
+   * A mutation is in flight awaiting the native round-trip. The bar keeps
+   * showing the last confirmed mirror state — never an optimistic one — and
+   * holds its controls until the write lands.
+   */
+  pendingWrite?: boolean;
+  /** Commit a new/edited objective (native set; also used from create mode). */
+  onEdit: (objective: string) => void;
+  onPause: () => void;
+  onResume: () => void;
+  onClear: () => void;
+  /** Dismiss the sticky met/blocked/failed result. */
+  onDismiss: () => void;
+  /** Leave create mode without setting a goal. */
+  onCancelCompose?: () => void;
+  /**
+   * The sticky result popover's "Set new goal" footer action: opens the
+   * bar's compose/edit state over the result (same blank editor as the
+   * empty-state "set a goal" affordance). Omitted hides that action.
+   */
+  onSetNewGoal?: () => void;
+  /** Playground/dev: start the sticky result's expand popover already open. */
+  defaultResultExpanded?: boolean;
+}
+
+/**
+ * Slim goal bar docked directly above the composer surface. Ever-present
+ * while goal state is live (`◎ Pursuing goal <objective>` + pause/edit/
+ * delete), a sticky result on met/blocked/failed, hidden otherwise. The
+ * sticky result's collapsed line shows the OBJECTIVE (never the raw met/
+ * blocked reason — evaluator reasons quote tool output and truncate
+ * uselessly) and expands to a popover with the full objective, full reason,
+ * and usage stats (live feedback 2026-07-03; session-activity-architecture
+ * §Locked decisions #5). Display + controls only — mutations round-trip
+ * through the callbacks.
+ */
+export function GoalBar({
+  goal,
+  capabilities,
+  composing = false,
+  defaultEditing = false,
+  defaultResultExpanded = false,
+  pendingWrite = false,
+  onEdit,
+  onPause,
+  onResume,
+  onClear,
+  onDismiss,
+  onCancelCompose,
+  onSetNewGoal,
+}: GoalBarProps) {
+  const [editing, setEditing] = useState(defaultEditing);
+  // Forces the result popover open on mount (playground/dev only); cleared
+  // the moment it's genuinely closed so it behaves like ordinary
+  // click-to-toggle state afterward — same "seed, then free" shape as
+  // `defaultEditing`.
+  const [resultForceOpen, setResultForceOpen] = useState(defaultResultExpanded);
+  const state = deriveGoalBarState(goal);
+
+  // Goal content only renders when the capability supports it AND there is
+  // live/composing goal state. With no chips slot left to keep the bar alive
+  // (retired with `ActivityChips` — HANDOFF-background-work.md), no goal
+  // means no bar: this is a replacement of the old behavior, not a variant.
+  const goalVisible = capabilities.supported && (state.kind !== "hidden" || composing);
+
+  if (!goalVisible) {
+    return null;
+  }
+
+  // Editing/composing swaps the fixed single-row layout for a tall,
+  // auto-growing textarea: the glyph aligns with the textarea's first line
+  // instead of a fixed-height row.
+  const isEditingLayout = composing || (state.kind === "live" && editing);
+
+  let content: ReactNode = null;
+  if (composing && state.kind !== "live") {
+    // The empty-state "set a goal" affordance AND the sticky result's
+    // "Set new goal" popover action both land here — same blank editor
+    // either way. (Composing never overrides an already-live goal — the
+    // composer's "Set a goal" row is only offered when nothing is live.)
+    content = (
+      <GoalBarObjectiveEditor
+        initialValue=""
+        placeholder={SET_GOAL_PLACEHOLDER}
+        onCommit={onEdit}
+        onCancel={() => onCancelCompose?.()}
+      />
+    );
+  } else if (state.kind === "live" && editing) {
+    content = (
+      <GoalBarObjectiveEditor
+        initialValue={state.goal.objective}
+        placeholder={SET_GOAL_PLACEHOLDER}
+        onCommit={(objective) => {
+          setEditing(false);
+          onEdit(objective);
+        }}
+        onCancel={() => setEditing(false)}
+      />
+    );
+  } else if (state.kind === "live") {
+    const paused = state.phase === "paused";
+    content = (
+      <>
+        <span className="shrink-0 text-ui font-medium text-foreground">
+          {goalStatusLabel(state.goal.status)}
+        </span>
+        <span
+          className={twMerge(
+            "min-w-0 flex-1 truncate text-ui text-muted-foreground",
+            paused && "text-faint",
+          )}
+          data-telemetry-mask
+        >
+          {state.goal.objective}
+        </span>
+        <span
+          className={twMerge(
+            "flex shrink-0 items-center gap-0.5",
+            pendingWrite && "pointer-events-none opacity-55",
+          )}
+        >
+          <GoalBarPauseAction
+            paused={paused}
+            pauseSupported={capabilities.pause}
+            onPause={onPause}
+            onResume={onResume}
+          />
+          <GoalBarIconAction
+            label="Edit goal"
+            icon={<Pencil className="icon-paired" />}
+            onClick={() => setEditing(true)}
+          />
+          <GoalBarIconAction
+            label="Delete goal"
+            icon={<Trash className="icon-paired" />}
+            destructive
+            onClick={onClear}
+          />
+        </span>
+      </>
+    );
+  } else if (state.kind === "result") {
+    // Sticky met/blocked/failed outcome. The whole non-button area of the
+    // row (glyph, headline, objective) is the expand trigger — only the
+    // dismiss (×) button sits outside it. Esc/click-outside close the
+    // popover via the underlying Radix primitive.
+    content = (
+      <>
+        <PopoverButton
+          trigger={(
+            <Button
+              variant="unstyled"
+              size="unstyled"
+              type="button"
+              className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md text-left"
+              aria-label={`${state.headline} — show details`}
+            >
+              <GoalBarGlyph state={state} />
+              <span className="shrink-0 text-ui font-medium text-foreground">
+                {state.headline}
+              </span>
+              <span
+                className="min-w-0 flex-1 truncate text-ui text-muted-foreground"
+                data-telemetry-mask
+              >
+                — {state.goal.objective}
+              </span>
+              <ChevronUp className="icon-paired shrink-0 text-faint" aria-hidden />
+            </Button>
+          )}
+          side="top"
+          align="start"
+          offset={8}
+          externalOpen={resultForceOpen ? true : undefined}
+          onOpenChange={(open) => {
+            if (!open) {
+              setResultForceOpen(false);
+            }
+          }}
+          className="w-auto border-0 bg-transparent p-0 shadow-none"
+        >
+          {(close) => (
+            <ComposerPopoverSurface className="p-0" data-telemetry-mask>
+              <GoalBarResultPopover
+                state={state}
+                onDismiss={() => {
+                  onDismiss();
+                  close();
+                }}
+                onSetNewGoal={onSetNewGoal ? () => {
+                  onSetNewGoal();
+                  close();
+                } : undefined}
+              />
+            </ComposerPopoverSurface>
+          )}
+        </PopoverButton>
+        <span className="ml-1 flex shrink-0 items-center">
+          <GoalBarIconAction
+            label="Dismiss goal result"
+            icon={<X className="icon-paired" />}
+            onClick={onDismiss}
+          />
+        </span>
+      </>
+    );
+  }
+
+  return (
+    <div
+      data-session-goal-bar
+      aria-label="Session goal"
+      // C4, recorded token gap (spec §2.6's second branch): this fill is a
+      // 2%-foreground-into-background mix, and the nearest existing surface
+      // token does not match it. `--color-surface-elevated-secondary`
+      // (tokens.ts) is 3% white in dark but 4.9% ink in light — ~2.5× the
+      // original weight — and it is translucent where this recipe composites
+      // opaquely against `--color-background`. That is a visible shift in
+      // light mode, not a rounding error, so the ruling is "record the gap,
+      // keep the bracket" rather than eyeballing a substitute: the goal bar
+      // needs a ~2% wash step that the surface scale does not yet name, which
+      // belongs to `design`. `border-x-[0.5px]`/`border-t-[0.5px]` are
+      // legitimate sub-pixel hairline geometry Tailwind has no named step for.
+      className="relative overflow-clip rounded-t-xl border-x-[0.5px] border-t-[0.5px] border-border bg-[color:color-mix(in_oklab,var(--color-foreground)_2%,var(--color-background))]"
+    >
+      <div
+        className={twMerge(
+          "flex min-w-0 gap-1.5 pl-3 pr-1.5",
+          isEditingLayout ? "items-start py-1.5" : "h-9 items-center",
+        )}
+      >
+        {/* The result row renders its own glyph inside the expand trigger
+            button so the whole row (glyph included) is clickable. */}
+        {state.kind !== "result" && (
+          <GoalBarGlyph state={state} raised={isEditingLayout} />
+        )}
+        {content}
+      </div>
+    </div>
+  );
+}
+
+function GoalBarGlyph({
+  state,
+  raised = false,
+}: {
+  state: ReturnType<typeof deriveGoalBarState>;
+  /** Nudged down to align with a multi-line editor's first line of text. */
+  raised?: boolean;
+}) {
+  // The editing textarea uses a 1.5em line box while the paired glyph is
+  // 1.15em. Half of that difference centers the glyph on the first line and
+  // stays proportional at every Appearance preset.
+  const className = twMerge("icon-paired shrink-0", raised && "mt-[0.175em]");
+  if (state.kind === "result") {
+    if (state.outcome === "met") {
+      return <CircleCheck className={twMerge(className, statusDotToneTextClass("success"))} aria-hidden />;
+    }
+    return (
+      <CircleAlert
+        className={twMerge(
+          className,
+          statusDotToneTextClass(state.outcome === "blocked" ? "warning" : "danger"),
+        )}
+        aria-hidden
+      />
+    );
+  }
+  return <Target className={twMerge(className, statusDotToneTextClass("muted"))} aria-hidden />;
+}
+
+function GoalBarPauseAction({
+  paused,
+  pauseSupported,
+  onPause,
+  onResume,
+}: {
+  paused: boolean;
+  pauseSupported: boolean;
+  onPause: () => void;
+  onResume: () => void;
+}) {
+  const label = paused ? "Resume goal" : "Pause goal";
+  const icon = paused ? <Play className="icon-paired" /> : <Pause className="icon-paired" />;
+  if (pauseSupported) {
+    return (
+      <GoalBarIconAction label={label} icon={icon} onClick={paused ? onResume : onPause} />
+    );
+  }
+  // Pause is unsupported for this agent. Keep the control focusable
+  // (aria-disabled, not the native `disabled` attribute that drops it from the
+  // tab order) so keyboard and screen-reader users can reach the tooltip that
+  // explains why, and fold the reason into the accessible name for AT.
+  return (
+    <Tooltip content={PAUSE_UNSUPPORTED_TOOLTIP}>
+      <GoalBarIconAction label={`${label} — ${PAUSE_UNSUPPORTED_TOOLTIP}`} icon={icon} inert />
+    </Tooltip>
+  );
+}

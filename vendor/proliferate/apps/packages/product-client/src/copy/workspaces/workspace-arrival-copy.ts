@@ -1,0 +1,86 @@
+export const WORKSPACE_ARRIVAL_LABELS = {
+  newWorktreeBadge: "New worktree",
+  worktreeBadge: "Worktree",
+  newWorkspaceBadge: "New workspace",
+  workspaceBadge: "Workspace",
+  worktreeCreatedEyebrow: "Ready to open",
+  workspaceCreatedEyebrow: "Ready to start",
+  worktreeCreatedSubtitlePrefix: "Created in",
+  worktreeCreatedSubtitleFromInfix: "from",
+  createdWorkspaceSubtitle: "Created locally and ready for chat",
+  repoLabel: "Repository",
+  worktreeBranchLabel: "Worktree branch",
+  basedOn: "Based on",
+  locationLabel: "Location",
+  openButtonPrefix: "Open in",
+  openFallbackAction: "Open folder",
+  setupTitle: "Repository setup",
+  setupMissing: "No setup script configured yet",
+  setupConfigured: "Setup script configured",
+  setupRunning: "Setup script running...",
+  setupQueued: "Setup script queued...",
+  setupSucceeded: "Setup completed successfully",
+  setupFailed: "Setup failed",
+  setupStatusReady: "Ready",
+  setupStatusRunning: "Running",
+  setupStatusQueued: "Queued",
+  setupStatusConfigured: "Configured",
+  setupStatusOptional: "Optional",
+  rerunSetup: "Rerun setup",
+  addSetup: "Add setup script",
+  seeTerminal: "See terminal",
+  repositorySettings: "Repository settings",
+  dismiss: "Dismiss",
+  noWorkspaceTitle: "Select a workspace",
+  noWorkspaceBody: "Choose a workspace from the sidebar to start chatting.",
+} as const;
+
+/**
+ * Workspace-creation transcript receipt copy. The receipt sentence carries
+ * the whole state in words — failure is never signaled with color or badges.
+ */
+export const WORKSPACE_CREATION_RECEIPT_LABELS = {
+  creating: {
+    worktree: "Creating worktree",
+    workspace: "Creating workspace",
+  },
+  creationFailed: {
+    worktree: "Worktree creation failed",
+    workspace: "Workspace creation failed",
+  },
+  created: {
+    worktree: "Worktree created",
+    workspace: "Workspace created",
+  },
+  createdSetupFailed: {
+    worktree: "Worktree created, but setup failed",
+    workspace: "Workspace created, but setup failed",
+  },
+  createdSetupCompleted: {
+    worktree: "Worktree created, setup completed",
+    workspace: "Workspace created, setup completed",
+  },
+  preparingLogPrefix: {
+    worktree: "Preparing worktree at",
+    workspace: "Preparing workspace at",
+  },
+  createdLogPrefix: {
+    worktree: "Worktree created at",
+    workspace: "Workspace created at",
+  },
+  creationFailedFallbackDetail: "Workspace creation failed.",
+  setupFailedFallbackDetail: "Setup failed.",
+  setupQueuedStatus: "Setup queued",
+  setupRunningStatus: "Setup running",
+  setupQueuedLog: "Setup script queued...",
+  setupRunningLog: "Setup script running...",
+  setupSucceededLog: "Setup completed successfully",
+  previousRunSuffix: "(previous run)",
+  rerunLogSuffix: "(rerun)",
+  rerunSetup: "Rerun setup",
+  rerunningLabel: "Rerunning…",
+  seeTerminal: "See terminal",
+  copyLogTitle: "Copy log",
+  retryCreation: "Retry",
+  backFromCreation: "Back",
+} as const;

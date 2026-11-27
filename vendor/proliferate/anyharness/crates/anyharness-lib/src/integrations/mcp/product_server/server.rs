@@ -1,0 +1,480 @@
+use async_trait::async_trait;
+use serde_json::{json, Value};
+
+use super::definition::ProductMcpDefinition;
+use crate::integrations::mcp::capability_token::McpCapabilityTokenValidation;
+use crate::integrations::mcp::json_rpc::{
+    jsonrpc_error, jsonrpc_result, CallToolParams, InitializeParams, JsonRpcRequest,
+};
+use crate::integrations::mcp::tools::{
+    jsonrpc_mcp_tool_output, jsonrpc_typed_tool_error, McpToolCallError, McpToolOutput,
+};
+
+// ── Error codes ─────────────────────────────────────────────────────────────
+
+pub const JSON_RPC_PARSE_ERROR: i64 = -32700;
+pub const JSON_RPC_INVALID_REQUEST: i64 = -32600;
+pub const JSON_RPC_METHOD_NOT_FOUND: i64 = -32601;
+pub const JSON_RPC_INVALID_PARAMS: i64 = -32602;
+
+#[derive(Debug, thiserror::Error)]
+pub enum ProductMcpContextError {
+    #[error("{0}")]
+    NotFound(String),
+    #[error("{0}")]
+    Conflict(String),
+    #[error(transparent)]
+    Internal(#[from] anyhow::Error),
+}
+
+impl ProductMcpContextError {
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self::NotFound(message.into())
+    }
+
+    pub fn conflict(message: impl Into<String>) -> Self {
+        Self::Conflict(message.into())
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ProductMcpDispatchError {
+    #[error(transparent)]
+    Context(#[from] ProductMcpContextError),
+    #[error(transparent)]
+    Request(#[from] anyhow::Error),
+}
+
+// ── Request context ──────────────────────────────────────────────────────────
+
+pub const PRODUCT_MCP_TOKEN_HEADER_NAME: &str = "x-anyharness-product-mcp-token";
+
+#[derive(Debug, Clone)]
+pub struct ProductMcpRequestContext {
+    pub workspace_id: String,
+    pub session_id: String,
+    pub product_mcp_id: String,
+}
+
+impl ProductMcpRequestContext {
+    pub fn new(
+        workspace_id: impl Into<String>,
+        session_id: impl Into<String>,
+        product_mcp_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            workspace_id: workspace_id.into(),
+            session_id: session_id.into(),
+            product_mcp_id: product_mcp_id.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ProductMcpAuthHeader<'a> {
+    Product { value: &'a str },
+}
+
+// ── Initialize response ──────────────────────────────────────────────────────
+
+pub fn initialize_response(
+    id: Option<Value>,
+    protocol_version: Option<String>,
+    definition: &ProductMcpDefinition,
+) -> Value {
+    jsonrpc_result(
+        id,
+        json!({
+            "protocolVersion": protocol_version.unwrap_or_else(|| "2025-11-25".to_string()),
+            "capabilities": { "tools": {} },
+            "serverInfo": {
+                "name": definition.server_info_name,
+                "version": env!("PROLIFERATE_STAMPED_VERSION"),
+            },
+            "instructions": definition.instructions,
+        }),
+    )
+}
+
+// ── Server trait + dispatcher ─────────────────────────────────────────────────
+
+#[async_trait]
+pub trait ProductMcpServer: Send + Sync {
+    type Context: Send + Sync;
+
+    fn definition(&self) -> &'static ProductMcpDefinition;
+
+    fn validate_capability_token(
+        &self,
+        header: ProductMcpAuthHeader<'_>,
+        request: &ProductMcpRequestContext,
+    ) -> anyhow::Result<McpCapabilityTokenValidation>;
+
+    fn resolve_context(
+        &self,
+        request: &ProductMcpRequestContext,
+    ) -> Result<Self::Context, ProductMcpContextError>;
+
+    fn tools(&self, ctx: &Self::Context) -> Vec<Value>;
+
+    async fn call_tool(
+        &self,
+        ctx: &Self::Context,
+        name: &str,
+        arguments: Option<Value>,
+    ) -> anyhow::Result<Value>;
+
+    async fn call_tool_output(
+        &self,
+        ctx: &Self::Context,
+        name: &str,
+        arguments: Option<Value>,
+    ) -> anyhow::Result<McpToolOutput> {
+        self.call_tool(ctx, name, arguments)
+            .await
+            .map(McpToolOutput::Structured)
+    }
+}
+
+pub async fn dispatch_product_mcp_request<S>(
+    server: &S,
+    request_context: ProductMcpRequestContext,
+    request_body: Value,
+) -> Result<Option<Value>, ProductMcpDispatchError>
+where
+    S: ProductMcpServer,
+{
+    let request = match serde_json::from_value::<JsonRpcRequest>(request_body) {
+        Ok(request) => request,
+        Err(error) => {
+            return Ok(Some(jsonrpc_error(
+                None,
+                JSON_RPC_PARSE_ERROR,
+                format!("parse JSON-RPC request: {error}"),
+            )));
+        }
+    };
+
+    if request.jsonrpc != "2.0" {
+        return Ok(Some(jsonrpc_error(
+            request.id,
+            JSON_RPC_INVALID_REQUEST,
+            "invalid jsonrpc version",
+        )));
+    }
+
+    match request.method.as_str() {
+        "initialize" => {
+            let params = match request
+                .params
+                .map(serde_json::from_value::<InitializeParams>)
+                .transpose()
+            {
+                Ok(params) => params,
+                Err(error) => {
+                    return Ok(Some(jsonrpc_error(
+                        request.id,
+                        JSON_RPC_INVALID_PARAMS,
+                        format!("invalid initialize params: {error}"),
+                    )));
+                }
+            };
+            Ok(Some(initialize_response(
+                request.id,
+                params.and_then(|value| value.protocol_version),
+                server.definition(),
+            )))
+        }
+        "notifications/initialized" => Ok(None),
+        "tools/list" => Ok(Some(jsonrpc_result(
+            request.id,
+            json!({ "tools": server.tools(&server.resolve_context(&request_context)?) }),
+        ))),
+        "tools/call" => {
+            let ctx = server.resolve_context(&request_context)?;
+            let params = match serde_json::from_value::<CallToolParams>(
+                request.params.unwrap_or_else(|| json!({})),
+            ) {
+                Ok(params) => params,
+                Err(error) => {
+                    return Ok(Some(jsonrpc_error(
+                        request.id,
+                        JSON_RPC_INVALID_PARAMS,
+                        format!("invalid tools/call params: {error}"),
+                    )));
+                }
+            };
+            let result = server
+                .call_tool_output(&ctx, &params.name, params.arguments)
+                .await;
+            if let Err(error) = &result {
+                if let Some(typed) = error.downcast_ref::<McpToolCallError>() {
+                    return Ok(Some(jsonrpc_typed_tool_error(request.id, typed)));
+                }
+            }
+            Ok(Some(match result {
+                Ok(output) => jsonrpc_mcp_tool_output(request.id, output),
+                Err(error) => crate::integrations::mcp::tools::jsonrpc_tool_result(
+                    request.id,
+                    Err::<Value, _>(error.to_string()),
+                ),
+            }))
+        }
+        _ => Ok(Some(jsonrpc_error(
+            request.id,
+            JSON_RPC_METHOD_NOT_FOUND,
+            format!("unsupported method: {}", request.method),
+        ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::integrations::mcp::product_server::definition::{
+        ProductMcpPromptPolicy, ProductMcpVisibility,
+    };
+
+    static TEST_DEFINITION: ProductMcpDefinition = ProductMcpDefinition {
+        id: "test_product",
+        route_slug: "test-product",
+        acp_server_name: "test_product",
+        server_info_name: "proliferate-test-product",
+        display_name: "Test Product",
+        description: "Test product MCP",
+        visibility: ProductMcpVisibility::Internal,
+        instructions: "Use test tools.",
+        unauthorized_code: "test_unauthorized",
+        request_invalid_code: "test_request_invalid",
+        prompt_policy: ProductMcpPromptPolicy::System,
+    };
+
+    struct TestProductMcpServer;
+
+    #[async_trait]
+    impl ProductMcpServer for TestProductMcpServer {
+        type Context = ();
+
+        fn definition(&self) -> &'static ProductMcpDefinition {
+            &TEST_DEFINITION
+        }
+
+        fn validate_capability_token(
+            &self,
+            _header: ProductMcpAuthHeader<'_>,
+            _request: &ProductMcpRequestContext,
+        ) -> anyhow::Result<McpCapabilityTokenValidation> {
+            Ok(McpCapabilityTokenValidation::Valid)
+        }
+
+        fn resolve_context(
+            &self,
+            _request: &ProductMcpRequestContext,
+        ) -> Result<Self::Context, ProductMcpContextError> {
+            Ok(())
+        }
+
+        fn tools(&self, _ctx: &Self::Context) -> Vec<Value> {
+            vec![json!({
+                "name": "known_tool",
+                "description": "Known test tool",
+                "inputSchema": { "type": "object", "properties": {} },
+            })]
+        }
+
+        async fn call_tool(
+            &self,
+            _ctx: &Self::Context,
+            name: &str,
+            _arguments: Option<Value>,
+        ) -> anyhow::Result<Value> {
+            match name {
+                "known_tool" => Ok(json!({ "ok": true })),
+                _ => Err(anyhow::anyhow!("unknown test tool: {name}")),
+            }
+        }
+
+        async fn call_tool_output(
+            &self,
+            ctx: &Self::Context,
+            name: &str,
+            arguments: Option<Value>,
+        ) -> anyhow::Result<McpToolOutput> {
+            if name == "represented_tool" {
+                return Ok(McpToolOutput::Represented {
+                    structured_content: json!({
+                        "messages": [{
+                            "text": format!("{}\n[truncated to fit task output byte limit]", "🦀".repeat(14_000)),
+                            "truncated": true
+                        }],
+                        "truncated": true
+                    }),
+                    text: "visible text representation ".repeat(1_000),
+                    max_response_bytes: 65_536,
+                });
+            }
+            self.call_tool(ctx, name, arguments)
+                .await
+                .map(McpToolOutput::Structured)
+        }
+    }
+
+    fn request_context() -> ProductMcpRequestContext {
+        ProductMcpRequestContext::new("workspace-1", "session-1", "test_product")
+    }
+
+    #[tokio::test]
+    async fn initialized_notification_returns_no_response() {
+        let response = dispatch_product_mcp_request(
+            &TestProductMcpServer,
+            request_context(),
+            json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response, None);
+    }
+
+    struct ContextRejectingProductMcpServer;
+
+    #[async_trait]
+    impl ProductMcpServer for ContextRejectingProductMcpServer {
+        type Context = ();
+
+        fn definition(&self) -> &'static ProductMcpDefinition {
+            &TEST_DEFINITION
+        }
+
+        fn validate_capability_token(
+            &self,
+            _header: ProductMcpAuthHeader<'_>,
+            _request: &ProductMcpRequestContext,
+        ) -> anyhow::Result<McpCapabilityTokenValidation> {
+            Ok(McpCapabilityTokenValidation::Valid)
+        }
+
+        fn resolve_context(
+            &self,
+            _request: &ProductMcpRequestContext,
+        ) -> Result<Self::Context, ProductMcpContextError> {
+            Err(ProductMcpContextError::not_found("context unavailable"))
+        }
+
+        fn tools(&self, _ctx: &Self::Context) -> Vec<Value> {
+            Vec::new()
+        }
+
+        async fn call_tool(
+            &self,
+            _ctx: &Self::Context,
+            _name: &str,
+            _arguments: Option<Value>,
+        ) -> anyhow::Result<Value> {
+            Ok(json!({}))
+        }
+    }
+
+    #[tokio::test]
+    async fn initialize_does_not_resolve_product_context() {
+        let response = dispatch_product_mcp_request(
+            &ContextRejectingProductMcpServer,
+            request_context(),
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize" }),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(response["id"], json!(1));
+        assert_eq!(
+            response["result"]["serverInfo"]["name"],
+            json!("proliferate-test-product")
+        );
+    }
+
+    #[tokio::test]
+    async fn tools_list_returns_context_error_separately() {
+        let error = dispatch_product_mcp_request(
+            &ContextRejectingProductMcpServer,
+            request_context(),
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }),
+        )
+        .await
+        .expect_err("context error should escape protocol response");
+
+        assert!(matches!(
+            error,
+            ProductMcpDispatchError::Context(ProductMcpContextError::NotFound(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn unknown_tool_is_mcp_tool_error_result() {
+        let response = dispatch_product_mcp_request(
+            &TestProductMcpServer,
+            request_context(),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "tools/call",
+                "params": { "name": "missing_tool" },
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(response["id"], json!(7));
+        assert_eq!(response["result"]["isError"], json!(true));
+        assert_eq!(
+            response["result"]["content"][0]["text"],
+            json!("unknown test tool: missing_tool")
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_request_returns_parse_error() {
+        let response = dispatch_product_mcp_request(
+            &TestProductMcpServer,
+            request_context(),
+            json!("not-an-object"),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(response["id"], Value::Null);
+        assert_eq!(response["error"]["code"], json!(JSON_RPC_PARSE_ERROR));
+    }
+
+    #[tokio::test]
+    async fn represented_tool_caps_the_final_dispatched_wire_envelope() {
+        let response = dispatch_product_mcp_request(
+            &TestProductMcpServer,
+            request_context(),
+            json!({
+                "jsonrpc": "2.0",
+                "id": "wire-cap",
+                "method": "tools/call",
+                "params": { "name": "represented_tool", "arguments": {} },
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert!(serde_json::to_vec(&response).unwrap().len() <= 65_536);
+        assert_eq!(response["result"]["isError"], false);
+        assert!(response["result"]["content"][0]["text"]
+            .as_str()
+            .is_some_and(|text| !text.is_empty()));
+        assert_eq!(response["result"]["structuredContent"]["truncated"], true);
+        assert!(
+            response["result"]["structuredContent"]["messages"][0]["text"]
+                .as_str()
+                .unwrap()
+                .ends_with("[truncated to fit task output byte limit]")
+        );
+    }
+}

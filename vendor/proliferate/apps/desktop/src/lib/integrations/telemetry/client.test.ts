@@ -1,0 +1,321 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AuthUser } from "@proliferate/product-client/internal/lib/domain/auth/auth-user";
+import type { DesktopTelemetryRoutingState } from "@proliferate/product-client/internal/lib/domain/telemetry/mode";
+
+const mocks = vi.hoisted(() => {
+  let runtimeState: DesktopTelemetryRoutingState = {
+    disabled: false,
+    telemetryMode: "hosted_product",
+    anonymousEnabled: true,
+    vendorEnabled: true,
+  };
+
+  return {
+    get runtimeState() {
+      return runtimeState;
+    },
+    set runtimeState(value: DesktopTelemetryRoutingState) {
+      runtimeState = value;
+    },
+    resolveRoutingStateMock: vi.fn(() => runtimeState),
+    getDesktopTelemetryConfigMock: vi.fn(() => ({
+      environment: "production",
+      release: "proliferate-desktop@test",
+      sentry: {
+        enabled: true,
+        dsn: "https://sentry.example/123",
+        tracesSampleRate: 1,
+        enableLogs: true,
+      },
+      posthog: {
+        enabled: true,
+        apiKey: "phc_test",
+        apiHost: "https://us.i.posthog.com",
+      },
+    })),
+    isBuildTelemetryDisabledMock: vi.fn(() => false),
+    getRuntimeDesktopAppConfigMock: vi.fn(() => ({
+      apiBaseUrl: "https://app.proliferate.com/api",
+      telemetryDisabled: false,
+      nativeDevProfile: false,
+    })),
+    getProliferateApiBaseUrlMock: vi.fn(() => "https://app.proliferate.com/api"),
+    getProliferateApiOriginMock: vi.fn(() => "https://app.proliferate.com"),
+    handleAnonymousProductEventMock: vi.fn(),
+    initializeDesktopSentryMock: vi.fn(),
+    captureDesktopSentryExceptionMock: vi.fn(),
+    getDesktopRootErrorHandlersMock: vi.fn(() => ({})),
+    setDesktopSentryUserMock: vi.fn(),
+    clearDesktopSentryUserMock: vi.fn(),
+    setDesktopSentryTagMock: vi.fn(),
+    addDesktopSentryBreadcrumbMock: vi.fn(),
+    initializeDesktopPostHogMock: vi.fn(),
+    identifyDesktopPostHogUserMock: vi.fn(),
+    resetDesktopPostHogUserMock: vi.fn(),
+    trackDesktopPostHogEventMock: vi.fn(),
+    startDesktopPostHogSessionReplayMock: vi.fn(),
+    stopDesktopPostHogSessionReplayMock: vi.fn(),
+  };
+});
+
+vi.mock("@proliferate/product-client/internal/lib/domain/telemetry/mode", () => ({
+  resolveDesktopTelemetryRoutingState: mocks.resolveRoutingStateMock,
+}));
+
+vi.mock("./config", () => ({
+  getDesktopTelemetryConfig: mocks.getDesktopTelemetryConfigMock,
+  isBuildTelemetryDisabled: mocks.isBuildTelemetryDisabledMock,
+}));
+
+vi.mock("@/lib/infra/proliferate-api", () => ({
+  getRuntimeDesktopAppConfig: mocks.getRuntimeDesktopAppConfigMock,
+  getProliferateApiBaseUrl: mocks.getProliferateApiBaseUrlMock,
+  getProliferateApiOrigin: mocks.getProliferateApiOriginMock,
+}));
+
+vi.mock("@/lib/integrations/telemetry/anonymous", () => ({
+  handleAnonymousProductEvent: mocks.handleAnonymousProductEventMock,
+}));
+
+vi.mock("./sentry", () => ({
+  initializeDesktopSentry: mocks.initializeDesktopSentryMock,
+  captureDesktopSentryException: mocks.captureDesktopSentryExceptionMock,
+  getDesktopRootErrorHandlers: mocks.getDesktopRootErrorHandlersMock,
+  setDesktopSentryUser: mocks.setDesktopSentryUserMock,
+  clearDesktopSentryUser: mocks.clearDesktopSentryUserMock,
+  setDesktopSentryTag: mocks.setDesktopSentryTagMock,
+  addDesktopSentryBreadcrumb: mocks.addDesktopSentryBreadcrumbMock,
+}));
+
+vi.mock("./posthog", () => ({
+  initializeDesktopPostHog: mocks.initializeDesktopPostHogMock,
+  identifyDesktopPostHogUser: mocks.identifyDesktopPostHogUserMock,
+  resetDesktopPostHogUser: mocks.resetDesktopPostHogUserMock,
+  trackDesktopPostHogEvent: mocks.trackDesktopPostHogEventMock,
+  startDesktopPostHogSessionReplay: mocks.startDesktopPostHogSessionReplayMock,
+  stopDesktopPostHogSessionReplay: mocks.stopDesktopPostHogSessionReplayMock,
+}));
+
+async function loadTelemetryClient() {
+  vi.resetModules();
+  return import("./client");
+}
+
+describe("desktop telemetry client", () => {
+  beforeEach(() => {
+    mocks.runtimeState = {
+      disabled: false,
+      telemetryMode: "hosted_product",
+      anonymousEnabled: true,
+      vendorEnabled: true,
+    };
+    mocks.resolveRoutingStateMock.mockClear();
+    mocks.getDesktopTelemetryConfigMock.mockClear();
+    mocks.isBuildTelemetryDisabledMock.mockClear();
+    mocks.getRuntimeDesktopAppConfigMock.mockClear();
+    mocks.getProliferateApiBaseUrlMock.mockClear();
+    mocks.getProliferateApiOriginMock.mockClear();
+    mocks.handleAnonymousProductEventMock.mockClear();
+    mocks.initializeDesktopSentryMock.mockClear();
+    mocks.captureDesktopSentryExceptionMock.mockClear();
+    mocks.getDesktopRootErrorHandlersMock.mockClear();
+    mocks.setDesktopSentryUserMock.mockClear();
+    mocks.clearDesktopSentryUserMock.mockClear();
+    mocks.setDesktopSentryTagMock.mockClear();
+    mocks.addDesktopSentryBreadcrumbMock.mockClear();
+    mocks.initializeDesktopPostHogMock.mockClear();
+    mocks.identifyDesktopPostHogUserMock.mockClear();
+    mocks.resetDesktopPostHogUserMock.mockClear();
+    mocks.trackDesktopPostHogEventMock.mockClear();
+    mocks.startDesktopPostHogSessionReplayMock.mockClear();
+    mocks.stopDesktopPostHogSessionReplayMock.mockClear();
+  });
+
+  it("initializes vendor telemetry only when vendor routing is enabled", async () => {
+    const client = await loadTelemetryClient();
+
+    client.initializeDesktopTelemetry();
+
+    expect(mocks.initializeDesktopSentryMock).toHaveBeenCalledOnce();
+    expect(mocks.initializeDesktopSentryMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        telemetryMode: "hosted_product",
+      }),
+    );
+    expect(mocks.initializeDesktopPostHogMock).toHaveBeenCalledOnce();
+
+    mocks.initializeDesktopSentryMock.mockClear();
+    mocks.initializeDesktopPostHogMock.mockClear();
+    mocks.runtimeState = {
+      disabled: false,
+      telemetryMode: "self_managed",
+      anonymousEnabled: true,
+      vendorEnabled: false,
+    };
+
+    const selfManagedClient = await loadTelemetryClient();
+    selfManagedClient.initializeDesktopTelemetry();
+
+    expect(mocks.initializeDesktopSentryMock).not.toHaveBeenCalled();
+    expect(mocks.initializeDesktopPostHogMock).not.toHaveBeenCalled();
+  });
+
+  it("does not capture vendor exceptions outside hosted_product", async () => {
+    mocks.runtimeState = {
+      disabled: false,
+      telemetryMode: "self_managed",
+      anonymousEnabled: true,
+      vendorEnabled: false,
+    };
+
+    const client = await loadTelemetryClient();
+    client.captureTelemetryException(new Error("boom"));
+
+    expect(mocks.captureDesktopSentryExceptionMock).not.toHaveBeenCalled();
+  });
+
+  it("sends only user id to Sentry and PostHog", async () => {
+    const client = await loadTelemetryClient();
+    const user: AuthUser = {
+      id: "user-123",
+      email: "user@example.com",
+      display_name: "Test User",
+      is_active: true,
+      is_verified: true,
+      github_login: "test-user",
+    };
+
+    client.setTelemetryUser(user);
+
+    expect(mocks.setDesktopSentryUserMock).toHaveBeenCalledOnce();
+    expect(mocks.setDesktopSentryUserMock).toHaveBeenCalledWith("user-123");
+    expect(mocks.identifyDesktopPostHogUserMock).toHaveBeenCalledOnce();
+    expect(mocks.identifyDesktopPostHogUserMock).toHaveBeenCalledWith("user-123");
+    expect(
+      JSON.stringify([
+        mocks.setDesktopSentryUserMock.mock.calls,
+        mocks.identifyDesktopPostHogUserMock.mock.calls,
+      ]),
+    ).not.toContain("user@example.com");
+    expect(
+      JSON.stringify([
+        mocks.setDesktopSentryUserMock.mock.calls,
+        mocks.identifyDesktopPostHogUserMock.mock.calls,
+      ]),
+    ).not.toContain("Test User");
+  });
+
+  it("leaves session replay off for a customer account", async () => {
+    const client = await loadTelemetryClient();
+
+    client.setTelemetryUser({
+      id: "user-123",
+      email: "someone@customer.example",
+      display_name: null,
+    });
+
+    expect(mocks.identifyDesktopPostHogUserMock).toHaveBeenCalledWith("user-123");
+    expect(mocks.startDesktopPostHogSessionReplayMock).not.toHaveBeenCalled();
+  });
+
+  it("starts session replay for the internal audience only", async () => {
+    const client = await loadTelemetryClient();
+
+    client.setTelemetryUser({
+      id: "user-456",
+      email: "pablo@proliferate.com",
+      display_name: null,
+    });
+
+    expect(mocks.startDesktopPostHogSessionReplayMock).toHaveBeenCalledOnce();
+    // The address is a local decision input, never a transmitted property.
+    expect(
+      JSON.stringify(mocks.startDesktopPostHogSessionReplayMock.mock.calls),
+    ).not.toContain("pablo@proliferate.com");
+    expect(
+      JSON.stringify(mocks.identifyDesktopPostHogUserMock.mock.calls),
+    ).not.toContain("pablo@proliferate.com");
+  });
+
+  it("does not start replay when vendor routing is off", async () => {
+    mocks.runtimeState = {
+      disabled: false,
+      telemetryMode: "self_managed",
+      anonymousEnabled: true,
+      vendorEnabled: false,
+    };
+
+    const client = await loadTelemetryClient();
+    client.setTelemetryUser({
+      id: "user-456",
+      email: "pablo@proliferate.com",
+      display_name: null,
+    });
+
+    expect(mocks.startDesktopPostHogSessionReplayMock).not.toHaveBeenCalled();
+  });
+
+  it("stops replay before clearing identity on sign-out", async () => {
+    const client = await loadTelemetryClient();
+
+    client.setTelemetryUser({
+      id: "user-456",
+      email: "pablo@proliferate.dev",
+      display_name: null,
+    });
+    client.clearTelemetryUser();
+
+    expect(mocks.stopDesktopPostHogSessionReplayMock).toHaveBeenCalledOnce();
+    expect(
+      mocks.stopDesktopPostHogSessionReplayMock.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.resetDesktopPostHogUserMock.mock.invocationCallOrder[0]);
+  });
+
+  it("emits desktop_keychain_access_failed to PostHog", async () => {
+    const client = await loadTelemetryClient();
+
+    expect(
+      client.isVendorPostHogEventAllowed("desktop_keychain_access_failed"),
+    ).toBe(true);
+
+    client.trackProductEvent("desktop_keychain_access_failed", {
+      operation: "get_auth_session",
+      failure_kind: "permission_error",
+    });
+
+    expect(mocks.trackDesktopPostHogEventMock).toHaveBeenCalledWith(
+      "desktop_keychain_access_failed",
+      {
+        operation: "get_auth_session",
+        failure_kind: "permission_error",
+      },
+    );
+  });
+
+  it("emits auth_signed_in to PostHog as the signup funnel anchor", async () => {
+    const client = await loadTelemetryClient();
+
+    expect(client.isVendorPostHogEventAllowed("auth_signed_in")).toBe(true);
+
+    client.trackProductEvent("auth_signed_in", {
+      provider: "google",
+      source: "desktop_callback",
+    });
+
+    expect(mocks.trackDesktopPostHogEventMock).toHaveBeenCalledWith(
+      "auth_signed_in",
+      {
+        provider: "google",
+        source: "desktop_callback",
+      },
+    );
+  });
+
+  it("does not emit auth_sign_in_failed to PostHog (diagnostic-only, stays in Sentry)", async () => {
+    const client = await loadTelemetryClient();
+
+    expect(client.isVendorPostHogEventAllowed("auth_sign_in_failed")).toBe(
+      false,
+    );
+  });
+});

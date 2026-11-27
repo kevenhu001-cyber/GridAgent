@@ -1,0 +1,519 @@
+//! Pure rendering of a stored prompt payload into ACP content blocks.
+//!
+//! No IO: attachment bytes arrive pre-loaded in [`ResolvedParts`] (see
+//! `load_prompt_attachments`), plan references render from their frozen
+//! `body_markdown` snapshot, and the codex first-prompt append arrives as an
+//! already-decided strings in [`TurnPromptExtras`]. Base64 encoding and UTF-8
+//! validation are pure compute and belong here.
+
+use agent_client_protocol as acp;
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
+
+use super::provenance::PromptProvenance;
+use super::{PromptPayload, PromptValidationError, ResolvedParts, StoredPromptBlock};
+use crate::domains::sessions::plan_references::render_plan_reference_markdown;
+
+/// Render failures speak the same code/detail vocabulary as prompt
+/// validation; the split must not change error semantics.
+pub type RenderError = PromptValidationError;
+
+/// Per-turn additions the actor decided before rendering.
+#[derive(Debug, Clone, Default)]
+pub struct TurnPromptExtras {
+    /// Current durable ordinary/delegated role context. This is a separate
+    /// platform-owned block on every turn and never becomes authored content.
+    pub product_context: Option<String>,
+    /// When set, prepended as a hidden system-instruction text block (the
+    /// codex first-prompt append). The has-turn-started gating is the
+    /// caller's decision; render folds the result in verbatim.
+    pub first_prompt_system_prompt_append: Option<String>,
+}
+
+pub fn render(
+    payload: &PromptPayload,
+    parts: &ResolvedParts,
+    extras: &TurnPromptExtras,
+) -> Result<Vec<acp::schema::ContentBlock>, RenderError> {
+    let mut blocks = Vec::with_capacity(payload.blocks.len() + 3);
+    if let Some(append) = &extras.first_prompt_system_prompt_append {
+        blocks.push(system_instruction_block(append));
+    }
+    if let Some(context) = &extras.product_context {
+        blocks.push(system_instruction_block(context));
+    }
+    if let Some(context) = agent_message_context(payload) {
+        blocks.push(acp::schema::ContentBlock::Text(
+            acp::schema::TextContent::new(context),
+        ));
+    }
+    for block in &payload.blocks {
+        match block {
+            StoredPromptBlock::Text { text } => {
+                blocks.push(acp::schema::ContentBlock::Text(
+                    acp::schema::TextContent::new(text.clone()),
+                ));
+            }
+            StoredPromptBlock::Image {
+                attachment_id,
+                mime_type,
+                uri,
+                ..
+            } => {
+                let attachment = parts.attachments.get(attachment_id).ok_or_else(|| {
+                    RenderError::new("PROMPT_ATTACHMENT_NOT_FOUND", "image attachment not found")
+                })?;
+                let image = acp::schema::ImageContent::new(
+                    BASE64_STANDARD.encode(&attachment.bytes),
+                    mime_type.clone(),
+                )
+                .uri(uri.clone());
+                blocks.push(acp::schema::ContentBlock::Image(image));
+            }
+            StoredPromptBlock::Resource {
+                attachment_id: Some(attachment_id),
+                uri,
+                mime_type,
+                ..
+            } => {
+                let attachment = parts.attachments.get(attachment_id).ok_or_else(|| {
+                    RenderError::new(
+                        "PROMPT_ATTACHMENT_NOT_FOUND",
+                        "resource attachment not found",
+                    )
+                })?;
+                let text = String::from_utf8(attachment.bytes.clone()).map_err(|_| {
+                    RenderError::new(
+                        "PROMPT_UNSUPPORTED_BINARY_RESOURCE",
+                        "embedded resources must be UTF-8 text",
+                    )
+                })?;
+                let resource = acp::schema::TextResourceContents::new(text, uri.clone())
+                    .mime_type(mime_type.clone());
+                blocks.push(acp::schema::ContentBlock::Resource(
+                    acp::schema::EmbeddedResource::new(
+                        acp::schema::EmbeddedResourceResource::TextResourceContents(resource),
+                    ),
+                ));
+            }
+            StoredPromptBlock::Resource {
+                attachment_id: None,
+                ..
+            } => {
+                return Err(RenderError::new(
+                    "PROMPT_ATTACHMENT_NOT_FOUND",
+                    "resource attachment not found",
+                ));
+            }
+            StoredPromptBlock::ResourceLink {
+                uri,
+                name,
+                mime_type,
+                title,
+                description,
+                size,
+            } => {
+                let size = size.and_then(|value| i64::try_from(value).ok());
+                let link = acp::schema::ResourceLink::new(name.clone(), uri.clone())
+                    .mime_type(mime_type.clone())
+                    .title(title.clone())
+                    .description(description.clone())
+                    .size(size);
+                blocks.push(acp::schema::ContentBlock::ResourceLink(link));
+            }
+            StoredPromptBlock::PlanReference {
+                plan_id,
+                title,
+                body_markdown,
+                snapshot_hash,
+                as_resource,
+                ..
+            } => {
+                let markdown = render_plan_reference_markdown(title, body_markdown);
+                if *as_resource {
+                    let uri = format!("plan://{plan_id}?snapshot={snapshot_hash}");
+                    let resource = acp::schema::TextResourceContents::new(markdown, uri)
+                        .mime_type(Some("text/markdown".to_string()));
+                    blocks.push(acp::schema::ContentBlock::Resource(
+                        acp::schema::EmbeddedResource::new(
+                            acp::schema::EmbeddedResourceResource::TextResourceContents(resource),
+                        ),
+                    ));
+                } else {
+                    blocks.push(acp::schema::ContentBlock::Text(
+                        acp::schema::TextContent::new(markdown),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(blocks)
+}
+
+/// The house sentinel that marks a block as harness instruction rather than
+/// user content. Shared with the workflow envelope renderer, which bakes it
+/// into stored instruction blocks at render time (Ruling D).
+pub(crate) const SYSTEM_INSTRUCTION_WRAPPER: &str =
+    "System instruction from AnyHarness, not user content:\n";
+
+fn system_instruction_block(instruction: &str) -> acp::schema::ContentBlock {
+    acp::schema::ContentBlock::Text(acp::schema::TextContent::new(format!(
+        "{SYSTEM_INSTRUCTION_WRAPPER}{instruction}"
+    )))
+}
+
+fn agent_message_context(payload: &PromptPayload) -> Option<String> {
+    let PromptProvenance::AgentSession {
+        source_session_id,
+        label,
+        ..
+    } = payload.provenance.as_ref()?
+    else {
+        return None;
+    };
+    let label = serde_json::Value::String(label.as_deref().unwrap_or("Agent").to_string());
+    let session_id = serde_json::Value::String(source_session_id.clone());
+    Some(format!(
+        "Message context: This message came from another agent. Sender label: {label}. Sender session ID: {session_id}. To reply, use send_message with agentId {session_id}."
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domains::sessions::prompt::{ResolvedAttachment, ResolvedAttachmentKind};
+
+    fn payload(blocks: Vec<StoredPromptBlock>) -> PromptPayload {
+        PromptPayload {
+            blocks,
+            text_summary: String::new(),
+            provenance: None,
+        }
+    }
+
+    fn parts(attachments: Vec<ResolvedAttachment>) -> ResolvedParts {
+        ResolvedParts {
+            attachments: attachments
+                .into_iter()
+                .map(|attachment| (attachment.attachment_id.clone(), attachment))
+                .collect(),
+        }
+    }
+
+    fn image_block(attachment_id: &str) -> StoredPromptBlock {
+        StoredPromptBlock::Image {
+            attachment_id: attachment_id.to_string(),
+            mime_type: "image/png".to_string(),
+            name: None,
+            uri: Some("file:///shot.png".to_string()),
+            size: 3,
+            source: None,
+        }
+    }
+
+    fn resource_block(attachment_id: &str) -> StoredPromptBlock {
+        StoredPromptBlock::Resource {
+            attachment_id: Some(attachment_id.to_string()),
+            uri: "file:///notes.md".to_string(),
+            name: None,
+            mime_type: Some("text/markdown".to_string()),
+            size: 5,
+            preview: None,
+            source: None,
+        }
+    }
+
+    fn attachment(id: &str, kind: ResolvedAttachmentKind, bytes: &[u8]) -> ResolvedAttachment {
+        ResolvedAttachment {
+            attachment_id: id.to_string(),
+            kind,
+            mime_type: None,
+            uri: None,
+            bytes: bytes.to_vec(),
+        }
+    }
+
+    #[test]
+    fn renders_text_blocks_verbatim() {
+        let blocks = render(
+            &payload(vec![StoredPromptBlock::Text {
+                text: "hello".to_string(),
+            }]),
+            &ResolvedParts::default(),
+            &TurnPromptExtras::default(),
+        )
+        .expect("render");
+
+        let [acp::schema::ContentBlock::Text(text)] = blocks.as_slice() else {
+            panic!("expected one text block");
+        };
+        assert_eq!(text.text, "hello");
+    }
+
+    #[test]
+    fn send_message_prompt_provenance_renders_replay_stable_sender_context() {
+        let payload = PromptPayload::text("check the failing test".to_string()).with_provenance(
+            PromptProvenance::AgentSession {
+                source_session_id: "session-1".to_string(),
+                session_link_id: None,
+                label: Some("Build Agent".to_string()),
+            },
+        );
+        let provenance_json = payload
+            .provenance_json()
+            .expect("serialize provenance")
+            .expect("agent provenance");
+        let replayed =
+            PromptPayload::from_persisted(None, "check the failing test", Some(&provenance_json));
+
+        for candidate in [&payload, &replayed] {
+            let blocks = render(
+                candidate,
+                &ResolvedParts::default(),
+                &TurnPromptExtras::default(),
+            )
+            .expect("render agent message");
+            let [acp::schema::ContentBlock::Text(context), acp::schema::ContentBlock::Text(message)] =
+                blocks.as_slice()
+            else {
+                panic!("expected sender context followed by message text");
+            };
+            assert_eq!(
+                context.text,
+                "Message context: This message came from another agent. Sender label: \"Build Agent\". Sender session ID: \"session-1\". To reply, use send_message with agentId \"session-1\"."
+            );
+            assert_eq!(message.text, "check the failing test");
+        }
+        assert_eq!(payload.content_parts().len(), 1);
+    }
+
+    #[test]
+    fn renders_image_blocks_as_base64_with_block_metadata() {
+        let blocks = render(
+            &payload(vec![image_block("att-1")]),
+            &parts(vec![attachment(
+                "att-1",
+                ResolvedAttachmentKind::Image,
+                b"png",
+            )]),
+            &TurnPromptExtras::default(),
+        )
+        .expect("render");
+
+        let [acp::schema::ContentBlock::Image(image)] = blocks.as_slice() else {
+            panic!("expected one image block");
+        };
+        assert_eq!(image.data, BASE64_STANDARD.encode(b"png"));
+        assert_eq!(image.mime_type, "image/png");
+        assert_eq!(image.uri.as_deref(), Some("file:///shot.png"));
+    }
+
+    #[test]
+    fn renders_text_resources_as_embedded_resources() {
+        let blocks = render(
+            &payload(vec![resource_block("att-1")]),
+            &parts(vec![attachment(
+                "att-1",
+                ResolvedAttachmentKind::TextResource,
+                b"notes",
+            )]),
+            &TurnPromptExtras::default(),
+        )
+        .expect("render");
+
+        let [acp::schema::ContentBlock::Resource(resource)] = blocks.as_slice() else {
+            panic!("expected one resource block");
+        };
+        let acp::schema::EmbeddedResourceResource::TextResourceContents(contents) =
+            &resource.resource
+        else {
+            panic!("expected text resource contents");
+        };
+        assert_eq!(contents.text, "notes");
+        assert_eq!(contents.uri, "file:///notes.md");
+        assert_eq!(contents.mime_type.as_deref(), Some("text/markdown"));
+    }
+
+    #[test]
+    fn rejects_binary_text_resources() {
+        let error = render(
+            &payload(vec![resource_block("att-1")]),
+            &parts(vec![attachment(
+                "att-1",
+                ResolvedAttachmentKind::TextResource,
+                &[0xff, 0xfe],
+            )]),
+            &TurnPromptExtras::default(),
+        )
+        .expect_err("binary resource");
+        assert_eq!(error.code, "PROMPT_UNSUPPORTED_BINARY_RESOURCE");
+    }
+
+    fn plan_block(as_resource: bool) -> StoredPromptBlock {
+        StoredPromptBlock::PlanReference {
+            plan_id: "plan-1".to_string(),
+            title: "Plan".to_string(),
+            body_markdown: "Do it.".to_string(),
+            snapshot_hash: "hash-1".to_string(),
+            source_session_id: "session-1".to_string(),
+            source_turn_id: None,
+            source_item_id: None,
+            source_kind: "codex_turn_plan".to_string(),
+            source_tool_call_id: None,
+            as_resource,
+        }
+    }
+
+    #[test]
+    fn renders_plan_references_as_resource_or_text() {
+        let blocks = render(
+            &payload(vec![plan_block(true)]),
+            &ResolvedParts::default(),
+            &TurnPromptExtras::default(),
+        )
+        .expect("render");
+        let [acp::schema::ContentBlock::Resource(resource)] = blocks.as_slice() else {
+            panic!("expected one resource block");
+        };
+        let acp::schema::EmbeddedResourceResource::TextResourceContents(contents) =
+            &resource.resource
+        else {
+            panic!("expected text resource contents");
+        };
+        assert_eq!(contents.uri, "plan://plan-1?snapshot=hash-1");
+        assert_eq!(contents.text, "# Plan\n\nDo it.\n");
+        assert_eq!(contents.mime_type.as_deref(), Some("text/markdown"));
+
+        let blocks = render(
+            &payload(vec![plan_block(false)]),
+            &ResolvedParts::default(),
+            &TurnPromptExtras::default(),
+        )
+        .expect("render");
+        let [acp::schema::ContentBlock::Text(text)] = blocks.as_slice() else {
+            panic!("expected one text block");
+        };
+        assert_eq!(text.text, "# Plan\n\nDo it.\n");
+    }
+
+    #[test]
+    fn prepends_first_prompt_append_as_hidden_instruction_block() {
+        let blocks = render(
+            &payload(vec![StoredPromptBlock::Text {
+                text: "Build a product".to_string(),
+            }]),
+            &ResolvedParts::default(),
+            &TurnPromptExtras {
+                first_prompt_system_prompt_append: Some("Name the workspace first.".to_string()),
+                ..TurnPromptExtras::default()
+            },
+        )
+        .expect("render");
+
+        assert_eq!(blocks.len(), 2);
+        let acp::schema::ContentBlock::Text(first) = &blocks[0] else {
+            panic!("first block should be text");
+        };
+        assert!(first.text.contains("System instruction from AnyHarness"));
+        assert!(first.text.contains("Name the workspace first."));
+        let acp::schema::ContentBlock::Text(second) = &blocks[1] else {
+            panic!("second block should be text");
+        };
+        assert_eq!(second.text, "Build a product");
+    }
+
+    #[test]
+    fn product_context_is_a_separate_block_and_authored_text_is_byte_preserved() {
+        let authored = "  Keep my leading space.\n\nAnd my trailing space.  ";
+        let blocks = render(
+            &payload(vec![StoredPromptBlock::Text {
+                text: authored.to_string(),
+            }]),
+            &ResolvedParts::default(),
+            &TurnPromptExtras {
+                product_context: Some("You are currently an ordinary agent.".to_string()),
+                first_prompt_system_prompt_append: None,
+            },
+        )
+        .expect("render");
+
+        let [acp::schema::ContentBlock::Text(context), acp::schema::ContentBlock::Text(message)] =
+            blocks.as_slice()
+        else {
+            panic!("expected product context followed by authored text");
+        };
+        assert_eq!(
+            context.text,
+            "System instruction from AnyHarness, not user content:\nYou are currently an ordinary agent."
+        );
+        assert_eq!(message.text.as_bytes(), authored.as_bytes());
+    }
+
+    #[test]
+    fn product_context_and_first_prompt_append_remain_separate_system_blocks() {
+        let blocks = render(
+            &payload(vec![StoredPromptBlock::Text {
+                text: "Do the work.".to_string(),
+            }]),
+            &ResolvedParts::default(),
+            &TurnPromptExtras {
+                product_context: Some("Current role context.".to_string()),
+                first_prompt_system_prompt_append: Some("Launch guidance.".to_string()),
+            },
+        )
+        .expect("render");
+
+        assert_eq!(blocks.len(), 3);
+        let texts = blocks
+            .iter()
+            .map(|block| match block {
+                acp::schema::ContentBlock::Text(text) => text.text.as_str(),
+                _ => panic!("expected text block"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            texts,
+            vec![
+                "System instruction from AnyHarness, not user content:\nLaunch guidance.",
+                "System instruction from AnyHarness, not user content:\nCurrent role context.",
+                "Do the work.",
+            ]
+        );
+    }
+
+    #[test]
+    fn errors_when_referenced_attachment_was_not_loaded() {
+        let image = render(
+            &payload(vec![image_block("missing")]),
+            &ResolvedParts::default(),
+            &TurnPromptExtras::default(),
+        )
+        .expect_err("missing image attachment");
+        assert_eq!(image.code, "PROMPT_ATTACHMENT_NOT_FOUND");
+        assert_eq!(image.detail, "image attachment not found");
+
+        let resource = render(
+            &payload(vec![resource_block("missing")]),
+            &ResolvedParts::default(),
+            &TurnPromptExtras::default(),
+        )
+        .expect_err("missing resource attachment");
+        assert_eq!(resource.code, "PROMPT_ATTACHMENT_NOT_FOUND");
+        assert_eq!(resource.detail, "resource attachment not found");
+
+        let unresolved = render(
+            &payload(vec![StoredPromptBlock::Resource {
+                attachment_id: None,
+                uri: "file:///notes.md".to_string(),
+                name: None,
+                mime_type: None,
+                size: 0,
+                preview: None,
+                source: None,
+            }]),
+            &ResolvedParts::default(),
+            &TurnPromptExtras::default(),
+        )
+        .expect_err("resource without attachment id");
+        assert_eq!(unresolved.code, "PROMPT_ATTACHMENT_NOT_FOUND");
+    }
+}

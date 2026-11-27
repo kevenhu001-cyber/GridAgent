@@ -1,0 +1,105 @@
+// @vitest-environment jsdom
+
+import { cleanup, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  createMemoryProductStorage,
+  type MemoryProductStorage,
+} from "#product/test/product-storage-test-utils";
+import {
+  makeTestProductHost,
+  productHostWrapper,
+} from "#product/test/product-host-test-utils";
+import {
+  resetChatDiffPreferencesForTests,
+  useChatDiffPreferencesStore,
+} from "#product/stores/chat/chat-diff-preferences-store";
+import {
+  resetFileTreeStoreForTests,
+  selectFileTreeDesiredWidth,
+  useFileTreeStore,
+} from "#product/stores/editor/file-tree-store";
+import { resetFileTreeDockPersistenceForTests } from "#product/hooks/workspaces/lifecycle/files/file-tree-dock-persistence-coordinator";
+import {
+  readHomeNextTargetSelectionState,
+  resetHomeNextTargetSelectionForTests,
+} from "#product/hooks/home/ui/use-home-next-target-selection-state";
+import {
+  isCloudDisplayNameBackfillSuppressed,
+  resetCloudDisplayNameSuppressionForTests,
+} from "#product/hooks/workspaces/lifecycle/cloud-display-name-backfill-suppression";
+import {
+  isReplacedSessionTombstoned,
+  resetReplacedSessionTombstonesForTests,
+} from "#product/hooks/sessions/workflows/session-replacement-tombstones";
+import { resetSessionReplacementTombstonesStorageForTests } from "#product/lib/access/persistence/session-replacement-tombstones-storage";
+import { useProductStoragePersistenceLifecycle } from "#product/hooks/persistence/lifecycle/use-product-storage-persistence-lifecycle";
+
+let memory: MemoryProductStorage;
+
+function renderLifecycle() {
+  const host = makeTestProductHost({ overrides: { storage: memory.storage } });
+  return renderHook(() => useProductStoragePersistenceLifecycle(), {
+    wrapper: productHostWrapper(host),
+  });
+}
+
+beforeEach(() => {
+  cleanup();
+  resetChatDiffPreferencesForTests();
+  resetFileTreeStoreForTests();
+  resetFileTreeDockPersistenceForTests();
+  resetHomeNextTargetSelectionForTests();
+  resetCloudDisplayNameSuppressionForTests();
+  resetReplacedSessionTombstonesForTests();
+  resetSessionReplacementTombstonesStorageForTests();
+  memory = createMemoryProductStorage();
+});
+
+afterEach(() => {
+  cleanup();
+  resetChatDiffPreferencesForTests();
+  resetFileTreeStoreForTests();
+  resetFileTreeDockPersistenceForTests();
+  resetHomeNextTargetSelectionForTests();
+  resetCloudDisplayNameSuppressionForTests();
+  resetReplacedSessionTombstonesForTests();
+  resetSessionReplacementTombstonesStorageForTests();
+});
+
+describe("useProductStoragePersistenceLifecycle", () => {
+  it("wires and hydrates every module-singleton product store", async () => {
+    memory.values.set("proliferate.chatDiffPreferences.v1", { wrapLongLines: true });
+    memory.values.set("proliferate.fileTreeOverlay.v1", { width: 512 });
+    memory.values.set("home_next_target_selection.v1", { destination: "repository" });
+    memory.values.set("proliferate.cloudDisplayNameBackfillSuppression.v1", { "cloud-1": true });
+    memory.values.set("proliferate.session-replacement-tombstones.v1", {
+      "workspace-1": [{ runtimeSessionId: "runtime-old", suppressedSessionIds: ["runtime-old"] }],
+    });
+
+    renderLifecycle();
+
+    await waitFor(() => {
+      expect(useChatDiffPreferencesStore.getState().wrapLongLines).toBe(true);
+      // The dedicated dock lifecycle owns this key: it migrates the legacy
+      // `{ width }` payload into the v1 record instead of a one-shot read.
+      expect(selectFileTreeDesiredWidth(useFileTreeStore.getState())).toBe(512);
+      expect(readHomeNextTargetSelectionState().destination).toBe("repository");
+      expect(isCloudDisplayNameBackfillSuppressed("cloud-1")).toBe(true);
+      expect(isReplacedSessionTombstoned("workspace-1", "runtime-old")).toBe(true);
+    });
+  });
+
+  it("ignores late hydration reads after unmount", async () => {
+    memory.values.set("proliferate.chatDiffPreferences.v1", { wrapLongLines: true });
+    // Delay the read so it resolves after unmount.
+    memory.storage.getItem = () =>
+      new Promise((resolve) => setTimeout(() => resolve(JSON.stringify({ wrapLongLines: true })), 0));
+
+    const { unmount } = renderLifecycle();
+    unmount();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    expect(useChatDiffPreferencesStore.getState().wrapLongLines).toBe(false);
+  });
+});

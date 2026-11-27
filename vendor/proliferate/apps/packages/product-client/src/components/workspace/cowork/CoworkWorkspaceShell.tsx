@@ -1,0 +1,224 @@
+import { useCallback, useMemo, useState, type MouseEvent } from "react";
+import { useShallow } from "zustand/react/shallow";
+import { ChatView } from "#product/components/workspace/chat/ChatView";
+import { MainSidebar } from "#product/components/workspace/shell/sidebar/MainSidebar";
+import { IconButton } from "#product/primitives/IconButton";
+import { SplitPanelLeft } from "#product/primitives/icons/app-shell";
+import { CoworkArtifactsPanel } from "#product/components/workspace/cowork/CoworkArtifactsPanel";
+import { CoworkWorkspaceHeader } from "#product/components/workspace/cowork/CoworkWorkspaceHeader";
+import { useWorkspaceSidebarResize } from "#product/hooks/preferences/ui/use-workspace-sidebar-resize";
+import { useResize } from "#product/hooks/ui/layout/use-resize";
+import { useMacWindowControlsInsetClass } from "#product/hooks/ui/layout/use-mac-window-controls";
+import { useShortcutHandler } from "#product/hooks/shortcuts/lifecycle/use-shortcut-handler";
+import { useTransparentChromeEnabled } from "#product/hooks/theme/derived/use-transparent-chrome";
+import {
+  resolveCoworkWorkspaceChromeClasses,
+  resolveMainSidebarEdgeClassName,
+} from "#product/lib/domain/preferences/workspace-chrome";
+import { useProductHost } from "#product/host/ProductHostProvider";
+import { useWorkspaceUiStore } from "#product/stores/preferences/workspace-ui-store";
+import { useCoworkUiStore } from "#product/stores/cowork/cowork-ui-store";
+import { useSessionDirectoryStore } from "#product/stores/sessions/session-directory-store";
+import { useSessionSelectionStore } from "#product/stores/sessions/session-selection-store";
+
+interface CoworkWorkspaceShellProps {
+  workspaceId: string | null;
+  visible?: boolean;
+  fallbackTitle?: string | null;
+}
+
+export function CoworkWorkspaceShell({
+  workspaceId,
+  visible = true,
+  fallbackTitle,
+}: CoworkWorkspaceShellProps) {
+  // Cowork keeps its artifact pane width session-local until the shell chrome
+  // is extracted and shares the standard workspace frame state.
+  const [rightPanelWidth, setRightPanelWidth] = useState(420);
+  const {
+    sidebarOpen,
+    setSidebarOpen,
+  } = useWorkspaceUiStore(useShallow((state) => ({
+    sidebarOpen: state.sidebarOpen,
+    setSidebarOpen: state.setSidebarOpen,
+  })));
+  const {
+    sidebarWidth,
+    sidebarResizing,
+    onSidebarSeparatorDown: onLeftSeparatorDown,
+  } = useWorkspaceSidebarResize();
+  const canShowArtifactPanel = workspaceId !== null;
+  const rightPanelOpen = useCoworkUiStore(
+    (state) => (workspaceId ? state.artifactPanelOpenByWorkspaceId[workspaceId] === true : false),
+  );
+  const setArtifactPanelOpen = useCoworkUiStore((state) => state.setArtifactPanelOpen);
+  const transparentChromeEnabled = useTransparentChromeEnabled();
+  const desktopHost = useProductHost().desktop !== null;
+  // Only a host that actually paints macOS window buttons reserves room for
+  // them; on Web (and non-Mac desktop) the inset was dead space above the nav.
+  const macWindowControlsInsetClass = useMacWindowControlsInsetClass();
+  const chromeClasses = resolveCoworkWorkspaceChromeClasses({
+    transparent: transparentChromeEnabled,
+    sidebarOpen,
+  });
+  const {
+    activeSessionId,
+  } = useSessionSelectionStore(useShallow((state) => ({
+    activeSessionId: state.activeSessionId,
+  })));
+  const activeSlot = useSessionDirectoryStore((state) =>
+    activeSessionId ? state.entriesById[activeSessionId] ?? null : null
+  );
+  const [rightPanelResizing, setRightPanelResizing] = useState(false);
+  const beginRightSeparatorDrag = useResize({
+    direction: "horizontal",
+    size: rightPanelWidth,
+    onResize: setRightPanelWidth,
+    onResizeEnd: () => setRightPanelResizing(false),
+    reverse: true,
+    min: 280,
+    max: 760,
+  });
+  const onRightSeparatorDown = useCallback((event: MouseEvent) => {
+    setRightPanelResizing(true);
+    beginRightSeparatorDrag(event);
+  }, [beginRightSeparatorDrag]);
+
+  const headerTitle = useMemo(() => {
+    if (workspaceId && activeSessionId && activeSlot?.workspaceId === workspaceId && activeSlot.title?.trim()) {
+      return activeSlot.title.trim();
+    }
+    return fallbackTitle?.trim() || "Untitled chat";
+  }, [activeSessionId, activeSlot?.title, activeSlot?.workspaceId, fallbackTitle, workspaceId]);
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarOpen((value) => !value);
+  }, [setSidebarOpen]);
+
+  const toggleRightPanel = useCallback(() => {
+    if (!workspaceId) {
+      return false;
+    }
+
+    setArtifactPanelOpen(workspaceId, !rightPanelOpen);
+  }, [rightPanelOpen, setArtifactPanelOpen, workspaceId]);
+
+  useShortcutHandler("workspace.toggle-left-sidebar", toggleSidebar, {
+    enabled: visible && workspaceId !== null,
+  });
+  useShortcutHandler("workspace.toggle-right-panel", toggleRightPanel, {
+    enabled: visible && workspaceId !== null,
+  });
+
+  return (
+    <div
+      className={`h-screen flex overflow-hidden ${chromeClasses.root}`}
+      data-telemetry-block
+    >
+        <div
+          id="cowork-sidebar"
+          className={`flex shrink-0 flex-col overflow-hidden bg-sidebar ${
+            sidebarResizing
+              ? "transition-none"
+              : "transition-[width] duration-panel ease-in-out"
+          } ${resolveMainSidebarEdgeClassName({
+            desktop: desktopHost,
+            transparent: transparentChromeEnabled,
+          })}`}
+          style={{ width: sidebarOpen ? sidebarWidth : 0 }}
+        >
+          <div className="flex h-[46px] shrink-0 items-center" data-tauri-drag-region="true">
+            <div className={`flex h-full items-center gap-2 ${macWindowControlsInsetClass}`}>
+              <IconButton
+                tone="sidebar"
+                size="sm"
+                onClick={() => setSidebarOpen(false)}
+                title="Hide sidebar"
+                className="rounded-md"
+              >
+                <SplitPanelLeft className="icon-control [font-size:var(--text-ui)]" />
+              </IconButton>
+            </div>
+          </div>
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <MainSidebar />
+          </div>
+        </div>
+
+        {sidebarOpen && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-controls="cowork-sidebar"
+            onMouseDown={onLeftSeparatorDown}
+            className="relative z-10 flex w-1 shrink-0 cursor-col-resize items-center justify-center -ml-1 hover:bg-primary/30 active:bg-primary/50 transition-colors"
+          />
+        )}
+
+        <div
+          className={`flex min-w-0 flex-1 flex-col overflow-hidden ${chromeClasses.contentShell}`}
+        >
+          <div
+            className={chromeClasses.header}
+            data-tauri-drag-region="true"
+          >
+            {!sidebarOpen && (
+              <div className={`flex items-center gap-2 pr-2 ${macWindowControlsInsetClass}`}>
+                <IconButton
+                  size="sm"
+                  onClick={() => setSidebarOpen(true)}
+                  title="Show sidebar"
+                  className="rounded-md"
+                >
+                  <SplitPanelLeft className="icon-control [font-size:var(--text-ui)]" />
+                </IconButton>
+              </div>
+            )}
+            <CoworkWorkspaceHeader
+              title={headerTitle}
+              sidebarOpen={sidebarOpen}
+              rightPanelOpen={rightPanelOpen}
+              showArtifactsToggle={canShowArtifactPanel}
+              onToggleSidebar={toggleSidebar}
+              onToggleRightPanel={toggleRightPanel}
+            />
+          </div>
+
+          <div className="flex min-h-0 flex-1 overflow-hidden bg-sidebar-background">
+            <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-x-0 top-0 z-10 h-6 bg-gradient-to-b from-background to-transparent"
+              />
+              <ChatView
+                showWorkspaceStatusPanels={false}
+              />
+            </div>
+
+            {canShowArtifactPanel && rightPanelOpen && (
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                onMouseDown={onRightSeparatorDown}
+                className="relative z-10 flex w-1 shrink-0 cursor-col-resize items-center justify-center -mr-1 hover:bg-primary/30 active:bg-primary/50 transition-colors"
+              />
+            )}
+
+            <div
+              className={`shrink-0 overflow-hidden ${
+                rightPanelResizing
+                  ? "transition-none"
+                  : "transition-[width] duration-panel ease-in-out"
+              }`}
+              style={{ width: canShowArtifactPanel && rightPanelOpen ? rightPanelWidth : 0 }}
+              data-cowork-artifact-pane
+            >
+              <div className="h-full" style={{ minWidth: 320 }}>
+                {workspaceId ? <CoworkArtifactsPanel workspaceId={workspaceId} /> : null}
+              </div>
+            </div>
+          </div>
+        </div>
+    </div>
+  );
+}

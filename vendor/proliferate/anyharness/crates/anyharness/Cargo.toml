@@ -1,0 +1,32 @@
+[package]
+name = "anyharness"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "AnyHarness runtime binary"
+
+[[bin]]
+name = "anyharness"
+path = "src/main.rs"
+
+[dependencies]
+serde_json.workspace = true
+anyharness-lib.workspace = true
+proliferate-diagnostics-client.workspace = true
+axum.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+file-rotate.workspace = true
+anyhow.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+sentry.workspace = true
+sentry-anyhow.workspace = true
+sentry-tracing.workspace = true
+proliferate-diagnostics-protocol.workspace = true
+
+[dev-dependencies]
+sentry = { workspace = true, features = ["test"] }

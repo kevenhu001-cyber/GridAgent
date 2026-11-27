@@ -1,0 +1,124 @@
+# Dependencies
+node_modules/
+.venv/
+# Also ignore a `.venv` SYMLINK, which the trailing-slash pattern above does not
+# match: a worktree that points at the main checkout's venv would otherwise let
+# `git add server/` commit the link, and CI's `uv venv .venv` then fails with
+# "File exists".
+.venv
+
+reference/
+
+# Build output
+install.log
+dist/
+out/
+target/
+# EAS applies the repository ignore rules when it assembles the mobile
+# monorepo archive. Keep this ProductClient source domain in that archive even
+# though its ownership-correct name matches Cargo's build-output directory.
+!apps/packages/product-client/src/lib/domain/automations/target/
+!apps/packages/product-client/src/lib/domain/automations/target/**
+apps/desktop/index.js
+# ProductClient qualification build canary output (Desktop host build)
+apps/desktop/dist-product-client-qualification/
+*.db
+*.db-wal
+*.db-shm
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.vscode/
+.idea/
+# Claude Code state. A nested `.claude/` anywhere (directory-scoped settings in a
+# sub-package) stays fully ignored; only the repository-root one is opened up, and
+# only for `skills/`, which is shared tooling. Order matters: the anchored rules
+# below must come after the unanchored one to win.
+.claude/
+!/.claude/
+/.claude/*
+!/.claude/skills/
+*.swp
+*.swo
+.cursorindexingignore
+
+# Cursor / Specstory
+.specstory/
+
+# Environment
+.env
+e2b-connection.json
+.env.local
+.env.prod
+.env.prod.server
+.env.*.local
+/server/deploy/.bootstrap-progress.log
+
+reference/
+references/
+# Generated cloud client OpenAPI spec (intermediate artifact, regenerated from Python)
+server/openapi.json
+
+# dev-build.mjs staleness stamps for generated OpenAPI clients
+anyharness/sdk/generated/.dev-build-key
+cloud/sdk/src/generated/.dev-build-key
+
+# Tauri build outputs and sidecar binaries
+apps/desktop/src-tauri/binaries/
+apps/desktop/src-tauri/gen/
+# Materialized TEST-ONLY updater overlay (never committed; the .template is)
+apps/desktop/src-tauri/updater-test.conf.json
+
+# CI / release artifacts
+anyharness-sdk.tgz
+*.tgz
+*.dmg
+*.msi
+
+# Logs and runtime artifacts
+logs/
+recordings/
+anyharness/recordings/
+apps/desktop/src/lib/domain/chat/__fixtures__/recorded/
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+
+# Scratch files
+context.md
+email.tsx
+codex/
+/.delegated-agents-*-worktree
+/*.txt
+
+# Lock files not managed by workspace
+package-lock.json
+.vercel
+
+# Apple Sign in Keys / App Store Connect API keys
+*.p8
+.probe-secrets.env
+.auth-env/.env.*
+
+# Standalone design-system workspace (UI scratch, not wired into build)
+design-system/
+
+# Stray local debug log dumps
+/logs*.json
+
+# Python bytecode from running scripts/*.py locally
+__pycache__/
+*.pyc
+
+# Build-time copy of the agent catalog for @proliferate/product-client
+# (emitted by apps/packages/product-client/scripts/copy-product-client-assets.mjs
+# from catalogs/agents/catalog.json)
+apps/packages/product-client/src/generated/
+
+# Local dev symlink into the root workspace node_modules (never committed)
+tests/release/node_modules
+tmp/

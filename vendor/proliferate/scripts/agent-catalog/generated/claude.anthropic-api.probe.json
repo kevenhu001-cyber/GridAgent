@@ -1,0 +1,792 @@
+{
+  "probedAt": "2026-08-17T20:42:06.076672+00:00",
+  "agentKind": "claude",
+  "authContext": "anthropic-api",
+  "attestation": {
+    "name": "@proliferate/claude-agent-acp",
+    "version": "0.66.0-proliferate.2",
+    "title": "Claude Agent"
+  },
+  "modelSource": "modelConfigOption",
+  "nativeCli": {
+    "path": "/Users/pablohansen/.proliferate-local/anyharness/agents/claude/native/claude",
+    "version": "2.1.234 (Claude Code)"
+  },
+  "trials": [
+    {
+      "modelId": "claude-fable-5",
+      "accepted": true,
+      "name": "Fable",
+      "configOptions": [
+        {
+          "category": "mode",
+          "currentValue": "default",
+          "description": "Session permission mode",
+          "id": "mode",
+          "name": "Mode",
+          "options": [
+            {
+              "description": "Use a model classifier to approve/deny permission prompts",
+              "name": "Auto",
+              "value": "auto"
+            },
+            {
+              "description": "Standard behavior, prompts for dangerous operations",
+              "name": "Manual",
+              "value": "default"
+            },
+            {
+              "description": "Auto-accept file edit operations",
+              "name": "Accept Edits",
+              "value": "acceptEdits"
+            },
+            {
+              "description": "Planning mode, no actual tool execution",
+              "name": "Plan Mode",
+              "value": "plan"
+            },
+            {
+              "description": "Don't prompt for permissions, deny if not pre-approved",
+              "name": "Don't Ask",
+              "value": "dontAsk"
+            },
+            {
+              "description": "Bypass all permission checks",
+              "name": "Bypass Permissions",
+              "value": "bypassPermissions"
+            }
+          ],
+          "type": "select"
+        },
+        {
+          "category": "model",
+          "currentValue": "claude-fable-5",
+          "description": "AI model to use",
+          "id": "model",
+          "name": "Model",
+          "options": [
+            {
+              "description": "Use the default model (currently Opus 5 (1M context)) · $5/$25 per Mtok",
+              "name": "Default (recommended)",
+              "value": "default"
+            },
+            {
+              "description": "Opus 5 with 1M context · Best for everyday, complex tasks · $5/$25 per Mtok",
+              "name": "Opus (1M context)",
+              "value": "opus[1m]"
+            },
+            {
+              "description": "Fable 5 · Most capable for your hardest and longest-running tasks",
+              "name": "Fable",
+              "value": "claude-fable-5"
+            },
+            {
+              "description": "Sonnet 5 · Efficient for routine tasks · $3/$15 per Mtok",
+              "name": "Sonnet",
+              "value": "sonnet"
+            },
+            {
+              "description": "Haiku 4.5 · Fastest for quick answers · $1/$5 per Mtok",
+              "name": "Haiku",
+              "value": "haiku"
+            }
+          ],
+          "type": "select"
+        },
+        {
+          "category": "thought_level",
+          "currentValue": "default",
+          "description": "Available effort levels for this model",
+          "id": "effort",
+          "name": "Effort",
+          "options": [
+            {
+              "name": "Default",
+              "value": "default"
+            },
+            {
+              "name": "Low",
+              "value": "low"
+            },
+            {
+              "name": "Medium",
+              "value": "medium"
+            },
+            {
+              "name": "High",
+              "value": "high"
+            },
+            {
+              "name": "Xhigh",
+              "value": "xhigh"
+            },
+            {
+              "name": "Max",
+              "value": "max"
+            }
+          ],
+          "type": "select"
+        }
+      ]
+    },
+    {
+      "modelId": "claude-opus-4-8",
+      "accepted": true,
+      "name": "Opus 4.8",
+      "configOptions": [
+        {
+          "category": "mode",
+          "currentValue": "default",
+          "description": "Session permission mode",
+          "id": "mode",
+          "name": "Mode",
+          "options": [
+            {
+              "description": "Use a model classifier to approve/deny permission prompts",
+              "name": "Auto",
+              "value": "auto"
+            },
+            {
+              "description": "Standard behavior, prompts for dangerous operations",
+              "name": "Manual",
+              "value": "default"
+            },
+            {
+              "description": "Auto-accept file edit operations",
+              "name": "Accept Edits",
+              "value": "acceptEdits"
+            },
+            {
+              "description": "Planning mode, no actual tool execution",
+              "name": "Plan Mode",
+              "value": "plan"
+            },
+            {
+              "description": "Don't prompt for permissions, deny if not pre-approved",
+              "name": "Don't Ask",
+              "value": "dontAsk"
+            },
+            {
+              "description": "Bypass all permission checks",
+              "name": "Bypass Permissions",
+              "value": "bypassPermissions"
+            }
+          ],
+          "type": "select"
+        },
+        {
+          "category": "model",
+          "currentValue": "claude-opus-4-8",
+          "description": "AI model to use",
+          "id": "model",
+          "name": "Model",
+          "options": [
+            {
+              "description": "Use the default model (currently Opus 5 (1M context)) · $5/$25 per Mtok",
+              "name": "Default (recommended)",
+              "value": "default"
+            },
+            {
+              "description": "Opus 5 with 1M context · Best for everyday, complex tasks · $5/$25 per Mtok",
+              "name": "Opus (1M context)",
+              "value": "opus[1m]"
+            },
+            {
+              "description": "Sonnet 5 · Efficient for routine tasks · $3/$15 per Mtok",
+              "name": "Sonnet",
+              "value": "sonnet"
+            },
+            {
+              "description": "Haiku 4.5 · Fastest for quick answers · $1/$5 per Mtok",
+              "name": "Haiku",
+              "value": "haiku"
+            },
+            {
+              "description": "Newer version available · select Opus for Opus 5",
+              "name": "Opus 4.8",
+              "value": "claude-opus-4-8"
+            }
+          ],
+          "type": "select"
+        },
+        {
+          "category": "thought_level",
+          "currentValue": "default",
+          "description": "Available effort levels for this model",
+          "id": "effort",
+          "name": "Effort",
+          "options": [
+            {
+              "name": "Default",
+              "value": "default"
+            },
+            {
+              "name": "Low",
+              "value": "low"
+            },
+            {
+              "name": "Medium",
+              "value": "medium"
+            },
+            {
+              "name": "High",
+              "value": "high"
+            },
+            {
+              "name": "Xhigh",
+              "value": "xhigh"
+            },
+            {
+              "name": "Max",
+              "value": "max"
+            }
+          ],
+          "type": "select"
+        },
+        {
+          "category": "model_config",
+          "currentValue": "off",
+          "description": "Faster responses on supported models",
+          "id": "fast",
+          "name": "Fast mode",
+          "options": [
+            {
+              "name": "On",
+              "value": "on"
+            },
+            {
+              "name": "Off",
+              "value": "off"
+            }
+          ],
+          "type": "select"
+        }
+      ]
+    }
+  ],
+  "currentModelId": null,
+  "currentModeId": "default",
+  "modes": {
+    "availableModes": [
+      {
+        "description": "Use a model classifier to approve/deny permission prompts",
+        "id": "auto",
+        "name": "Auto"
+      },
+      {
+        "description": "Standard behavior, prompts for dangerous operations",
+        "id": "default",
+        "name": "Manual"
+      },
+      {
+        "description": "Auto-accept file edit operations",
+        "id": "acceptEdits",
+        "name": "Accept Edits"
+      },
+      {
+        "description": "Planning mode, no actual tool execution",
+        "id": "plan",
+        "name": "Plan Mode"
+      },
+      {
+        "description": "Don't prompt for permissions, deny if not pre-approved",
+        "id": "dontAsk",
+        "name": "Don't Ask"
+      },
+      {
+        "description": "Bypass all permission checks",
+        "id": "bypassPermissions",
+        "name": "Bypass Permissions"
+      }
+    ],
+    "currentModeId": "default"
+  },
+  "baselineConfigOptions": [
+    {
+      "category": "mode",
+      "currentValue": "default",
+      "description": "Session permission mode",
+      "id": "mode",
+      "name": "Mode",
+      "options": [
+        {
+          "description": "Use a model classifier to approve/deny permission prompts",
+          "name": "Auto",
+          "value": "auto"
+        },
+        {
+          "description": "Standard behavior, prompts for dangerous operations",
+          "name": "Manual",
+          "value": "default"
+        },
+        {
+          "description": "Auto-accept file edit operations",
+          "name": "Accept Edits",
+          "value": "acceptEdits"
+        },
+        {
+          "description": "Planning mode, no actual tool execution",
+          "name": "Plan Mode",
+          "value": "plan"
+        },
+        {
+          "description": "Don't prompt for permissions, deny if not pre-approved",
+          "name": "Don't Ask",
+          "value": "dontAsk"
+        },
+        {
+          "description": "Bypass all permission checks",
+          "name": "Bypass Permissions",
+          "value": "bypassPermissions"
+        }
+      ],
+      "type": "select"
+    },
+    {
+      "category": "model",
+      "currentValue": "default",
+      "description": "AI model to use",
+      "id": "model",
+      "name": "Model",
+      "options": [
+        {
+          "description": "Use the default model (currently Opus 5 (1M context)) · $5/$25 per Mtok",
+          "name": "Default (recommended)",
+          "value": "default"
+        },
+        {
+          "description": "Opus 5 with 1M context · Best for everyday, complex tasks · $5/$25 per Mtok",
+          "name": "Opus (1M context)",
+          "value": "opus[1m]"
+        },
+        {
+          "description": "Sonnet 5 · Efficient for routine tasks · $3/$15 per Mtok",
+          "name": "Sonnet",
+          "value": "sonnet"
+        },
+        {
+          "description": "Haiku 4.5 · Fastest for quick answers · $1/$5 per Mtok",
+          "name": "Haiku",
+          "value": "haiku"
+        }
+      ],
+      "type": "select"
+    },
+    {
+      "category": "thought_level",
+      "currentValue": "default",
+      "description": "Available effort levels for this model",
+      "id": "effort",
+      "name": "Effort",
+      "options": [
+        {
+          "name": "Default",
+          "value": "default"
+        },
+        {
+          "name": "Low",
+          "value": "low"
+        },
+        {
+          "name": "Medium",
+          "value": "medium"
+        },
+        {
+          "name": "High",
+          "value": "high"
+        },
+        {
+          "name": "Xhigh",
+          "value": "xhigh"
+        },
+        {
+          "name": "Max",
+          "value": "max"
+        }
+      ],
+      "type": "select"
+    },
+    {
+      "category": "model_config",
+      "currentValue": "off",
+      "description": "Faster responses on supported models",
+      "id": "fast",
+      "name": "Fast mode",
+      "options": [
+        {
+          "name": "On",
+          "value": "on"
+        },
+        {
+          "name": "Off",
+          "value": "off"
+        }
+      ],
+      "type": "select"
+    }
+  ],
+  "models": [
+    {
+      "modelId": "default",
+      "name": "Default (recommended)",
+      "description": "Use the default model (currently Opus 5 (1M context)) · $5/$25 per Mtok",
+      "configOptions": [
+        {
+          "category": "mode",
+          "currentValue": "default",
+          "description": "Session permission mode",
+          "id": "mode",
+          "name": "Mode",
+          "options": [
+            {
+              "description": "Use a model classifier to approve/deny permission prompts",
+              "name": "Auto",
+              "value": "auto"
+            },
+            {
+              "description": "Standard behavior, prompts for dangerous operations",
+              "name": "Manual",
+              "value": "default"
+            },
+            {
+              "description": "Auto-accept file edit operations",
+              "name": "Accept Edits",
+              "value": "acceptEdits"
+            },
+            {
+              "description": "Planning mode, no actual tool execution",
+              "name": "Plan Mode",
+              "value": "plan"
+            },
+            {
+              "description": "Don't prompt for permissions, deny if not pre-approved",
+              "name": "Don't Ask",
+              "value": "dontAsk"
+            },
+            {
+              "description": "Bypass all permission checks",
+              "name": "Bypass Permissions",
+              "value": "bypassPermissions"
+            }
+          ],
+          "type": "select"
+        },
+        {
+          "category": "model",
+          "currentValue": "default",
+          "description": "AI model to use",
+          "id": "model",
+          "name": "Model",
+          "options": [],
+          "type": "select",
+          "valuesElided": true
+        },
+        {
+          "category": "thought_level",
+          "currentValue": "default",
+          "description": "Available effort levels for this model",
+          "id": "effort",
+          "name": "Effort",
+          "options": [
+            {
+              "name": "Default",
+              "value": "default"
+            },
+            {
+              "name": "Low",
+              "value": "low"
+            },
+            {
+              "name": "Medium",
+              "value": "medium"
+            },
+            {
+              "name": "High",
+              "value": "high"
+            },
+            {
+              "name": "Xhigh",
+              "value": "xhigh"
+            },
+            {
+              "name": "Max",
+              "value": "max"
+            }
+          ],
+          "type": "select"
+        },
+        {
+          "category": "model_config",
+          "currentValue": "off",
+          "description": "Faster responses on supported models",
+          "id": "fast",
+          "name": "Fast mode",
+          "options": [
+            {
+              "name": "On",
+              "value": "on"
+            },
+            {
+              "name": "Off",
+              "value": "off"
+            }
+          ],
+          "type": "select"
+        }
+      ]
+    },
+    {
+      "modelId": "opus[1m]",
+      "name": "Opus (1M context)",
+      "description": "Opus 5 with 1M context · Best for everyday, complex tasks · $5/$25 per Mtok",
+      "configOptions": [
+        {
+          "category": "mode",
+          "currentValue": "default",
+          "description": "Session permission mode",
+          "id": "mode",
+          "name": "Mode",
+          "options": [
+            {
+              "description": "Use a model classifier to approve/deny permission prompts",
+              "name": "Auto",
+              "value": "auto"
+            },
+            {
+              "description": "Standard behavior, prompts for dangerous operations",
+              "name": "Manual",
+              "value": "default"
+            },
+            {
+              "description": "Auto-accept file edit operations",
+              "name": "Accept Edits",
+              "value": "acceptEdits"
+            },
+            {
+              "description": "Planning mode, no actual tool execution",
+              "name": "Plan Mode",
+              "value": "plan"
+            },
+            {
+              "description": "Don't prompt for permissions, deny if not pre-approved",
+              "name": "Don't Ask",
+              "value": "dontAsk"
+            },
+            {
+              "description": "Bypass all permission checks",
+              "name": "Bypass Permissions",
+              "value": "bypassPermissions"
+            }
+          ],
+          "type": "select"
+        },
+        {
+          "category": "model",
+          "currentValue": "opus[1m]",
+          "description": "AI model to use",
+          "id": "model",
+          "name": "Model",
+          "options": [],
+          "type": "select",
+          "valuesElided": true
+        },
+        {
+          "category": "thought_level",
+          "currentValue": "default",
+          "description": "Available effort levels for this model",
+          "id": "effort",
+          "name": "Effort",
+          "options": [
+            {
+              "name": "Default",
+              "value": "default"
+            },
+            {
+              "name": "Low",
+              "value": "low"
+            },
+            {
+              "name": "Medium",
+              "value": "medium"
+            },
+            {
+              "name": "High",
+              "value": "high"
+            },
+            {
+              "name": "Xhigh",
+              "value": "xhigh"
+            },
+            {
+              "name": "Max",
+              "value": "max"
+            }
+          ],
+          "type": "select"
+        },
+        {
+          "category": "model_config",
+          "currentValue": "off",
+          "description": "Faster responses on supported models",
+          "id": "fast",
+          "name": "Fast mode",
+          "options": [
+            {
+              "name": "On",
+              "value": "on"
+            },
+            {
+              "name": "Off",
+              "value": "off"
+            }
+          ],
+          "type": "select"
+        }
+      ]
+    },
+    {
+      "modelId": "sonnet",
+      "name": "Sonnet",
+      "description": "Sonnet 5 · Efficient for routine tasks · $3/$15 per Mtok",
+      "configOptions": [
+        {
+          "category": "mode",
+          "currentValue": "default",
+          "description": "Session permission mode",
+          "id": "mode",
+          "name": "Mode",
+          "options": [
+            {
+              "description": "Use a model classifier to approve/deny permission prompts",
+              "name": "Auto",
+              "value": "auto"
+            },
+            {
+              "description": "Standard behavior, prompts for dangerous operations",
+              "name": "Manual",
+              "value": "default"
+            },
+            {
+              "description": "Auto-accept file edit operations",
+              "name": "Accept Edits",
+              "value": "acceptEdits"
+            },
+            {
+              "description": "Planning mode, no actual tool execution",
+              "name": "Plan Mode",
+              "value": "plan"
+            },
+            {
+              "description": "Don't prompt for permissions, deny if not pre-approved",
+              "name": "Don't Ask",
+              "value": "dontAsk"
+            },
+            {
+              "description": "Bypass all permission checks",
+              "name": "Bypass Permissions",
+              "value": "bypassPermissions"
+            }
+          ],
+          "type": "select"
+        },
+        {
+          "category": "model",
+          "currentValue": "sonnet",
+          "description": "AI model to use",
+          "id": "model",
+          "name": "Model",
+          "options": [],
+          "type": "select",
+          "valuesElided": true
+        },
+        {
+          "category": "thought_level",
+          "currentValue": "default",
+          "description": "Available effort levels for this model",
+          "id": "effort",
+          "name": "Effort",
+          "options": [
+            {
+              "name": "Default",
+              "value": "default"
+            },
+            {
+              "name": "Low",
+              "value": "low"
+            },
+            {
+              "name": "Medium",
+              "value": "medium"
+            },
+            {
+              "name": "High",
+              "value": "high"
+            },
+            {
+              "name": "Xhigh",
+              "value": "xhigh"
+            },
+            {
+              "name": "Max",
+              "value": "max"
+            }
+          ],
+          "type": "select"
+        }
+      ]
+    },
+    {
+      "modelId": "haiku",
+      "name": "Haiku",
+      "description": "Haiku 4.5 · Fastest for quick answers · $1/$5 per Mtok",
+      "configOptions": [
+        {
+          "category": "mode",
+          "currentValue": "default",
+          "description": "Session permission mode",
+          "id": "mode",
+          "name": "Mode",
+          "options": [
+            {
+              "description": "Standard behavior, prompts for dangerous operations",
+              "name": "Manual",
+              "value": "default"
+            },
+            {
+              "description": "Auto-accept file edit operations",
+              "name": "Accept Edits",
+              "value": "acceptEdits"
+            },
+            {
+              "description": "Planning mode, no actual tool execution",
+              "name": "Plan Mode",
+              "value": "plan"
+            },
+            {
+              "description": "Don't prompt for permissions, deny if not pre-approved",
+              "name": "Don't Ask",
+              "value": "dontAsk"
+            },
+            {
+              "description": "Bypass all permission checks",
+              "name": "Bypass Permissions",
+              "value": "bypassPermissions"
+            }
+          ],
+          "type": "select"
+        },
+        {
+          "category": "model",
+          "currentValue": "haiku",
+          "description": "AI model to use",
+          "id": "model",
+          "name": "Model",
+          "options": [],
+          "type": "select",
+          "valuesElided": true
+        }
+      ]
+    }
+  ],
+  "warnings": []
+}

@@ -1,0 +1,433 @@
+/* @vitest-environment jsdom */
+
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AnyHarnessError, type CoworkThread } from "@anyharness/sdk";
+import { CoworkThreadsSection } from "#product/components/workspace/cowork/sidebar/CoworkThreadsSection";
+import {
+  buildPendingWorkspaceUiKey,
+  buildSubmittingPendingWorkspaceEntry,
+  type PendingWorkspaceEntry,
+} from "#product/lib/domain/workspaces/creation/pending-entry";
+import { useSessionSelectionStore } from "#product/stores/sessions/session-selection-store";
+import {
+  EMPTY_PENDING_WORKSPACE_REGISTRY,
+  type PendingWorkspaceRegistry,
+  upsertPendingWorkspaceEntry,
+} from "#product/lib/domain/workspaces/creation/pending-entry-registry";
+
+const coworkState = vi.hoisted(() => ({
+  statusLoading: false,
+  threadsLoading: false,
+  threads: [] as CoworkThread[],
+  createThread: vi.fn(),
+  openThread: vi.fn(),
+  isCreatingThread: false,
+}));
+
+vi.mock("#product/primitives/Skeleton", () => ({
+  SkeletonBlock: () => <div data-testid="threads-skeleton" />,
+}));
+
+vi.mock("#product/primitives/icons/core", () => ({
+  Plus: () => <span data-testid="plus-icon" />,
+}));
+
+vi.mock("#product/primitives/patterns/sidebar/SidebarActionButton", () => ({
+  SidebarActionButton: ({
+    children,
+    disabled,
+    onClick,
+    title,
+  }: {
+    children: ReactNode;
+    disabled?: boolean;
+    onClick?: () => void;
+    title: string;
+  }) => (
+    <button type="button" aria-label={title} disabled={disabled} onClick={onClick}>
+      {children}
+    </button>
+  ),
+}));
+
+vi.mock("#product/components/workspace/shell/sidebar/SidebarIndicators", () => ({
+  SidebarStatusIndicatorView: ({ indicator }: { indicator: { kind: string } | null }) => (
+    <span data-testid={indicator ? `status-${indicator.kind}` : "status-none"} />
+  ),
+}));
+
+vi.mock("#product/components/workspace/shell/sidebar/ProductSidebarLayout", () => ({
+  ProductSidebarSectionHeader: ({
+    actions,
+    label,
+  }: {
+    actions?: ReactNode;
+    label: string;
+  }) => (
+    <div>
+      <h2>{label}</h2>
+      {actions}
+    </div>
+  ),
+}));
+
+vi.mock("#product/components/workspace/shell/sidebar/ProductSidebarThreads", () => ({
+  ProductSidebarThreadRow: ({
+    active,
+    label,
+    status,
+    trailingStatus,
+    trailingLabel,
+  }: {
+    active?: boolean;
+    label: ReactNode;
+    status?: ReactNode;
+    trailingStatus?: ReactNode;
+    trailingLabel?: string | null;
+  }) => (
+    <div data-testid="thread-row" data-active={String(!!active)}>
+      {status}
+      <span>{label}</span>
+      {trailingStatus}
+      {trailingLabel ? <span>{trailingLabel}</span> : null}
+    </div>
+  ),
+}));
+
+vi.mock("#product/components/workspace/cowork/sidebar/CoworkThreadItem", () => ({
+  CoworkThreadItem: ({ thread }: { thread: CoworkThread }) => (
+    <div data-testid="real-thread-row">{thread.title ?? thread.id}</div>
+  ),
+}));
+
+vi.mock("#product/components/workspace/shell/sidebar/ProductSidebarShowToggleRow", () => ({
+  ProductSidebarShowToggleRow: ({ label }: { label: string }) => <button type="button">{label}</button>,
+}));
+
+vi.mock("#product/hooks/access/anyharness/cowork/use-cowork-status", () => ({
+  useCoworkStatus: () => ({
+    status: { enabled: true },
+    isLoading: coworkState.statusLoading,
+  }),
+}));
+
+vi.mock("#product/hooks/access/anyharness/cowork/use-cowork-threads", () => ({
+  useCoworkThreads: () => ({
+    threads: coworkState.threads,
+    isLoading: coworkState.threadsLoading,
+  }),
+}));
+
+vi.mock("#product/hooks/cowork/workflows/use-cowork-thread-workflow", () => ({
+  useCoworkThreadWorkflow: () => ({
+    createThread: coworkState.createThread,
+    openThread: coworkState.openThread,
+    isCreatingThread: coworkState.isCreatingThread,
+  }),
+}));
+
+vi.mock("#product/hooks/workspaces/derived/use-workspace-sidebar-activities", () => ({
+  useWorkspaceSidebarActivityStates: () => ({}),
+}));
+
+const workspaceUiState = vi.hoisted(() => ({
+  threadsCollapsed: false,
+  setThreadsCollapsed: vi.fn(),
+}));
+
+vi.mock("#product/stores/preferences/workspace-ui-store", () => ({
+  useWorkspaceUiStore: (selector: (state: typeof workspaceUiState) => unknown) =>
+    selector(workspaceUiState),
+}));
+
+describe("CoworkThreadsSection", () => {
+  beforeEach(() => {
+    coworkState.statusLoading = false;
+    coworkState.threadsLoading = false;
+    coworkState.threads = [];
+    coworkState.isCreatingThread = false;
+    coworkState.createThread.mockClear();
+    coworkState.openThread.mockClear();
+    workspaceUiState.threadsCollapsed = false;
+    workspaceUiState.setThreadsCollapsed.mockClear();
+    useSessionSelectionStore.getState().clearSelection();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("consumes receipt-bearing create failures at the intentional UI boundary", async () => {
+    const rejection = Promise.reject(new AnyHarnessError({
+      type: "about:blank",
+      title: "Model is not available",
+      status: 400,
+      code: "SESSION_MODEL_UNSUPPORTED",
+      instance: "urn:proliferate:anyharness:incident:8fd6ea9a-1246-4ef0-a526-9cc5f86ed960",
+    }));
+    const catchSpy = vi.spyOn(rejection, "catch");
+    coworkState.createThread.mockReturnValueOnce(rejection);
+    render(<CoworkThreadsSection />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Start a new thread" }));
+
+    expect(coworkState.createThread).toHaveBeenCalledOnce();
+    expect(catchSpy).toHaveBeenCalledOnce();
+    await Promise.resolve();
+  });
+
+  it("shows a pending cowork thread while the real thread list loads", () => {
+    const pendingEntry = buildSubmittingPendingWorkspaceEntry({
+      attemptId: "attempt-1",
+      selectedWorkspaceId: null,
+      source: "cowork-created",
+      displayName: "Untitled chat",
+      request: {
+        kind: "cowork",
+        input: {
+          agentKind: "claude",
+          modelId: "sonnet",
+          sourceWorkspaceId: null,
+        },
+      },
+    });
+    coworkState.threadsLoading = true;
+    useSessionSelectionStore.setState({
+      pendingWorkspaces: registryOf(pendingEntry),
+      selectedLogicalWorkspaceId: buildPendingWorkspaceUiKey(pendingEntry),
+    });
+
+    render(<CoworkThreadsSection />);
+
+    expect(screen.getByText("Untitled chat")).not.toBeNull();
+    // The trailing spinner alone marks the pending row (trailingStatus wins
+    // over any trailing label, so the row no longer carries "Setting up").
+    expect(screen.getByTestId("status-iterating")).not.toBeNull();
+    expect(screen.getByTestId("thread-row").getAttribute("data-active")).toBe("true");
+    expect(screen.queryByText("No chats yet")).toBeNull();
+    expect(screen.queryByTestId("threads-skeleton")).toBeNull();
+  });
+
+  it("keeps the pending projection and suppresses its real row until handoff completes", () => {
+    const pendingEntry = buildSubmittingPendingWorkspaceEntry({
+      attemptId: "attempt-2",
+      selectedWorkspaceId: null,
+      source: "cowork-created",
+      displayName: "Untitled chat",
+      request: {
+        kind: "cowork",
+        input: {
+          agentKind: "claude",
+          modelId: "sonnet",
+          sourceWorkspaceId: null,
+        },
+      },
+    });
+    useSessionSelectionStore.setState({
+      pendingWorkspaces: registryOf({
+        ...pendingEntry,
+        workspaceId: "workspace-cowork",
+      }),
+      selectedWorkspaceId: "workspace-cowork",
+    });
+    coworkState.threads = [{
+      id: "thread-1",
+      agentKind: "claude",
+      branchName: "main",
+      createdAt: "2026-01-01T00:00:00Z",
+      lastActivityAt: null,
+      repoRootId: "repo-root-1",
+      requestedModelId: "sonnet",
+      sessionId: "session-1",
+      title: "Real thread",
+      updatedAt: "2026-01-01T00:00:00Z",
+      workspaceDelegationEnabled: false,
+      workspaceId: "workspace-cowork",
+    }];
+
+    render(<CoworkThreadsSection />);
+
+    expect(screen.getByText("Untitled chat")).not.toBeNull();
+    expect(screen.getByTestId("status-iterating")).not.toBeNull();
+    expect(screen.queryByTestId("real-thread-row")).toBeNull();
+  });
+
+  it("shows the real thread after the pending handoff clears", () => {
+    coworkState.threads = [{
+      id: "thread-1",
+      agentKind: "claude",
+      branchName: "main",
+      createdAt: "2026-01-01T00:00:00Z",
+      lastActivityAt: null,
+      repoRootId: "repo-root-1",
+      requestedModelId: "sonnet",
+      sessionId: "session-1",
+      title: "Real thread",
+      updatedAt: "2026-01-01T00:00:00Z",
+      workspaceDelegationEnabled: false,
+      workspaceId: "workspace-cowork",
+    }];
+
+    render(<CoworkThreadsSection />);
+
+    expect(screen.queryByTestId("thread-row")).toBeNull();
+    expect(screen.getByTestId("real-thread-row").textContent).toBe("Real thread");
+  });
+
+  it("keeps the selected error projection when a materialized pending entry fails", () => {
+    const pendingEntry = buildSubmittingPendingWorkspaceEntry({
+      attemptId: "attempt-failed",
+      selectedWorkspaceId: null,
+      source: "cowork-created",
+      displayName: "Untitled chat",
+      request: {
+        kind: "cowork",
+        input: {
+          agentKind: "claude",
+          modelId: "sonnet",
+          sourceWorkspaceId: null,
+        },
+      },
+    });
+    useSessionSelectionStore.setState({
+      pendingWorkspaces: registryOf({
+        ...pendingEntry,
+        stage: "failed",
+        workspaceId: "workspace-cowork",
+        errorMessage: "Couldn't apply launch defaults",
+      }),
+      selectedWorkspaceId: "workspace-cowork",
+    });
+    coworkState.threads = [{
+      id: "thread-1",
+      agentKind: "claude",
+      branchName: "main",
+      createdAt: "2026-01-01T00:00:00Z",
+      lastActivityAt: null,
+      repoRootId: "repo-root-1",
+      requestedModelId: "sonnet",
+      sessionId: "session-1",
+      title: "Real thread",
+      updatedAt: "2026-01-01T00:00:00Z",
+      workspaceDelegationEnabled: false,
+      workspaceId: "workspace-cowork",
+    }];
+
+    render(<CoworkThreadsSection />);
+
+    expect(screen.getByTestId("thread-row")).not.toBeNull();
+    expect(screen.getByTestId("status-error")).not.toBeNull();
+    expect(screen.queryByTestId("real-thread-row")).toBeNull();
+  });
+
+  it("shows an error status when creation fails before materialization", () => {
+    const pendingEntry = buildSubmittingPendingWorkspaceEntry({
+      attemptId: "attempt-failed-before-create",
+      selectedWorkspaceId: null,
+      source: "cowork-created",
+      displayName: "Untitled chat",
+      request: {
+        kind: "cowork",
+        input: {
+          agentKind: "claude",
+          modelId: "sonnet",
+          sourceWorkspaceId: null,
+        },
+      },
+    });
+    useSessionSelectionStore.setState({
+      pendingWorkspaces: registryOf({
+        ...pendingEntry,
+        stage: "failed",
+        errorMessage: "Couldn't create chat",
+      }),
+      selectedLogicalWorkspaceId: buildPendingWorkspaceUiKey(pendingEntry),
+    });
+
+    render(<CoworkThreadsSection />);
+
+    expect(screen.getByTestId("status-error")).not.toBeNull();
+    expect(screen.queryByTestId("status-iterating")).toBeNull();
+  });
+
+  it("keeps a failed materialized row visible until the real query row arrives", () => {
+    const pendingEntry = buildSubmittingPendingWorkspaceEntry({
+      attemptId: "attempt-failed-awaiting-query",
+      selectedWorkspaceId: null,
+      source: "cowork-created",
+      displayName: "Untitled chat",
+      request: {
+        kind: "cowork",
+        input: {
+          agentKind: "claude",
+          modelId: "sonnet",
+          sourceWorkspaceId: null,
+        },
+      },
+    });
+    useSessionSelectionStore.setState({
+      pendingWorkspaces: registryOf({
+        ...pendingEntry,
+        stage: "failed",
+        workspaceId: "workspace-cowork",
+        errorMessage: "Couldn't apply launch defaults",
+      }),
+      selectedWorkspaceId: "workspace-cowork",
+    });
+
+    render(<CoworkThreadsSection />);
+
+    expect(screen.getByTestId("thread-row")).not.toBeNull();
+    expect(screen.getByTestId("status-error")).not.toBeNull();
+    expect(screen.queryByText("No chats yet")).toBeNull();
+  });
+
+  it("renders every cowork attempt, including the ones nobody is watching", () => {
+    const attended = coworkEntry("attempt-attended", "Watched chat");
+    const unattended = coworkEntry("attempt-unattended", "Background chat");
+    const failedUnattended = {
+      ...coworkEntry("attempt-failed-unattended", "Broken chat"),
+      stage: "failed" as const,
+      errorMessage: "Couldn't create chat",
+    };
+    useSessionSelectionStore.setState({
+      pendingWorkspaces: registryOf(attended, unattended, failedUnattended),
+      selectedLogicalWorkspaceId: buildPendingWorkspaceUiKey(attended),
+    });
+
+    render(<CoworkThreadsSection />);
+
+    const rows = screen.getAllByTestId("thread-row");
+    expect(rows).toHaveLength(3);
+    expect(rows.map((row) => row.getAttribute("data-active")))
+      .toEqual(["true", "false", "false"]);
+    expect(screen.getByText("Background chat")).not.toBeNull();
+    // The failure belongs to its own row: it does not take over the section,
+    // and the other two attempts keep their spinners.
+    expect(screen.getAllByTestId("status-iterating")).toHaveLength(2);
+    expect(screen.getAllByTestId("status-error")).toHaveLength(1);
+  });
+});
+
+function coworkEntry(attemptId: string, displayName: string): PendingWorkspaceEntry {
+  return buildSubmittingPendingWorkspaceEntry({
+    attemptId,
+    selectedWorkspaceId: null,
+    source: "cowork-created",
+    displayName,
+    request: {
+      kind: "cowork",
+      input: {
+        agentKind: "claude",
+        modelId: "sonnet",
+        sourceWorkspaceId: null,
+      },
+    },
+  });
+}
+
+function registryOf(...entries: PendingWorkspaceEntry[]): PendingWorkspaceRegistry {
+  return entries.reduce(upsertPendingWorkspaceEntry, EMPTY_PENDING_WORKSPACE_REGISTRY);
+}

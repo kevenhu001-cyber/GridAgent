@@ -1,0 +1,30 @@
+{
+  "private": true,
+  "scripts": {
+    "e2b:template": "node scripts/build-template.mjs",
+    "e2b:smoke": "node scripts/smoke-e2b-runtime.mjs",
+    "agent-gateway:phase0": "python3 scripts/agent-gateway-phase0-probe.py all",
+    "mobile:start": "pnpm --filter @proliferate/mobile start",
+    "mobile:typecheck": "pnpm --filter @proliferate/mobile typecheck",
+    "mobile:build:ios": "pnpm --filter @proliferate/mobile build:ios",
+    "mobile:submit:ios": "pnpm --filter @proliferate/mobile submit:ios",
+    "shared:build": "pnpm --filter @proliferate/design build && pnpm --filter @proliferate/product-client build",
+    "shared:typecheck": "pnpm --filter @proliferate/design build && pnpm --filter @proliferate/product-client typecheck",
+    "web:dev": "pnpm --filter @proliferate/web dev",
+    "web:build": "pnpm --filter @proliferate/web build",
+    "web:typecheck": "pnpm --filter @proliferate/cloud-sdk build && pnpm --filter @proliferate/cloud-sdk-react build && pnpm shared:build && pnpm --filter @proliferate/web typecheck",
+    "test:agent:setup": "node scripts/setup-agent-runtime-suite.mjs prepare",
+    "test:agent:cleanup": "node scripts/setup-agent-runtime-suite.mjs cleanup",
+    "test:agent:sdk": "pnpm --filter @anyharness/sdk test",
+    "test:agent:runtime:attached": "pnpm --filter @anyharness/sdk generate && pnpm --filter @anyharness/tests test",
+    "test:agent:runtime:local": "pnpm --filter @anyharness/sdk generate && node scripts/run-local-agent-runtime-suite.mjs",
+    "test:agent:local:fast": "pnpm test:agent:runtime:local",
+    "test:agent:local": "pnpm test:agent:sdk && pnpm test:agent:runtime:local"
+  },
+  "dependencies": {
+    "e2b": "^2.38.2"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}

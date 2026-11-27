@@ -1,0 +1,363 @@
+import type { ReactNode } from "react";
+import { Check, Copy, MoreHorizontal, Trash } from "#product/primitives/icons/core";
+import { Mail } from "#product/primitives/icons/platform";
+import { Badge } from "#product/primitives/Badge";
+import { Button } from "#product/primitives/Button";
+import {
+  POPOVER_SURFACE_CLASS,
+  PopoverButton,
+} from "#product/primitives/PopoverButton";
+import { PopoverMenuItem } from "#product/primitives/PopoverMenuItem";
+import { useProductHost } from "@proliferate/product-client/host/ProductHostProvider";
+import { Avatar } from "#product/components/settings/panes/organization/OrganizationLogo";
+import { buildProliferateApiUrl } from "#product/lib/infra/proliferate-api";
+import {
+  membershipStatusBadge,
+  type OrganizationInvitationRecord,
+  type OrganizationMemberRecord,
+  type OrganizationRole,
+} from "#product/lib/domain/organizations/organization-records";
+import { invitationDeliveryHint, type MemberListRow } from "#product/lib/domain/organizations/member-list-rows";
+import { useToastStore } from "#product/stores/toast/toast-store";
+
+const PEOPLE_GRID_CLASS =
+  "grid grid-cols-[minmax(0,1fr)_6.75rem_5.25rem_8rem_2.25rem] items-center gap-x-3";
+
+export function OrganizationMembersList({
+  rows,
+  hasRows,
+  canManage,
+  canManageOwners,
+  currentUserId,
+  updating,
+  onRoleChange,
+  onRemove,
+  onRevokeInvitation,
+}: {
+  rows: MemberListRow[];
+  hasRows: boolean;
+  canManage: boolean;
+  canManageOwners: boolean;
+  currentUserId: string | null;
+  updating: boolean;
+  onRoleChange: (membershipId: string, role: OrganizationRole) => void;
+  onRemove: (membershipId: string) => void;
+  onRevokeInvitation?: (invitationId: string) => void;
+}) {
+  return (
+    <div className="w-full overflow-hidden">
+      <div className="w-full">
+        <div className={`${PEOPLE_GRID_CLASS} border-b border-border-light px-3.5 py-3 text-ui-sm text-muted-foreground`}>
+          <span>Name</span>
+          <span>Date joined</span>
+          <span>Role</span>
+          <span>Authenticated with</span>
+          <span aria-label="Actions" />
+        </div>
+        <div className="divide-y divide-border-light">
+          {rows.map((row) => row.kind === "member" && row.member ? (
+            <MemberRow
+              key={row.key}
+              row={row}
+              member={row.member}
+              canManage={canManage}
+              canManageOwners={canManageOwners}
+              currentUserId={currentUserId}
+              updating={updating}
+              onRoleChange={onRoleChange}
+              onRemove={onRemove}
+            />
+          ) : row.invitation ? (
+            <InvitationRow
+              key={row.key}
+              row={row}
+              invitation={row.invitation}
+              canManage={canManage}
+              updating={updating}
+              onRevokeInvitation={onRevokeInvitation}
+            />
+          ) : null)}
+          {hasRows && rows.length === 0 ? (
+            <EmptyPeopleRow label="No members match these filters." />
+          ) : null}
+          {!hasRows ? (
+            <EmptyPeopleRow label="No members yet." />
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MemberRow({
+  row,
+  member,
+  canManage,
+  canManageOwners,
+  currentUserId,
+  updating,
+  onRoleChange,
+  onRemove,
+}: {
+  row: MemberListRow;
+  member: OrganizationMemberRecord;
+  canManage: boolean;
+  canManageOwners: boolean;
+  currentUserId: string | null;
+  updating: boolean;
+  onRoleChange: (membershipId: string, role: OrganizationRole) => void;
+  onRemove: (membershipId: string) => void;
+}) {
+  const isCurrentUser = member.userId === currentUserId;
+  const canChangeRole = canManage && !isCurrentUser && (member.role !== "owner" || canManageOwners);
+  const removeDisabled = !canManage || isCurrentUser;
+  const status = membershipStatusBadge(member.status);
+  const showStatusBadge = status.label !== "Active";
+
+  return (
+    <div className={`${PEOPLE_GRID_CLASS} min-h-[5.25rem] px-3.5 py-5`}>
+      <div className="flex min-w-0 items-center gap-3">
+        <Avatar member={member} />
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-ui font-medium leading-5 text-foreground" title={row.name}>
+              {row.name}
+            </span>
+            {isCurrentUser ? <Badge tone="success">You</Badge> : null}
+          </div>
+          <div className="truncate text-ui-sm text-muted-foreground" title={row.email}>
+            {row.email}
+          </div>
+        </div>
+      </div>
+      <MemberMeta value={row.dateLabel} />
+      <MemberMeta value={roleLabel(member.role)} />
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <span className="truncate text-ui-sm text-foreground">{row.authLabel}</span>
+        {showStatusBadge ? <Badge tone={status.tone}>{status.label}</Badge> : null}
+      </div>
+      <div className="flex justify-end">
+        <RowActionMenu
+          label={`Actions for ${member.email}`}
+          disabled={!canManage}
+        >
+          {(close) => (
+            <>
+              <RoleMenuItems
+                currentRole={member.role}
+                disabled={!canChangeRole || updating}
+                canManageOwners={canManageOwners}
+                onSelect={(role) => {
+                  onRoleChange(member.membershipId, role);
+                  close();
+                }}
+              />
+              <MenuSeparator />
+              <PopoverMenuItem
+                label="Remove"
+                icon={<Trash className="icon-paired" />}
+                disabled={removeDisabled || updating}
+                onClick={() => {
+                  onRemove(member.membershipId);
+                  close();
+                }}
+              />
+            </>
+          )}
+        </RowActionMenu>
+      </div>
+    </div>
+  );
+}
+
+function InvitationRow({
+  row,
+  invitation,
+  canManage,
+  updating,
+  onRevokeInvitation,
+}: {
+  row: MemberListRow;
+  invitation: OrganizationInvitationRecord;
+  canManage: boolean;
+  updating: boolean;
+  onRevokeInvitation?: (invitationId: string) => void;
+}) {
+  const host = useProductHost();
+  const { writeText } = host.clipboard;
+  const apiBaseUrl = host.deployment.apiBaseUrl;
+  const showToast = useToastStore((state) => state.show);
+  const deliveryHint = invitationDeliveryHint(invitation.deliveryStatus);
+
+  async function handleCopyInviteLink() {
+    const url = buildProliferateApiUrl(
+      `/register?token=${invitation.id}&email=${encodeURIComponent(invitation.email)}`,
+      apiBaseUrl,
+    );
+    try {
+      await writeText(url);
+      showToast("Invite link copied.", "info");
+    } catch {
+      showToast("Invite link could not be copied.");
+    }
+  }
+
+  return (
+    <div className={`${PEOPLE_GRID_CLASS} min-h-[5.25rem] px-3.5 py-5`}>
+      <div className="flex min-w-0 items-center gap-3">
+        {/* ui-foundation-escalation: bg-foreground/10 mapped to bg-muted (closest
+            semantic role for a muted icon-badge circle; no exact 10%-alpha
+            foreground role exists in the closed vocabulary) */}
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+          <Mail className="icon-paired" />
+        </span>
+        <div className="min-w-0">
+          <div className="truncate text-ui font-medium leading-5 text-foreground" title={row.name}>
+            {row.name}
+          </div>
+          <div className="truncate text-ui-sm text-muted-foreground" title={row.email}>
+            {row.email}
+          </div>
+          {deliveryHint && (
+            <div className="truncate text-ui-sm text-muted-foreground/80" title={deliveryHint}>
+              {deliveryHint}
+            </div>
+          )}
+        </div>
+      </div>
+      <MemberMeta value={row.dateLabel} />
+      <MemberMeta value={roleLabel(invitation.role)} />
+      <MemberMeta value={row.authLabel} />
+      <div className="flex justify-end">
+        <RowActionMenu
+          label={`Actions for ${invitation.email}`}
+          title="Invitation"
+          disabled={!canManage || !onRevokeInvitation}
+        >
+          {(close) => (
+<>
+              <PopoverMenuItem
+                label="Copy invite link"
+                icon={<Copy className="icon-paired" />}
+                onClick={() => {
+                  void handleCopyInviteLink();
+                  close();
+                }}
+              />
+              <PopoverMenuItem
+                label="Revoke invitation"
+                icon={<Trash className="icon-paired" />}
+                disabled={!onRevokeInvitation || updating}
+                onClick={() => {
+                  onRevokeInvitation?.(invitation.id);
+                  close();
+                }}
+              />
+            </>
+          )}
+        </RowActionMenu>
+      </div>
+    </div>
+  );
+}
+
+function MemberMeta({ value }: { value: ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <div className="truncate text-ui-sm text-foreground">{value}</div>
+    </div>
+  );
+}
+
+function EmptyPeopleRow({ label }: { label: string }) {
+  return (
+    <div className="px-3.5 py-6 text-center text-ui-sm text-muted-foreground">
+      {label}
+    </div>
+  );
+}
+
+function RoleMenuItems({
+  currentRole,
+  disabled,
+  canManageOwners,
+  onSelect,
+}: {
+  currentRole: OrganizationRole;
+  disabled: boolean;
+  canManageOwners: boolean;
+  onSelect: (role: OrganizationRole) => void;
+}) {
+  const roles: OrganizationRole[] = ["owner", "admin", "member"];
+  return (
+    <>
+      {roles.map((role) => (
+        <PopoverMenuItem
+          key={role}
+          label={`Make ${roleLabel(role).toLowerCase()}`}
+          disabled={disabled || role === currentRole || (role === "owner" && !canManageOwners)}
+          trailing={role === currentRole ? <Check className="icon-paired" /> : null}
+          onClick={() => {
+            onSelect(role);
+          }}
+        />
+      ))}
+    </>
+  );
+}
+
+function RowActionMenu({
+  label,
+  title,
+  disabled,
+  children,
+}: {
+  label: string;
+  title?: string;
+  disabled: boolean;
+  children: (close: () => void) => ReactNode;
+}) {
+  return (
+    <PopoverButton
+      align="end"
+      side="auto"
+      trigger={(
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label={label}
+          disabled={disabled}
+        >
+          <MoreHorizontal className="icon-paired" />
+        </Button>
+      )}
+      className={`w-48 ${POPOVER_SURFACE_CLASS}`}
+    >
+      {(close) => (
+        <>
+          {title ? <MenuTitle>{title}</MenuTitle> : null}
+          {children(close)}
+        </>
+      )}
+    </PopoverButton>
+  );
+}
+
+function MenuTitle({ children }: { children: ReactNode }) {
+  return (
+    <div className="px-3 pb-1.5 pt-2 text-ui-sm font-medium leading-4 text-muted-foreground">
+      {children}
+    </div>
+  );
+}
+
+function MenuSeparator() {
+  return <div className="my-1 h-px bg-border/60" />;
+}
+
+function roleLabel(role: string): string {
+  if (role === "owner") return "Owner";
+  if (role === "admin") return "Admin";
+  return "Member";
+}

@@ -1,0 +1,207 @@
+use std::sync::Arc;
+
+use agent_client_protocol as acp;
+use tokio::sync::Mutex;
+
+use crate::domains::sessions::live_config::{
+    snapshot_from_record, validate_canonical_live_config_current,
+};
+use crate::domains::sessions::model::PendingConfigChangeRecord;
+use crate::live::sessions::actor::command::SetConfigOptionCommandError;
+use crate::live::sessions::actor::config::apply::{
+    apply_specific_config_option, should_apply_model_via_direct_setter,
+};
+use crate::live::sessions::actor::config::selection::{
+    current_select_value, find_select_option_for_request, is_mode_config_request,
+    is_model_config_request, pending_config_rank, resolve_model_variant_value,
+    select_option_contains_value,
+};
+use crate::live::sessions::actor::config::types::PersistedSessionConfigState;
+use crate::live::sessions::actor::state::SessionStartupState;
+use crate::live::sessions::model::SessionStateDurable;
+use crate::live::sessions::sink::SessionEventSink;
+pub(in crate::live::sessions::actor) fn queue_pending_config_change(
+    store: &dyn SessionStateDurable,
+    session_id: &str,
+    startup_state: &SessionStartupState,
+    config_id: &str,
+    value: &str,
+    live_snapshot_authorized_model: bool,
+) -> Result<String, SetConfigOptionCommandError> {
+    let option = find_select_option_for_request(&startup_state.config_options, config_id);
+    let is_model_request = is_model_config_request(config_id, option);
+    let is_mode_request = is_mode_config_request(config_id, option);
+    let model_value_authorized = is_model_request && live_snapshot_authorized_model;
+    let resolved_value = option.map_or_else(
+        || value.to_string(),
+        |option| resolve_model_variant_value(option, value),
+    );
+    if resolved_value != value {
+        tracing::debug!(
+            session_id,
+            config_id,
+            requested = value,
+            resolved = %resolved_value,
+            "[model-switch] resolved queued bare model variant from live ACP config"
+        );
+    }
+    let value = resolved_value.as_str();
+
+    if option.is_none() && !is_model_request && !is_mode_request {
+        return Err(SetConfigOptionCommandError::Rejected(format!(
+            "Config option '{config_id}' is not exposed by the active session."
+        )));
+    }
+
+    if let Some(option) = option {
+        if !select_option_contains_value(option, value)
+            && !model_value_authorized
+            && (!is_mode_request || !startup_state.legacy_mode_contains_value(value))
+        {
+            return Err(SetConfigOptionCommandError::Rejected(format!(
+                "Value '{value}' is not valid for config option '{config_id}'."
+            )));
+        }
+    }
+
+    if is_model_request
+        && option.is_none()
+        && !model_value_authorized
+        && !should_apply_model_via_direct_setter(startup_state, value)
+    {
+        return Err(SetConfigOptionCommandError::Rejected(format!(
+            "Value '{value}' is not valid for config option '{config_id}'."
+        )));
+    }
+
+    if is_mode_request && !startup_state.legacy_mode_contains_value(value) {
+        return Err(SetConfigOptionCommandError::Rejected(format!(
+            "Value '{value}' is not valid for config option '{config_id}'."
+        )));
+    }
+
+    let queued_at = chrono::Utc::now().to_rfc3339();
+    store
+        .upsert_pending_config_change(&PendingConfigChangeRecord {
+            session_id: session_id.to_string(),
+            config_id: config_id.to_string(),
+            value: value.to_string(),
+            queued_at,
+        })
+        .map_err(|error| SetConfigOptionCommandError::Rejected(error.to_string()))?;
+
+    Ok(resolved_value)
+}
+
+pub(in crate::live::sessions::actor) fn config_request_matches_current_state(
+    startup_state: &SessionStartupState,
+    config_id: &str,
+    desired_value: &str,
+) -> bool {
+    let option = find_select_option_for_request(&startup_state.config_options, config_id);
+    let is_model_request = is_model_config_request(config_id, option);
+    let is_mode_request = is_mode_config_request(config_id, option);
+
+    option
+        .and_then(current_select_value)
+        .as_deref()
+        .is_some_and(|current| current == desired_value)
+        || (is_model_request && startup_state.current_model_id.as_deref() == Some(desired_value))
+        || (is_mode_request && startup_state.current_mode_id.as_deref() == Some(desired_value))
+}
+
+pub(in crate::live::sessions::actor) async fn apply_pending_config_changes_if_idle(
+    conn: &acp::ConnectionTo<acp::Agent>,
+    native_session_id: &str,
+    source_agent_kind: &str,
+    session_id: &str,
+    store: &dyn SessionStateDurable,
+    event_sink: &Arc<Mutex<SessionEventSink>>,
+    persisted_config_state: &mut PersistedSessionConfigState,
+    startup_state: &mut SessionStartupState,
+) -> anyhow::Result<()> {
+    let mut pending = store.list_pending_config_changes(session_id)?;
+    pending.sort_by_key(|change| pending_config_rank(startup_state, &change.config_id));
+
+    for change in pending {
+        let option = find_select_option_for_request(
+            &startup_state.config_options,
+            &change.config_id,
+        );
+        let is_model_request = is_model_config_request(&change.config_id, option);
+        let live_snapshot_authorized_model = if is_model_request {
+            pending_model_is_in_latest_live_snapshot(
+                store,
+                session_id,
+                &change.value,
+            )?
+        } else {
+            false
+        };
+        // A harness with no live model list can never satisfy snapshot
+        // membership; its queued switches ride the same direct-setter
+        // authorization the idle path uses.
+        if is_model_request
+            && !live_snapshot_authorized_model
+            && !should_apply_model_via_direct_setter(startup_state, &change.value)
+        {
+            tracing::warn!(
+                session_id,
+                config_id = %change.config_id,
+                value = %change.value,
+                "[model-switch] dropping queued model change absent from the latest live snapshot"
+            );
+            store.delete_pending_config_change(session_id, &change.config_id)?;
+            continue;
+        }
+
+        // Busy-time admission is not durable authorization. Replay validates
+        // model membership again against this session's latest canonical live
+        // snapshot so a value removed while the turn was running is never
+        // applied from the queue.
+        let result = apply_specific_config_option(
+            conn,
+            native_session_id,
+            source_agent_kind,
+            session_id,
+            store,
+            event_sink,
+            persisted_config_state,
+            startup_state,
+            &change.config_id,
+            &change.value,
+            live_snapshot_authorized_model,
+        )
+        .await;
+
+        match result {
+            Ok(_) => {
+                store.delete_pending_config_change(session_id, &change.config_id)?;
+            }
+            Err(SetConfigOptionCommandError::Rejected(_)) => {
+                store.delete_pending_config_change(session_id, &change.config_id)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub(in crate::live::sessions::actor) fn pending_model_is_in_latest_live_snapshot(
+    store: &dyn SessionStateDurable,
+    session_id: &str,
+    desired_value: &str,
+) -> anyhow::Result<bool> {
+    let Some(record) = store.find_live_config_snapshot(session_id)? else {
+        return Ok(false);
+    };
+    if record.full_snapshot_json.is_none() {
+        return Ok(false);
+    }
+    let snapshot = snapshot_from_record(&record)?;
+    validate_canonical_live_config_current(&snapshot)?;
+    Ok(snapshot
+        .models
+        .iter()
+        .any(|model| model.id == desired_value))
+}

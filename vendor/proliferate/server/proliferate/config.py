@@ -1,0 +1,459 @@
+from pydantic import AliasChoices, Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from proliferate.config_defaults import DEFAULT_CORS_ALLOW_ORIGINS, ENV_FILES, SAFE_IDENTITY_CHARS
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=ENV_FILES,
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    # App
+    debug: bool = False
+    proliferate_dev: bool = Field(default=False, validation_alias="PROLIFERATE_DEV")
+    api_base_url: str = ""
+    api_path_prefix: str = ""
+    # Compiled ProductClient Web distribution served from this image. Empty (the
+    # default) keeps the API-only behavior: no static serving, no SPA fallback.
+    # When set to a directory containing index.html, the API serves that Web
+    # application at the same origin as the API (self-hosted Web). A configured
+    # directory missing index.html fails startup. See
+    # proliferate.server.web_app for the mount and fail-closed routing.
+    web_dist_dir: str = Field(
+        default="",
+        validation_alias=AliasChoices("WEB_DIST_DIR", "PROLIFERATE_WEB_DIST_DIR"),
+    )
+    telemetry_mode: str = Field(
+        default="local_dev",
+        validation_alias=AliasChoices("PROLIFERATE_TELEMETRY_MODE", "TELEMETRY_MODE"),
+    )
+    # Org membership mode. When single-org mode is on, every new identity joins
+    # the one instance organization instead of getting a personal default org.
+    # The default is derived (hosted production stays multi-org; every other
+    # deployment posture defaults to single-org); an explicit env value wins.
+    single_org_mode_override: bool | None = Field(
+        default=None,
+        validation_alias=AliasChoices("SINGLE_ORG_MODE", "PROLIFERATE_SINGLE_ORG_MODE"),
+    )
+    # First-run claim (single-org mode only). While the user table is empty the
+    # API mints a setup token, persists its hash in the database, and writes the
+    # plaintext to this local file so deploy tooling can print it. The file is
+    # never served over HTTP; only someone with shell access can read it.
+    setup_token_file: str = Field(
+        default="/var/lib/proliferate/setup/setup-token",
+        validation_alias=AliasChoices("PROLIFERATE_SETUP_TOKEN_FILE", "SETUP_TOKEN_FILE"),
+    )
+    # Instance admin floor (single-org mode only). Comma-separated emails that
+    # must always hold at least the admin role in the instance organization.
+    # Asserted at account creation and at every login; removing an email from
+    # the list never demotes anyone. Inert in hosted mode; see
+    # proliferate.server.organizations.admin_emails for the rationale.
+    admin_emails: str = Field(
+        default="",
+        validation_alias=AliasChoices("ADMIN_EMAILS", "PROLIFERATE_ADMIN_EMAILS"),
+    )
+    # Self-registration domain gate (single-org mode only). When set, invited
+    # emails may self-register only if their domain is listed. Comma-separated,
+    # e.g. "corp.example.com". Strictly a gate, never a grant: it restricts who
+    # can register but assigns no roles and admits nobody without an invitation.
+    # Empty (the default) means no domain restriction.
+    allowed_email_domains: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "ALLOWED_EMAIL_DOMAINS",
+            "PROLIFERATE_ALLOWED_EMAIL_DOMAINS",
+        ),
+    )
+    cors_allow_origins: str = DEFAULT_CORS_ALLOW_ORIGINS
+
+    # Database
+    database_url: str = "postgresql+asyncpg://proliferate:localdev@127.0.0.1:5432/proliferate"
+    database_echo: bool = False
+
+    # Background jobs
+    celery_broker_url: str = "amqp://guest:guest@127.0.0.1:5672//"
+    celery_worker_queues: str = "periodic.default,default,notifications"
+    celery_task_always_eager: bool = False
+    celery_task_time_limit_seconds: int = 3600
+    celery_task_soft_time_limit_seconds: int = 3300
+    # Publisher-confirm timeout (seconds) for broker publishes. With confirm mode
+    # enabled the relay waits up to this long for RabbitMQ to durably ack a
+    # publish; a nack, a confirm timeout, or connection ambiguity raises so the
+    # outbox row stays retryable instead of being marked published on an
+    # unconfirmed socket write. Bounded so a wedged broker cannot hang a tick.
+    celery_broker_confirm_timeout_seconds: float = 10.0
+    redbeat_redis_url: str = "redis://127.0.0.1:6379/0"
+    redbeat_key_prefix: str = "redbeat:proliferate:"
+    # Outbox relay: Beat fires the thin ``background.relay`` task on this
+    # interval; each tick drains one bounded batch and exits (no in-process
+    # loop). Supported broker failures retry indefinitely with capped
+    # exponential backoff. ``oldest_due_slo_seconds`` is the alarm threshold on
+    # the oldest due-but-unpublished outbox row (5-minute reviewable default).
+    background_relay_interval_seconds: float = 1.0
+    background_relay_batch_size: int = 50
+    background_relay_lease_seconds: float = 60.0
+    background_relay_retry_base_seconds: float = 2.0
+    background_relay_retry_cap_seconds: float = 300.0
+    background_relay_retry_jitter_seconds: float = 5.0
+    background_relay_oldest_due_slo_seconds: float = 300.0
+
+    # Auth
+    jwt_secret: str = "CHANGE-ME-IN-PRODUCTION"
+    password_auth_enabled: bool = True
+    password_auth_trusted_proxy_hosts: str = ""
+    web_beta_allowed_emails: str = ""
+    web_beta_allowed_domains: str = ""
+
+    # GitHub OAuth
+    github_oauth_client_id: str = ""
+    github_oauth_client_secret: str = ""
+
+    # GitHub App for managed-cloud repository authority.
+    github_app_id: str = ""
+    github_app_slug: str = ""
+    github_app_client_id: str = ""
+    github_app_client_secret: str = ""
+    github_app_webhook_secret: str = ""
+    github_app_callback_base_url: str = ""
+    github_app_private_key: str = ""
+    github_app_private_key_path: str = ""
+
+    # Google OAuth
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
+
+    # Apple OAuth / Sign in with Apple
+    apple_sign_in_enabled: bool = False
+    apple_web_service_id: str = ""
+    apple_ios_bundle_id: str = ""
+    apple_team_id: str = ""
+    apple_key_id: str = ""
+    apple_private_key: str = ""
+    mobile_redirect_uri: str = "proliferate://auth/callback"
+
+    resend_api_key: str = ""
+    resend_from_email: str = "hello@proliferate.dev"
+    frontend_base_url: str = ""
+
+    # Self-managed instance identity + operator support routing. Surfaced on the
+    # public /meta capability contract so the desktop renders a self-hosted
+    # server as itself (name/logo) and points users at the operator's own
+    # support destination instead of the vendor's. All optional: an empty value
+    # means "use the safe default" — for identity the desktop falls back to the
+    # connected server origin, and for support it offers no vendor address.
+    instance_name: str = Field(
+        default="",
+        validation_alias=AliasChoices("INSTANCE_NAME", "PROLIFERATE_INSTANCE_NAME"),
+    )
+    instance_logo_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("INSTANCE_LOGO_URL", "PROLIFERATE_INSTANCE_LOGO_URL"),
+    )
+    instance_support_email: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "INSTANCE_SUPPORT_EMAIL", "PROLIFERATE_INSTANCE_SUPPORT_EMAIL"
+        ),
+    )
+    instance_support_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("INSTANCE_SUPPORT_URL", "PROLIFERATE_INSTANCE_SUPPORT_URL"),
+    )
+
+    anonymous_telemetry_endpoint: str = Field(
+        default="https://app.proliferate.com/api/v1/telemetry/anonymous",
+        validation_alias=AliasChoices(
+            "PROLIFERATE_ANONYMOUS_TELEMETRY_ENDPOINT",
+            "ANONYMOUS_TELEMETRY_ENDPOINT",
+        ),
+    )
+    anonymous_telemetry_disabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "PROLIFERATE_ANONYMOUS_TELEMETRY_DISABLED",
+            "ANONYMOUS_TELEMETRY_DISABLED",
+        ),
+    )
+
+    # Observability
+    sentry_dsn: str = ""
+    sentry_environment: str = "trusted-beta"
+    sentry_release: str = ""
+    sentry_traces_sample_rate: float = 1.0
+
+    # Secondary LLM flows
+    anthropic_api_key: str = ""
+    ai_magic_session_title_model: str = "claude-haiku-4-5-20251001"
+    ai_magic_workspace_name_model: str = "claude-haiku-4-5-20251001"
+    ai_magic_commit_message_model: str = "claude-haiku-4-5-20251001"
+
+    # Cloud workspaces
+    cloud_secret_key: str = "CHANGE-ME-IN-PRODUCTION-CLOUD-SECRET"
+    cloud_free_sandbox_hours: float = 2000.0
+    cloud_free_repo_limit: int = 2
+    cloud_paid_repo_limit: int = 4
+    cloud_concurrent_sandbox_limit: int = 200
+    cloud_billing_mode: str = "off"
+    pro_billing_enabled: bool = False
+    # Periodic maintenance loops (billing reconciler + agent-gateway enrollment
+    # backfill / usage import / LLM top-ups) start with the API by default. Set
+    # false to run the API without them — used by deterministic billing tests
+    # that drive those same passes on demand out-of-process, so a background
+    # tick never races or deadlocks with the test's own pass. Does not change
+    # any billing behavior; only whether the loops auto-run.
+    run_background_workers: bool = True
+    support_slack_webhook_url: str = ""
+    support_report_s3_bucket: str = ""
+    support_report_s3_prefix: str = "support/reports"
+    support_report_s3_region: str = ""
+    support_report_upload_url_expires_seconds: int = 900
+    support_report_diagnostics_max_bytes: int = 25 * 1024 * 1024
+    support_report_attachment_max_bytes: int = 25 * 1024 * 1024
+    support_report_total_attachment_max_bytes: int = 100 * 1024 * 1024
+    support_report_internal_base_url: str = ""
+    # When true, report completion rejects a NEW report whose client PROVIDED a
+    # release value that failed canonical validation (captured at create time
+    # as `client_release_provided`). Reports from old/legacy clients that never
+    # sent the field complete normally with a visible
+    # warning. Defaults off: production enablement is an explicit ops flip once
+    # desktop client adoption of the canonical `<component>@<version>+<sha>`
+    # release ID is confirmed (old installed desktop builds send no release).
+    support_report_require_client_release: bool = False
+    signups_slack_webhook_url: str = ""
+    billing_positive_slack_webhook_url: str = ""
+    billing_negative_slack_webhook_url: str = ""
+    slack_client_id: str = ""
+    slack_client_secret: str = ""
+    slack_signing_secret: str = ""
+    slack_oauth_redirect_url: str = ""
+    slack_outbound_max_attempts: int = 5
+    slack_outbound_rate_per_team_per_sec: float = 1.0
+    slack_run_cascade_max_attempts: int = 3
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
+    stripe_cloud_monthly_price_id: str = ""
+    stripe_pro_monthly_price_id: str = ""
+    stripe_legacy_cloud_monthly_price_id: str = ""
+    stripe_sandbox_meter_id: str = ""
+    stripe_sandbox_meter_event_name: str = "proliferate_sandbox_seconds"
+    stripe_sandbox_overage_price_id: str = ""
+    stripe_managed_cloud_overage_price_id: str = ""
+    stripe_managed_cloud_overage_meter_id: str = ""
+    stripe_managed_cloud_overage_meter_event_name: str = "proliferate_managed_cloud_overage_cents"
+    stripe_refill_10h_price_id: str = ""
+    stripe_checkout_success_url: str = ""
+    stripe_checkout_cancel_url: str = ""
+    stripe_customer_portal_return_url: str = ""
+    cloud_worker_base_url: str = ""
+    # Emergency, component-specific Sentry release overrides for the target
+    # processes. Each must canonically name its own component
+    # (`proliferate-worker@...` / `proliferate-supervisor@...`); a mismatched
+    # value is refused rather than propagated. Normally EMPTY: each binary
+    # stamps its own `<component>@<version>+<sha>` from its compile-time build
+    # stamp. The prior shared `cloud_target_sentry_release` /
+    # `PROLIFERATE_TARGET_SENTRY_RELEASE` override was removed because it could
+    # not distinguish worker from supervisor events.
+    cloud_jwt_signing_key_pem: str = ""
+    cloud_jwt_signing_key_id: str = "local-dev"
+    cloud_jwt_verification_keys_json: str = "[]"
+    cloud_jwt_issuer: str = "https://api.proliferate.ai"
+    cloud_jwt_audience_anyharness: str = "anyharness"
+    cloud_jwt_direct_attach_ttl_seconds: int = 1200
+    cloud_mcp_enabled: bool = True
+    workspace_move_cleanup_max_attempts: int = 5
+    workspace_move_executor_heartbeat_timeout_seconds: int = 120
+    workspace_move_cleanup_reconciler_interval_seconds: int = 300
+    cloud_mcp_oauth_callback_base_url: str = ""
+    cloud_mcp_oauth_callback_fallback_base_url: str = "http://localhost:8000"
+    cloud_mcp_slack_enabled: bool = False
+    cloud_mcp_slack_distribution_ready: bool = False
+    cloud_mcp_slack_client_id: str = ""
+    cloud_mcp_slack_client_secret: str = ""
+    cloud_mcp_slack_token_endpoint_auth_method: str = "client_secret_post"
+    cloud_mcp_google_workspace_enabled: bool = False
+    cloud_mcp_google_workspace_oauth_client_id: str = ""
+    cloud_mcp_google_workspace_oauth_client_secret: str = ""
+    # Agent LLM gateway publisher lane (Update Flow ADR, FR-1): advertise these on
+    # GET /meta so a desktop shell or cloud worker launches its
+    # runtime sidecar with ANYHARNESS_CATALOG_ARTIFACT_BASE_URL/_CHANNEL
+    # populated. Absent (default) => `agentCatalog` is null and every runtime
+    # this deployment launches stays on the compiled-in floor, by design.
+    agent_catalog_artifact_base_url: str = ""
+    agent_catalog_channel: str = "stable"
+    agent_gateway_enabled: bool = False
+    agent_gateway_litellm_base_url: str = "http://127.0.0.1:14000"
+    agent_gateway_litellm_public_base_url: str = ""
+    agent_gateway_litellm_master_key: str = ""
+    agent_gateway_litellm_timeout_seconds: float = 30.0
+    # Qualification-only exact external-cleanup identity; ordinary deployments leave both empty.
+    agent_gateway_qualification_run_id: str = ""
+    agent_gateway_qualification_shard_id: str = ""
+    agent_gateway_default_org_budget_usd: str = "0"
+    agent_gateway_backfill_interval_seconds: float = 300.0
+    # One-time lifetime managed-LLM grant for a GitHub-backed free identity.
+    agent_gateway_free_credit_usd: str = "2"
+    # Margin on imported spend: ledger debits cost x (1 + margin_pct/100), so a
+    # $10 face-value top-up meters at provider list + 15%.
+    agent_gateway_llm_margin_pct: str = "15"
+    agent_gateway_usage_import_interval_seconds: float = 60.0
+    agent_gateway_usage_import_overlap_seconds: float = 300.0
+    # Control-plane gateway-enablement verification (agent-auth.md FR-3). The loop
+    # asks LiteLLM which models each active enrollment key can see and records a
+    # per-key verdict. Behind a flag (default off) so a deployment opts in, and it
+    # only runs when the gateway is enabled and background workers are on.
+    agent_gateway_verification_enabled: bool = False
+    agent_gateway_verification_interval_seconds: float = 900.0
+    agent_gateway_topup_interval_seconds: float = 300.0
+    # Auto top-up fires when the shared LLM pool drops below this balance; each
+    # trigger buys exactly one pack (face value ``agent_gateway_topup_amount_usd``)
+    # and there is deliberately no per-window cap (ruled 2026-07-14).
+    agent_gateway_topup_threshold_usd: str = "2"
+    agent_gateway_topup_amount_usd: str = "10"
+    # Stripe price for one auto top-up charge; empty disables auto top-ups.
+    agent_gateway_llm_topup_price_id: str = ""
+    # Minimum org plan required to edit the org agent policy: "free" (no
+    # gate) or "pro" (org needs a healthy paid cloud subscription or an
+    # active unlimited-cloud entitlement). Reading is never plan-gated.
+    agent_gateway_policy_min_plan: str = "pro"
+    e2b_api_key: str = ""
+    e2b_template_name: str = ""
+    e2b_webhook_signature_secret: str = ""
+    # Managed-compute pricing: the metered/overage rate is derived as the E2B
+    # provider list price per sandbox-hour times a margin multiplier. Keeping
+    # the multiplier (not a fixed dollar rate) as the constant means margin
+    # survives provider price changes. Both the $15/seat compute allocation and
+    # the overage rate read this derivation (see ``billing/pricing.py``).
+    e2b_list_price_usd_per_hour: str = "2.00"
+    pro_compute_margin_multiplier: float = 1.5
+
+    @property
+    def cloud_provisioning_configured(self) -> bool:
+        """True when E2B is fully configured to provision cloud sandboxes.
+
+        Requires BOTH an API key and a template name. In debug/dev the template
+        name may be blank (a built-in default is used), so any API key suffices.
+        """
+        if not self.e2b_api_key.strip():
+            return False
+        if self.debug:
+            return True
+        return bool(self.e2b_template_name.strip())
+
+    @property
+    def github_app_runtime_fields_present(self) -> tuple[bool, ...]:
+        """Presence of each GitHub App runtime requirement, order-stable.
+
+        One entry per field group the App runtime path needs: App id (JWT
+        signing subject), App slug (installation URL construction), OAuth
+        client id + secret (user authorization and token exchange), webhook
+        secret (webhook validation), and a private key in exactly one of its
+        two forms (App JWT signing). Internal helper for the aggregate
+        predicates below; never expose per-field presence publicly.
+        """
+        return (
+            bool(self.github_app_id.strip()),
+            bool(self.github_app_slug.strip()),
+            bool(self.github_app_client_id.strip()),
+            bool(self.github_app_client_secret.strip()),
+            bool(self.github_app_webhook_secret.strip()),
+            bool(self.github_app_private_key.strip() or self.github_app_private_key_path.strip()),
+        )
+
+    @property
+    def github_app_configured(self) -> bool:
+        """True when every GitHub App runtime requirement is configured.
+
+        This is the single completeness predicate shared by the ``/meta``
+        capability contract, startup/preflight expectations, and tests. It
+        gates whether GitHub repository authority (user authorization,
+        installation, repo coverage) can work at runtime.
+        """
+        return all(self.github_app_runtime_fields_present)
+
+    @property
+    def github_app_partially_configured(self) -> bool:
+        """True when some but not all GitHub App runtime fields are set.
+
+        A partial App config is an operator error: repo authorization will
+        fail at runtime even though the deployment looks intentional. The
+        capability contract reports it as operator configuration required
+        rather than disabled.
+        """
+        present = self.github_app_runtime_fields_present
+        return any(present) and not all(present)
+
+    @property
+    def cloud_provisioning_partially_configured(self) -> bool:
+        """True when E2B config is started but incomplete (non-debug only).
+
+        Either half alone (API key without template, or template without API
+        key) is an operator error the capability contract reports as
+        operator configuration required rather than disabled.
+        """
+        if self.debug:
+            return False
+        key_present = bool(self.e2b_api_key.strip())
+        template_present = bool(self.e2b_template_name.strip())
+        return key_present != template_present
+
+    @property
+    def single_org_mode(self) -> bool:
+        if self.single_org_mode_override is not None:
+            return self.single_org_mode_override
+        return self.telemetry_mode != "hosted_product"
+
+    @property
+    def admin_email_set(self) -> frozenset[str]:
+        """ADMIN_EMAILS parsed into normalized (stripped, lowercased) emails."""
+        return frozenset(
+            normalized
+            for raw in self.admin_emails.split(",")
+            if (normalized := raw.strip().lower())
+        )
+
+    @property
+    def allowed_email_domain_set(self) -> frozenset[str]:
+        """ALLOWED_EMAIL_DOMAINS parsed into normalized (stripped, lowercased) domains."""
+        return frozenset(
+            normalized
+            for raw in self.allowed_email_domains.split(",")
+            if (normalized := raw.strip().lower().lstrip("@"))
+        )
+
+    @model_validator(mode="after")
+    def validate_secrets_in_production(self) -> "Settings":
+        if self.telemetry_mode not in {"local_dev", "self_managed", "hosted_product"}:
+            raise ValueError(
+                "telemetry_mode must be one of: local_dev, self_managed, hosted_product"
+            )
+        if not self.debug:
+            if self.jwt_secret == "CHANGE-ME-IN-PRODUCTION":
+                raise ValueError("jwt_secret must be set in production (debug=False)")
+            if self.cloud_secret_key == "CHANGE-ME-IN-PRODUCTION-CLOUD-SECRET":
+                raise ValueError("cloud_secret_key must be set in production (debug=False)")
+        qualification_run = self.agent_gateway_qualification_run_id.strip()
+        qualification_shard = self.agent_gateway_qualification_shard_id.strip()
+        if bool(qualification_run) != bool(qualification_shard):
+            raise ValueError("agent gateway qualification run and shard ids must be set together")
+        for label, value in (
+            ("qualification run id", qualification_run),
+            ("qualification shard id", qualification_shard),
+        ):
+            if value and (
+                len(value) > 128
+                or not value[0].isalnum()
+                or any(character not in SAFE_IDENTITY_CHARS for character in value)
+            ):
+                raise ValueError(f"agent gateway {label} is malformed")
+        return self
+
+
+settings = Settings()
+
+
+def get_cors_allow_origins() -> list[str]:
+    return [origin.strip() for origin in settings.cors_allow_origins.split(",") if origin.strip()]

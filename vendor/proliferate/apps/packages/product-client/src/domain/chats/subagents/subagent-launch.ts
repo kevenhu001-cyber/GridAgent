@@ -1,0 +1,283 @@
+import type {
+  ToolBackgroundWorkMetadata,
+  ToolCallItem,
+  ToolResultTextContentPart,
+  TranscriptState,
+} from "@anyharness/sdk";
+import { parseToolBackgroundWork } from "@anyharness/sdk";
+
+export type SubagentExecutionState =
+  | "running"
+  | "background"
+  | "completed_background"
+  | "expired_background"
+  | "completed"
+  | "failed";
+
+/**
+ * Execution states whose `formatLaunchStatus` label used to render as a
+ * muted status line inside `SubagentLaunchLedger`'s transcript row
+ * (`Creating` / `Running in background` / `Completed in background`). The
+ * handoff's MODIFIED `SubagentLaunchLedger` entry (Delivery Spec —
+ * Background Work Slice 1, rung R4) retires all three: the creation chip and
+ * the command row's own trailing slot already carry that state, and the
+ * prompt disclosure this row used to gate on moves to `BackgroundSubagentView`.
+ * `formatLaunchStatus` itself is unchanged — only these transcript call sites
+ * go.
+ */
+const TRANSCRIPT_SUPPRESSED_LAUNCH_STATES: ReadonlySet<SubagentExecutionState> = new Set([
+  "running",
+  "background",
+  "completed_background",
+]);
+
+/** Whether `SubagentLaunchLedger` should render its status line in the transcript. */
+export function isSubagentLaunchStatusVisibleInTranscript(
+  executionState: SubagentExecutionState,
+): boolean {
+  return !TRANSCRIPT_SUPPRESSED_LAUNCH_STATES.has(executionState);
+}
+
+export interface AsyncSubagentLaunch {
+  rawText: string;
+  agentId: string | null;
+  outputFile: string | null;
+}
+
+export interface SubagentLaunchDisplay {
+  title: string;
+  meta: string | null;
+  prompt: string | null;
+}
+
+export function resolveSubagentExecutionState(
+  item: ToolCallItem,
+): SubagentExecutionState {
+  if (item.status === "failed") {
+    return "failed";
+  }
+
+  if (item.status === "in_progress") {
+    return "running";
+  }
+
+  const backgroundWork = getBackgroundWork(item);
+  if (backgroundWork?.state === "pending") {
+    return "background";
+  }
+
+  if (backgroundWork?.state === "expired") {
+    return "expired_background";
+  }
+
+  if (backgroundWork?.state === "completed") {
+    return "completed_background";
+  }
+
+  // A native Agent/Task fire-and-forget async launch flips its launch tool-call to
+  // status:"completed" the instant the launch receipt returns, while the
+  // subagent keeps running. When the pending-background metadata is not
+  // attached to this item's rawOutput, the checks above fall through and the
+  // launch would be mis-classified as completed. Detect the bare launch
+  // receipt (no structured summary yet) and treat it as still running. The
+  // transcript can show the durable task row without exposing the raw
+  // orchestration receipt, while the composer roster summarizes live state.
+  if (isAsyncLaunchReceipt(item)) {
+    return "background";
+  }
+
+  return wasLaunchedInBackground(item) ? "completed_background" : "completed";
+}
+
+export function isSubagentExecutionStateRunning(
+  state: SubagentExecutionState,
+): boolean {
+  return state === "running" || state === "background";
+}
+
+export function isSubagentWorkComplete(item: ToolCallItem): boolean {
+  return !isSubagentExecutionStateRunning(resolveSubagentExecutionState(item));
+}
+
+export function resolveSubagentLaunchDisplay(
+  item: ToolCallItem,
+): SubagentLaunchDisplay {
+  const rawInput = isRecord(item.rawInput) ? item.rawInput : {};
+  const rawOutput: Record<string, unknown> = isRecord(item.rawOutput)
+    ? item.rawOutput
+    : (parseToolResultJsonObject(item) ?? {});
+  const label = readStringField(rawInput, "label")
+    ?? readStringField(rawOutput, "label");
+  const prompt = readStringField(rawInput, "prompt") ?? extractToolInputText(item);
+  const title = label
+    ?? item.title
+    ?? "Agent task";
+
+  return {
+    title,
+    meta: null,
+    prompt,
+  };
+}
+
+/**
+ * Finds the parent transcript's native Agent/Task launch tool call for a
+ * harness-native subagent id (the activity roster's `ActivitySubagentWire.id`
+ * — Claude's Task `agentId`). Reuses the one existing tool-call correlation
+ * in this repo, `ToolBackgroundWorkMetadata.agentId` (see
+ * `@anyharness/sdk`'s `parseToolBackgroundWork`), which `trackerKind:
+ * "claude_async_agent"` scopes to Claude's async launch receipts specifically.
+ * Other harnesses have no equivalent correlation yet, so this returns null
+ * for them — `BackgroundSubagentView` treats a missing item the same as "no
+ * initial prompt available," the same graceful fallback
+ * `SubagentLaunchLedger` already used for an absent prompt.
+ */
+export function findSubagentLaunchItem(
+  transcript: TranscriptState,
+  subagentId: string,
+): ToolCallItem | null {
+  for (const item of Object.values(transcript.itemsById)) {
+    if (item.kind !== "tool_call") {
+      continue;
+    }
+    if (parseToolBackgroundWork(item.rawOutput)?.agentId === subagentId) {
+      return item;
+    }
+  }
+  return null;
+}
+
+/**
+ * The reverse of `findSubagentLaunchItem`: given a native Agent/Task launch
+ * tool-call item, resolves the subagent id it correlates to (the activity
+ * roster's `ActivitySubagentWire.id`) — the same
+ * `ToolBackgroundWorkMetadata.agentId` correlation, read forward instead of
+ * scanned for. Null for harnesses without the correlation, exactly like
+ * `findSubagentLaunchItem`'s own fallback. Used to gate
+ * `TranscriptAgentGroupBlock`'s click-to-open-pane affordance (Delivery Spec
+ * — Background Work Slice 1, rung R4 fix-forward): only a block whose
+ * `rawOutput` actually carries this metadata gets the affordance.
+ */
+export function resolveSubagentIdForItem(item: ToolCallItem): string | null {
+  return getBackgroundWork(item)?.agentId ?? null;
+}
+
+export function parseAsyncSubagentLaunch(
+  item: ToolCallItem,
+): AsyncSubagentLaunch | null {
+  if (!isSubagent(item)) {
+    return null;
+  }
+
+  if (!readBooleanField(item.rawInput, "run_in_background")) {
+    return null;
+  }
+
+  const rawText = extractToolResultText(item);
+  if (rawText.length === 0) {
+    return null;
+  }
+
+  const backgroundWork = getBackgroundWork(item);
+  // A native Agent/Task async launch may or may not carry pending-background
+  // metadata on this item's rawOutput. Recognise the launch receipt either
+  // way: prefer the structured metadata, else fall back to the receipt text
+  // signature. The final synthesized result replaces this text once the
+  // subagent finishes, so this only ever matches the still-running receipt.
+  if (backgroundWork?.state !== "pending" && !isLaunchReceiptText(rawText)) {
+    return null;
+  }
+
+  return {
+    rawText,
+    agentId: backgroundWork?.agentId ?? null,
+    outputFile: backgroundWork?.outputFile ?? null,
+  };
+}
+
+/**
+ * True when this item is a native Agent/Task background launch whose result is
+ * still only the orchestration launch receipt (no final synthesized result
+ * yet). Used to keep the receipt out of the transcript while the subagent runs
+ * even when the pending-background metadata is absent from rawOutput.
+ */
+function isAsyncLaunchReceipt(item: ToolCallItem): boolean {
+  if (!isSubagent(item) || !readBooleanField(item.rawInput, "run_in_background")) {
+    return false;
+  }
+  // If the parent already received a structured summary, the work is done.
+  if (isRecord(item.rawOutput) && readStringField(item.rawOutput, "summary")) {
+    return false;
+  }
+  return isLaunchReceiptText(extractToolResultText(item));
+}
+
+function isLaunchReceiptText(text: string): boolean {
+  return /async agent launched/iu.test(text);
+}
+
+function extractToolResultText(item: ToolCallItem): string {
+  return item.contentParts
+    .filter((part): part is ToolResultTextContentPart => part.type === "tool_result_text")
+    .map((part) => part.text.trim())
+    .filter((text) => text.length > 0)
+    .join("\n\n");
+}
+
+function extractToolInputText(item: ToolCallItem): string | null {
+  const text = item.contentParts
+    .filter((part): part is Extract<ToolCallItem["contentParts"][number], { type: "tool_input_text" }> =>
+      part.type === "tool_input_text"
+    )
+    .map((part) => part.text.trim())
+    .filter((part) => part.length > 0)
+    .join("\n\n");
+  return text.length > 0 ? text : null;
+}
+
+function readStringField(value: Record<string, unknown>, key: string): string | null {
+  const field = value[key];
+  if (typeof field !== "string") {
+    return null;
+  }
+  const trimmed = field.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function readBooleanField(value: unknown, key: string): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return value[key] === true;
+}
+
+function parseToolResultJsonObject(item: ToolCallItem): Record<string, unknown> | null {
+  const text = extractToolResultText(item).trim();
+  if (!text.startsWith("{") || !text.endsWith("}")) {
+    return null;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function wasLaunchedInBackground(item: ToolCallItem): boolean {
+  return isSubagent(item) && readBooleanField(item.rawInput, "run_in_background");
+}
+
+function getBackgroundWork(item: ToolCallItem): ToolBackgroundWorkMetadata | null {
+  return parseToolBackgroundWork(item.rawOutput);
+}
+
+function isSubagent(item: ToolCallItem): boolean {
+  return item.nativeToolName === "Agent" || item.semanticKind === "subagent";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}

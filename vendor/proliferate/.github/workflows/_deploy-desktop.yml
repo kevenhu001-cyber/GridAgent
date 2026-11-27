@@ -1,0 +1,192 @@
+name: Deploy Desktop
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      git_sha:
+        required: true
+        type: string
+      enabled:
+        default: true
+        type: boolean
+      dry_run:
+        default: false
+        type: boolean
+      publish_updater:
+        default: false
+        type: boolean
+      release_title:
+        default: ""
+        type: string
+      target_os:
+        default: all
+        type: string
+      enable_windows_beta:
+        description: "Opt into building the Windows beta leg (never on by default; see B2 in PR #2150)"
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  plan:
+    if: ${{ inputs.enabled }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    outputs:
+      enabled: ${{ steps.meta.outputs.enabled }}
+      version: ${{ steps.meta.outputs.version }}
+      tag_name: ${{ steps.meta.outputs.tag_name }}
+    env:
+      DESKTOP_DEPLOY_ENABLED: ${{ vars.DESKTOP_DEPLOY_ENABLED || 'false' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.git_sha }}
+
+      - name: Resolve desktop release metadata
+        id: meta
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          GIT_SHA: ${{ inputs.git_sha }}
+          PUBLISH_UPDATER: ${{ inputs.publish_updater }}
+          DESKTOP_DOWNLOADS_BASE_URL: ${{ vars.DESKTOP_DOWNLOADS_BASE_URL }}
+        run: |
+          set -euo pipefail
+          if [[ "$DESKTOP_DEPLOY_ENABLED" != "true" ]]; then
+            echo "Desktop deploy is intentionally disabled for this environment."
+            echo "Set DESKTOP_DEPLOY_ENABLED=true to build from the promoted SHA."
+            {
+              echo "enabled=false"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          package_version="$(node -p "require('./apps/desktop/package.json').version")"
+          tauri_version="$(node -p "JSON.parse(require('fs').readFileSync('./apps/desktop/src-tauri/tauri.conf.json','utf8')).version")"
+          cargo_version="$(grep '^version' apps/desktop/src-tauri/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')"
+          if [[ "$package_version" == "$tauri_version" && "$package_version" == "$cargo_version" ]]; then
+            :
+          else
+            echo "::error::Desktop version mismatch: package=$package_version tauri=$tauri_version cargo=$cargo_version"
+            exit 1
+          fi
+
+          tag_name="desktop-v$package_version"
+          tag_target="$(git ls-remote --tags origin "refs/tags/$tag_name" | awk '{ print $1 }' | head -n 1)"
+          if [[ -n "$tag_target" && "$tag_target" == "$GIT_SHA" && "$DRY_RUN" != "true" && "$PUBLISH_UPDATER" != "true" ]]; then
+            echo "Desktop tag $tag_name already points at $GIT_SHA; skipping duplicate release."
+            {
+              echo "enabled=false"
+              echo "version=$package_version"
+              echo "tag_name=$tag_name"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -n "$tag_target" && "$tag_target" == "$GIT_SHA" && "$PUBLISH_UPDATER" == "true" ]]; then
+            echo "Desktop tag $tag_name already points at $GIT_SHA; continuing so updater assets can be published."
+          fi
+          if [[ -n "$tag_target" && "$tag_target" != "$GIT_SHA" && "$DRY_RUN" != "true" ]]; then
+            echo "::error::Desktop tag $tag_name already exists at $tag_target, not $GIT_SHA. Bump the desktop version before publishing desktop from this SHA."
+            exit 1
+          fi
+          if [[ -n "$tag_target" && "$DRY_RUN" == "true" ]]; then
+            echo "::warning::Desktop tag $tag_name already exists at $tag_target; dry run will build without publishing."
+          fi
+
+          if [[ "$PUBLISH_UPDATER" == "true" && "$DRY_RUN" != "true" ]]; then
+            if [[ -z "$DESKTOP_DOWNLOADS_BASE_URL" ]]; then
+              echo "::error::DESKTOP_DOWNLOADS_BASE_URL is required before publishing the desktop updater."
+              exit 1
+            fi
+
+            latest_url="${DESKTOP_DOWNLOADS_BASE_URL%/}/desktop/stable/latest.json"
+            latest_body="$(mktemp)"
+            latest_status="$(curl -sS -L -o "$latest_body" -w "%{http_code}" "$latest_url" || true)"
+            if [[ "$latest_status" == "200" ]]; then
+              live_version="$(node -e "const fs=require('fs'); const data=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); if (!data.version) process.exit(2); console.log(data.version);" "$latest_body")"
+              node - "$live_version" "$package_version" <<'NODE'
+          const live = process.argv[2];
+          const next = process.argv[3];
+
+          function parseVersion(value) {
+            const [main] = value.split("-");
+            const parts = main.split(".").map((part) => Number(part));
+            if (parts.length !== 3 || parts.some((part) => !Number.isInteger(part))) {
+              throw new Error(`Unsupported desktop version '${value}'`);
+            }
+            return parts;
+          }
+
+          function compareVersions(left, right) {
+            const a = parseVersion(left);
+            const b = parseVersion(right);
+            for (let index = 0; index < 3; index += 1) {
+              if (a[index] > b[index]) return 1;
+              if (a[index] < b[index]) return -1;
+            }
+            return 0;
+          }
+
+          if (compareVersions(next, live) <= 0) {
+            console.error(
+              `::error::Desktop updater already advertises ${live}; refusing to publish ${next}. Bump the desktop version before publishing updater assets.`,
+            );
+            process.exit(1);
+          }
+          NODE
+              echo "Desktop updater feed currently advertises $live_version; publishing $package_version is allowed."
+            elif [[ "$latest_status" == "404" ]]; then
+              echo "No existing desktop updater feed found at $latest_url; allowing first updater publish."
+            else
+              echo "::error::Could not read desktop updater feed at $latest_url (HTTP $latest_status)."
+              exit 1
+            fi
+          fi
+
+          {
+            echo "enabled=true"
+            echo "version=$package_version"
+            echo "tag_name=$tag_name"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Summarize desktop deploy
+        run: |
+          {
+            echo "### Desktop"
+            echo "- Environment: ${{ inputs.environment }}"
+            echo "- Enabled: \`$DESKTOP_DEPLOY_ENABLED\`"
+            echo "- Git SHA: \`${{ inputs.git_sha }}\`"
+            if [[ "${{ steps.meta.outputs.enabled }}" == "true" ]]; then
+              echo "- Version: \`${{ steps.meta.outputs.version }}\`"
+              echo "- Tag: \`${{ steps.meta.outputs.tag_name }}\`"
+              echo "- Dry run: \`${{ inputs.dry_run }}\`"
+              echo "- Publish updater: \`${{ inputs.publish_updater }}\`"
+              echo "- Target OS: \`${{ inputs.target_os }}\`"
+              echo "- Windows beta enabled: \`${{ inputs.enable_windows_beta }}\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    needs: [plan]
+    if: ${{ needs.plan.outputs.enabled == 'true' }}
+    permissions:
+      contents: write
+      id-token: write
+    uses: ./.github/workflows/release-desktop.yml
+    with:
+      git_sha: ${{ inputs.git_sha }}
+      version: ${{ needs.plan.outputs.version }}
+      dry_run: ${{ inputs.dry_run }}
+      publish_updater: ${{ inputs.publish_updater }}
+      release_title: ${{ inputs.release_title }}
+      target_os: ${{ inputs.target_os }}
+      enable_windows_beta: ${{ inputs.enable_windows_beta }}
+    secrets: inherit

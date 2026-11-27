@@ -1,0 +1,485 @@
+use std::time::Instant;
+
+use anyharness_contract::v1::{
+    DetectProjectSetupResponse, GitBranchRef, MaterializeRepoRootRequest,
+    MaterializeRepoRootResponse, MaterializeWorkspaceAtRefRequest,
+    MaterializeWorkspaceAtRefResponse, PrepareRepoRootMobilityDestinationRequest,
+    PrepareRepoRootMobilityDestinationResponse, ReadWorkspaceFileResponse, RepoRoot, RepoRootKind,
+    RepoRootMaterializationOutcome, ResolveRepoRootFromPathRequest,
+    WorkspaceMaterializationOutcome,
+};
+use axum::{
+    extract::{Path, Query, State},
+    http::HeaderMap,
+    Json,
+};
+
+use super::access::map_access_error;
+use super::blocking::run_blocking;
+use super::error::ApiError;
+use super::files::{map_service_error, read_response_to_contract, run_files_task, FilePathQuery};
+use super::workspaces_contract::{detection_result_to_contract, workspace_to_contract};
+use crate::adapters::files::service::WorkspaceFilesService;
+use crate::adapters::git::GitService;
+use crate::app::AppState;
+use crate::domains::repo_roots::model::RepoRootRecord;
+use crate::domains::workspaces::types::ResolveRepoRootError;
+use crate::observability::latency::FlowHeaders;
+use tracing::Instrument;
+
+#[utoipa::path(
+    get,
+    path = "/v1/repo-roots",
+    responses((status = 200, description = "List repo roots", body = Vec<RepoRoot>)),
+    tag = "repo-roots"
+)]
+pub async fn list_repo_roots(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<RepoRoot>>, ApiError> {
+    let span = FlowHeaders::from_headers(&headers).span();
+    async move {
+        let started = Instant::now();
+        tracing::info!("[anyharness-latency] repo_root.http.list.request_received");
+        let repo_root_service = state.repo_root_service.clone();
+        let records_started = Instant::now();
+        let repo_roots = run_blocking("list repo roots", move || {
+            repo_root_service.list_repo_roots()
+        })
+        .await?
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+        tracing::info!(
+            repo_root_count = repo_roots.len(),
+            elapsed_ms = records_started.elapsed().as_millis(),
+            total_elapsed_ms = started.elapsed().as_millis(),
+            "[anyharness-latency] repo_root.http.list.records_loaded"
+        );
+        let response_started = Instant::now();
+        let response = repo_roots
+            .into_iter()
+            .map(repo_root_to_contract)
+            .collect::<Vec<_>>();
+        tracing::info!(
+            repo_root_count = response.len(),
+            elapsed_ms = response_started.elapsed().as_millis(),
+            total_elapsed_ms = started.elapsed().as_millis(),
+            "[anyharness-latency] repo_root.http.list.response_built"
+        );
+        Ok(Json(response))
+    }
+    .instrument(span)
+    .await
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/repo-roots/{repo_root_id}",
+    params(("repo_root_id" = String, Path, description = "Repo root ID")),
+    responses(
+        (status = 200, description = "Repo root", body = RepoRoot),
+        (status = 404, description = "Repo root not found", body = anyharness_contract::v1::ProblemDetails),
+    ),
+    tag = "repo-roots"
+)]
+pub async fn get_repo_root(
+    State(state): State<AppState>,
+    Path(repo_root_id): Path<String>,
+) -> Result<Json<RepoRoot>, ApiError> {
+    let repo_root = load_repo_root(&state, repo_root_id).await?;
+    Ok(Json(repo_root_to_contract(repo_root)))
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/repo-roots/resolve",
+    request_body = ResolveRepoRootFromPathRequest,
+    responses(
+        (status = 200, description = "Resolved repo root", body = RepoRoot),
+        (status = 400, description = "Invalid path", body = anyharness_contract::v1::ProblemDetails),
+    ),
+    tag = "repo-roots"
+)]
+pub async fn resolve_repo_root(
+    State(state): State<AppState>,
+    Json(req): Json<ResolveRepoRootFromPathRequest>,
+) -> Result<Json<RepoRoot>, ApiError> {
+    let workspace_runtime = state.workspace_runtime.clone();
+    let path = req.path;
+    let repo_root = run_blocking("resolve repo root", move || {
+        workspace_runtime.resolve_repo_root_from_path(&path)
+    })
+    .await?
+    .map_err(|error| match error {
+        ResolveRepoRootError::NotGitRepo => {
+            ApiError::bad_request(error.to_string(), "REPO_ROOT_NOT_GIT_REPO")
+        }
+        ResolveRepoRootError::WorktreeNotAllowed => {
+            ApiError::bad_request(error.to_string(), "REPO_ROOT_WORKTREE_UNSUPPORTED")
+        }
+        ResolveRepoRootError::Unexpected(inner) => {
+            ApiError::bad_request(inner.to_string(), "REPO_ROOT_RESOLVE_FAILED")
+        }
+    })?;
+
+    Ok(Json(repo_root_to_contract(repo_root)))
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/repo-roots/{repo_root_id}/git/branches",
+    params(("repo_root_id" = String, Path, description = "Repo root ID")),
+    responses(
+        (status = 200, description = "Branch list", body = Vec<GitBranchRef>),
+        (status = 404, description = "Repo root not found", body = anyharness_contract::v1::ProblemDetails),
+    ),
+    tag = "repo-roots"
+)]
+pub async fn list_repo_root_git_branches(
+    State(state): State<AppState>,
+    Path(repo_root_id): Path<String>,
+) -> Result<Json<Vec<GitBranchRef>>, ApiError> {
+    let repo_root = load_repo_root(&state, repo_root_id).await?;
+    let repo_root_path = repo_root.path;
+    let branches = run_blocking("repo root branches", move || {
+        GitService::list_branches(std::path::Path::new(&repo_root_path))
+    })
+    .await?
+    .map_err(|error| ApiError::bad_request(error.to_string(), "GIT_BRANCHES_FAILED"))?;
+
+    Ok(Json(
+        branches
+            .into_iter()
+            .map(|branch| GitBranchRef {
+                name: branch.name,
+                is_remote: branch.is_remote,
+                is_head: branch.is_head,
+                is_default: branch.is_default,
+                upstream: branch.upstream,
+            })
+            .collect(),
+    ))
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/repo-roots/{repo_root_id}/files/file",
+    params(
+        ("repo_root_id" = String, Path, description = "Repo root ID"),
+        ("path" = String, Query, description = "Repo-root-relative file path"),
+    ),
+    responses(
+        (status = 200, description = "Read repo root file", body = ReadWorkspaceFileResponse),
+        (status = 400, description = "Invalid path or non-text file", body = anyharness_contract::v1::ProblemDetails),
+        (status = 404, description = "Repo root or file not found", body = anyharness_contract::v1::ProblemDetails),
+    ),
+    tag = "repo-roots"
+)]
+pub async fn read_repo_root_file(
+    State(state): State<AppState>,
+    Path(repo_root_id): Path<String>,
+    Query(query): Query<FilePathQuery>,
+) -> Result<Json<ReadWorkspaceFileResponse>, ApiError> {
+    let repo_root = load_repo_root(&state, repo_root_id).await?;
+    let repo_root_path = repo_root.path;
+    let path = query.path;
+    let response = run_files_task("read repo root file", move || {
+        WorkspaceFilesService::read_file(std::path::Path::new(&repo_root_path), &path)
+            .map(read_response_to_contract)
+            .map_err(map_service_error)
+    })
+    .await?;
+
+    Ok(Json(response))
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/repo-roots/{repo_root_id}/detect-setup",
+    params(("repo_root_id" = String, Path, description = "Repo root ID")),
+    responses(
+        (status = 200, description = "Detected project setup hints", body = DetectProjectSetupResponse),
+        (status = 404, description = "Repo root not found", body = anyharness_contract::v1::ProblemDetails),
+    ),
+    tag = "repo-roots"
+)]
+pub async fn detect_repo_root_setup(
+    State(state): State<AppState>,
+    Path(repo_root_id): Path<String>,
+) -> Result<Json<DetectProjectSetupResponse>, ApiError> {
+    let workspace_runtime = state.workspace_runtime.clone();
+    let result = run_blocking("repo root detect setup", move || {
+        workspace_runtime.detect_repo_root_setup(&repo_root_id)
+    })
+    .await?
+    .map_err(|error| {
+        if error.to_string().contains("repo root not found") {
+            ApiError::not_found("Repo root not found", "REPO_ROOT_NOT_FOUND")
+        } else {
+            ApiError::internal(error.to_string())
+        }
+    })?;
+
+    Ok(Json(detection_result_to_contract(result)))
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/repo-roots/{repo_root_id}/mobility/prepare-destination",
+    params(("repo_root_id" = String, Path, description = "Repo root ID")),
+    request_body = PrepareRepoRootMobilityDestinationRequest,
+    responses(
+        (status = 200, description = "Prepared repo root mobility destination", body = PrepareRepoRootMobilityDestinationResponse),
+        (status = 400, description = "Invalid request", body = anyharness_contract::v1::ProblemDetails),
+        (status = 409, description = "Destination conflict", body = anyharness_contract::v1::ProblemDetails),
+        (status = 404, description = "Repo root not found", body = anyharness_contract::v1::ProblemDetails),
+    ),
+    tag = "repo-roots"
+)]
+pub async fn prepare_repo_root_mobility_destination(
+    State(state): State<AppState>,
+    Path(repo_root_id): Path<String>,
+    Json(req): Json<PrepareRepoRootMobilityDestinationRequest>,
+) -> Result<Json<PrepareRepoRootMobilityDestinationResponse>, ApiError> {
+    state
+        .workspace_access_gate
+        .assert_can_prepare_mobility_destination_for_repo_root(&repo_root_id)
+        .map_err(map_access_error)?;
+
+    let mobility_runtime = state.mobility_runtime.clone();
+    let requested_branch = req.requested_branch;
+    let requested_base_sha = req.requested_base_sha;
+    let destination_id = req.destination_id;
+    let preferred_workspace_name = req.preferred_workspace_name;
+
+    let prepared = mobility_runtime
+        .prepare_repo_root_destination(
+            &repo_root_id,
+            &requested_branch,
+            &requested_base_sha,
+            destination_id.as_deref(),
+            preferred_workspace_name.as_deref(),
+        )
+        .await
+        .map_err(|error| match error {
+            crate::domains::mobility::service::MobilityError::WorkspaceNotFound(_)
+            | crate::domains::mobility::service::MobilityError::Invalid(_) => {
+                ApiError::bad_request(error.to_string(), "MOBILITY_DESTINATION_PREPARE_FAILED")
+            }
+            crate::domains::mobility::service::MobilityError::NotGitWorkspace(_) => {
+                ApiError::bad_request(error.to_string(), "MOBILITY_DESTINATION_PREPARE_FAILED")
+            }
+            crate::domains::mobility::service::MobilityError::BaseCommitMismatch { .. }
+            | crate::domains::mobility::service::MobilityError::SessionAlreadyExists(_)
+            | crate::domains::mobility::service::MobilityError::SizeLimitExceeded(_) => {
+                ApiError::bad_request(error.to_string(), "MOBILITY_DESTINATION_PREPARE_FAILED")
+            }
+            crate::domains::mobility::service::MobilityError::DestinationConflict(_) => {
+                ApiError::conflict(error.to_string(), "MOBILITY_DESTINATION_CONFLICT")
+            }
+            crate::domains::mobility::service::MobilityError::Internal(inner) => {
+                if inner.to_string().contains("repo root not found") {
+                    ApiError::not_found("Repo root not found", "REPO_ROOT_NOT_FOUND")
+                } else {
+                    ApiError::bad_request(inner.to_string(), "MOBILITY_DESTINATION_PREPARE_FAILED")
+                }
+            }
+        })?;
+
+    Ok(Json(PrepareRepoRootMobilityDestinationResponse {
+        workspace: workspace_to_contract(&state, prepared.workspace).await?,
+        created: prepared.created,
+    }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/repo-roots/materializations",
+    request_body = MaterializeRepoRootRequest,
+    responses(
+        (status = 200, description = "Acquired repo root", body = MaterializeRepoRootResponse),
+        (status = 400, description = "Invalid request or acquisition failure", body = anyharness_contract::v1::ProblemDetails),
+        (status = 409, description = "Destination/operation conflict", body = anyharness_contract::v1::ProblemDetails),
+    ),
+    tag = "repo-roots"
+)]
+pub async fn materialize_repo_root(
+    State(state): State<AppState>,
+    Json(req): Json<MaterializeRepoRootRequest>,
+) -> Result<Json<MaterializeRepoRootResponse>, ApiError> {
+    // Reject credential-bearing clone URLs before any work; the response must
+    // never echo userinfo and we do not accept Cloud installation tokens here.
+    let safe_clone_url =
+        crate::domains::materialization::service::response_safe_url(&req.repository.clone_url)
+            .ok_or_else(|| {
+                ApiError::bad_request(
+                    "clone URL must not embed credentials",
+                    "REPOSITORY_AUTH_REQUIRED",
+                )
+            })?;
+
+    let result = state
+        .materialization_runtime
+        .acquire_repo_root(
+            &req.operation_id,
+            "github",
+            &req.repository.owner,
+            &req.repository.name,
+            &safe_clone_url,
+            &req.destination_path,
+        )
+        .await
+        .map_err(map_materialization_error)?;
+
+    Ok(Json(MaterializeRepoRootResponse {
+        operation_id: req.operation_id,
+        repo_root: repo_root_to_contract(result.repo_root),
+        outcome: match result.outcome {
+            crate::domains::materialization::model::AcquireOutcome::Cloned => {
+                RepoRootMaterializationOutcome::Cloned
+            }
+            crate::domains::materialization::model::AcquireOutcome::Adopted => {
+                RepoRootMaterializationOutcome::Adopted
+            }
+            crate::domains::materialization::model::AcquireOutcome::Reused => {
+                RepoRootMaterializationOutcome::Reused
+            }
+        },
+    }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/repo-roots/{repo_root_id}/workspace-materializations",
+    params(("repo_root_id" = String, Path, description = "Repo root ID")),
+    request_body = MaterializeWorkspaceAtRefRequest,
+    responses(
+        (status = 200, description = "Materialized workspace at exact ref", body = MaterializeWorkspaceAtRefResponse),
+        (status = 400, description = "Invalid request or ref failure", body = anyharness_contract::v1::ProblemDetails),
+        (status = 409, description = "Branch/head/dirty/busy/operation conflict", body = anyharness_contract::v1::ProblemDetails),
+        (status = 404, description = "Repo root not found", body = anyharness_contract::v1::ProblemDetails),
+    ),
+    tag = "repo-roots"
+)]
+pub async fn materialize_workspace_at_ref(
+    State(state): State<AppState>,
+    Path(repo_root_id): Path<String>,
+    Json(req): Json<MaterializeWorkspaceAtRefRequest>,
+) -> Result<Json<MaterializeWorkspaceAtRefResponse>, ApiError> {
+    load_repo_root(&state, repo_root_id.clone()).await?;
+
+    let result = state
+        .materialization_runtime
+        .materialize_workspace_at_ref(
+            &repo_root_id,
+            &req.operation_id,
+            &req.branch_name,
+            &req.head_sha,
+            req.destination_id.as_deref(),
+            req.preferred_workspace_name.as_deref(),
+        )
+        .await
+        .map_err(map_materialization_error)?;
+
+    let outcome = match result.outcome {
+        crate::domains::workspaces::runtime::ExactRefOutcome::Created => {
+            WorkspaceMaterializationOutcome::Created
+        }
+        crate::domains::workspaces::runtime::ExactRefOutcome::Adopted => {
+            WorkspaceMaterializationOutcome::Adopted
+        }
+        crate::domains::workspaces::runtime::ExactRefOutcome::Reused => {
+            WorkspaceMaterializationOutcome::Reused
+        }
+    };
+    Ok(Json(MaterializeWorkspaceAtRefResponse {
+        operation_id: req.operation_id,
+        workspace: workspace_to_contract(&state, result.workspace).await?,
+        observed_head_sha: result.observed_head_sha,
+        outcome,
+    }))
+}
+
+fn map_materialization_error(
+    error: crate::domains::materialization::model::MaterializationError,
+) -> ApiError {
+    use crate::domains::materialization::model::MaterializationError as E;
+    let code = error.code();
+    let detail = error.to_string();
+    match &error {
+        E::Failed(_) => ApiError::bad_request(detail, code),
+        other if other.is_conflict() => ApiError::conflict(detail, code),
+        _ => ApiError::bad_request(detail, code),
+    }
+}
+
+fn repo_root_to_contract(record: RepoRootRecord) -> RepoRoot {
+    RepoRoot {
+        id: record.id,
+        kind: match record.kind.as_str() {
+            "managed" => RepoRootKind::Managed,
+            _ => RepoRootKind::External,
+        },
+        path: record.path,
+        display_name: record.display_name,
+        default_branch: record.default_branch,
+        remote_provider: record.remote_provider,
+        remote_owner: record.remote_owner,
+        remote_repo_name: record.remote_repo_name,
+        // All list/get/materialize responses share this mapper. An adopted
+        // checkout may already have a credential-bearing origin; omit it at
+        // the public boundary rather than echoing embedded userinfo.
+        remote_url: record.remote_url.and_then(|url| {
+            crate::domains::materialization::identity::response_safe_clone_url(&url)
+        }),
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+    }
+}
+
+#[cfg(test)]
+mod response_tests {
+    use super::*;
+
+    fn record(remote_url: &str) -> RepoRootRecord {
+        RepoRootRecord {
+            id: "root-1".into(),
+            kind: "managed".into(),
+            path: "/tmp/root-1".into(),
+            display_name: None,
+            default_branch: Some("main".into()),
+            remote_provider: Some("github".into()),
+            remote_owner: Some("acme".into()),
+            remote_repo_name: Some("rocket".into()),
+            remote_url: Some(remote_url.into()),
+            created_at: "now".into(),
+            updated_at: "now".into(),
+        }
+    }
+
+    #[test]
+    fn shared_repo_root_mapper_omits_adopted_remote_credentials() {
+        let mapped = repo_root_to_contract(record(
+            "https://alice:secret-token@github.com/acme/rocket.git",
+        ));
+        assert_eq!(mapped.remote_url, None);
+
+        let safe = "https://github.com/acme/rocket.git";
+        assert_eq!(
+            repo_root_to_contract(record(safe)).remote_url.as_deref(),
+            Some(safe)
+        );
+    }
+}
+
+async fn load_repo_root(
+    state: &AppState,
+    repo_root_id: String,
+) -> Result<RepoRootRecord, ApiError> {
+    let repo_root_service = state.repo_root_service.clone();
+    run_blocking("get repo root", move || {
+        repo_root_service.get_repo_root(&repo_root_id)
+    })
+    .await?
+    .map_err(|error| ApiError::internal(error.to_string()))?
+    .ok_or_else(|| ApiError::not_found("Repo root not found", "REPO_ROOT_NOT_FOUND"))
+}

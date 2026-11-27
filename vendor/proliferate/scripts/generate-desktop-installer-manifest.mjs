@@ -1,0 +1,109 @@
+#!/usr/bin/env node
+
+import { writeFileSync, readdirSync } from "fs";
+import { join, basename, relative } from "path";
+
+function parseArgs() {
+  const args = process.argv.slice(2);
+  const parsed = {};
+  for (let i = 0; i < args.length; i += 2) {
+    parsed[args[i].replace(/^--/, "")] = args[i + 1];
+  }
+  return parsed;
+}
+
+function findFiles(dir, matcher) {
+  const files = [];
+  function walk(d) {
+    for (const entry of readdirSync(d, { withFileTypes: true })) {
+      const full = join(d, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (matcher(relative(dir, full), entry.name)) files.push(full);
+    }
+  }
+  walk(dir);
+  return files;
+}
+
+const args = parseArgs();
+const version = args.version;
+const artifactsDir = args["artifacts-dir"];
+const baseUrl = args["base-url"];
+const output = args.output;
+
+if (!version || !artifactsDir || !baseUrl || !output) {
+  console.error("Usage: generate-desktop-installer-manifest.mjs --version <ver> --artifacts-dir <dir> --base-url <url> --output <file>");
+  process.exit(1);
+}
+
+// Matchers test filenames only, never directory layout: download-artifact@v8
+// extracts a single matching artifact flat (no per-artifact directory), so a
+// path-segment requirement fails exactly when only the ARM artifact exists.
+const downloads = [
+  {
+    key: "darwin-aarch64",
+    matcher: (relPath, name) =>
+      /(aarch64|arm64).*\.dmg$/i.test(name),
+  },
+  {
+    key: "darwin-x86_64",
+    // Intel desktop builds are paused 2026-08-20 (release-desktop.yml
+    // build-desktop matrix), so this download is expected to be absent from
+    // every run until they resume. Optional: a missing Intel installer is not
+    // a manifest-generation failure.
+    optional: true,
+    matcher: (relPath, name) =>
+      /(x64|x86_64).*\.dmg$/i.test(name),
+  },
+  {
+    key: "windows-x86_64",
+    // The NSIS setup.exe is the canonical Windows download, not the MSI:
+    // release-desktop.yml's publish-updater job only copies "*-setup.exe"
+    // (not "*.msi") to the downloads bucket this manifest's --base-url
+    // points at, and it is the artifact the Tauri updater expects for a
+    // "windows-x86_64" platform entry. The "-setup.exe" suffix is what
+    // separates this download from darwin-x86_64 under the filename-only
+    // matching above; no directory segment is required, so a flat extraction
+    // resolves it just as well as a nested one.
+    // Optional: the Windows leg is an opt-in beta gated behind release.yml's
+    // enable_windows_beta input (defaulted false), so a missing or failed
+    // Windows build must never fail a mac-only release.
+    optional: true,
+    matcher: (relPath, name) => /(x64|x86_64).*-setup\.exe$/i.test(name),
+  },
+];
+
+const manifest = {
+  version,
+  pub_date: new Date().toISOString(),
+  downloads: {},
+};
+
+const errors = [];
+
+for (const download of downloads) {
+  const files = findFiles(artifactsDir, download.matcher);
+
+  if (files.length === 0) {
+    if (download.optional) {
+      console.warn(`Skipping ${download.key}: no installer found (optional platform).`);
+      continue;
+    }
+    errors.push(`Missing installer file for ${download.key}`);
+    continue;
+  }
+
+  const artifactName = basename(files[0]);
+  manifest.downloads[download.key] = {
+    url: `${baseUrl}/${artifactName}`,
+  };
+}
+
+if (errors.length > 0) {
+  console.error("Installer manifest generation failed:");
+  for (const err of errors) console.error(`  - ${err}`);
+  process.exit(1);
+}
+
+writeFileSync(output, JSON.stringify(manifest, null, 2) + "\n");
+console.log(`Generated ${output} for version ${version} with ${Object.keys(manifest.downloads).length} downloads`);

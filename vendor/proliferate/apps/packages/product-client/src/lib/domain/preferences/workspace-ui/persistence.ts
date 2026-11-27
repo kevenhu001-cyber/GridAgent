@@ -1,0 +1,124 @@
+import {
+  sanitizeLastViewedSessionByWorkspace,
+  sanitizeManualChatGroupsWithoutTransientSessions,
+  sanitizeSessionIdArrayRecord,
+} from "#product/lib/domain/preferences/workspace-ui/persisted-chat-sessions";
+import {
+  sanitizeGitStatusSnapshotsByWorkspace,
+} from "#product/lib/domain/preferences/workspace-ui/persisted-git-status";
+import {
+  sanitizeActiveShellTabKeysByWorkspace,
+  sanitizeShellTabOrderByWorkspace,
+} from "#product/lib/domain/preferences/workspace-ui/persisted-shell-tabs";
+import {
+  WORKSPACE_UI_MIGRATION_VERSION,
+  type PersistedWorkspaceUiState,
+  type WorkspaceUiChangeTrackedState,
+} from "#product/lib/domain/preferences/workspace-ui/model";
+import {
+  sanitizeRightPanelMaterializedByWorkspace,
+} from "#product/lib/domain/preferences/workspace-ui/persisted-right-panel";
+
+export function selectPersistedWorkspaceUiState(
+  state: PersistedWorkspaceUiState,
+): PersistedWorkspaceUiState {
+  return {
+    migrationVersion: WORKSPACE_UI_MIGRATION_VERSION,
+    pinnedWorkspaceIds: state.pinnedWorkspaceIds,
+    workspacePinIntentReceiptByTarget: state.workspacePinIntentReceiptByTarget,
+    workspacePinLocalBarrierById: state.workspacePinLocalBarrierById,
+    hiddenRepoRootIds: state.hiddenRepoRootIds,
+    collapsedRepoGroups: state.collapsedRepoGroups,
+    showArchived: state.showArchived,
+    repositoriesCollapsed: state.repositoriesCollapsed,
+    threadsCollapsed: state.threadsCollapsed,
+    sidebarOpen: state.sidebarOpen,
+    sidebarWidth: state.sidebarWidth,
+    rightPanelDurableByWorkspace: state.rightPanelDurableByWorkspace,
+    rightPanelMaterializedByWorkspace: sanitizeRightPanelMaterializedByWorkspace(
+      state.rightPanelMaterializedByWorkspace,
+    ),
+    activeShellTabKeyByWorkspace: sanitizeActiveShellTabKeysByWorkspace(
+      state.activeShellTabKeyByWorkspace,
+    ),
+    shellTabOrderByWorkspace: sanitizeShellTabOrderByWorkspace(
+      state.shellTabOrderByWorkspace,
+    ),
+    workspaceTypes: state.workspaceTypes,
+    lastViewedAt: state.lastViewedAt,
+    lastViewedSessionByWorkspace: sanitizeLastViewedSessionByWorkspace(
+      state.lastViewedSessionByWorkspace,
+    ),
+    lastViewedSessionErrorAtBySession: state.lastViewedSessionErrorAtBySession,
+    workspaceLastInteracted: state.workspaceLastInteracted,
+    sessionLastInteracted: state.sessionLastInteracted,
+    sessionLastViewedAt: state.sessionLastViewedAt,
+    dismissedSetupFailures: state.dismissedSetupFailures,
+    visibleChatSessionIdsByWorkspace: sanitizeSessionIdArrayRecord(
+      state.visibleChatSessionIdsByWorkspace,
+    ),
+    recentlyHiddenChatSessionIdsByWorkspace: sanitizeSessionIdArrayRecord(
+      state.recentlyHiddenChatSessionIdsByWorkspace,
+    ),
+    collapsedChatGroupsByWorkspace: sanitizeSessionIdArrayRecord(
+      state.collapsedChatGroupsByWorkspace,
+    ),
+    manualChatGroupsByWorkspace: sanitizeManualChatGroupsWithoutTransientSessions(
+      state.manualChatGroupsByWorkspace,
+    ),
+    gitStatusSnapshotByWorkspace: sanitizeGitStatusSnapshotsByWorkspace(
+      state.gitStatusSnapshotByWorkspace,
+    ),
+  };
+}
+
+export function getChangedWorkspaceUiStateKeys(
+  previous: WorkspaceUiChangeTrackedState,
+  next: WorkspaceUiChangeTrackedState,
+): string[] {
+  return [
+    "pinnedWorkspaceIds",
+    "workspacePinIntentReceiptByTarget",
+    "workspacePinLocalBarrierById",
+    "workspacePinHistoryObservationById",
+    "hiddenRepoRootIds",
+    "collapsedRepoGroups",
+    "showArchived",
+    "repositoriesCollapsed",
+    "threadsCollapsed",
+    "sidebarOpen",
+    "sidebarWidth",
+    "rightPanelDurableByWorkspace",
+    "rightPanelMaterializedByWorkspace",
+    "activeShellTabKeyByWorkspace",
+    "shellTabOrderByWorkspace",
+    "shellActivationEpochByWorkspace",
+    "pendingChatActivationByWorkspace",
+    "urgentHighlightedChatSessionByWorkspace",
+    "workspaceTypes",
+    "lastViewedAt",
+    "lastViewedSessionByWorkspace",
+    "lastViewedSessionErrorAtBySession",
+    "workspaceLastInteracted",
+    "sessionLastInteracted",
+    "sessionLastViewedAt",
+    "dismissedSetupFailures",
+    "visibleChatSessionIdsByWorkspace",
+    "recentlyHiddenChatSessionIdsByWorkspace",
+    "archivingChatSessionIdsByWorkspace",
+    "collapsedChatGroupsByWorkspace",
+    "manualChatGroupsByWorkspace",
+    "gitStatusSnapshotByWorkspace",
+  ].filter((key) => !Object.is(
+    previous[key as keyof WorkspaceUiChangeTrackedState],
+    next[key as keyof WorkspaceUiChangeTrackedState],
+  ));
+}
+
+export function isNonPersistedWorkspaceUiStateKey(key: string): boolean {
+  return key === "archivingChatSessionIdsByWorkspace"
+    || key === "pendingChatActivationByWorkspace"
+    || key === "shellActivationEpochByWorkspace"
+    || key === "urgentHighlightedChatSessionByWorkspace"
+    || key === "workspacePinHistoryObservationById";
+}

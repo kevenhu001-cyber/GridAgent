@@ -1,0 +1,77 @@
+import type { components } from "../generated/openapi.js";
+
+export type WorkspaceKind = components["schemas"]["WorkspaceKind"];
+export type WorkspaceAvailability = components["schemas"]["WorkspaceAvailability"];
+export type WorkspaceSurface = components["schemas"]["WorkspaceSurface"];
+export type WorkspaceExecutionPhase = components["schemas"]["WorkspaceExecutionPhase"];
+export type WorkspaceExecutionSummary = components["schemas"]["WorkspaceExecutionSummary"];
+export type OriginKind = components["schemas"]["OriginKind"];
+export type OriginEntrypoint = components["schemas"]["OriginEntrypoint"];
+export type OriginContext = components["schemas"]["OriginContext"];
+export type WorkspaceCreatorContext = components["schemas"]["WorkspaceCreatorContext"];
+export type Workspace = components["schemas"]["Workspace"];
+export type ResolveWorkspaceResponse = components["schemas"]["ResolveWorkspaceResponse"];
+export type UpdateWorkspaceDisplayNameRequest =
+  components["schemas"]["UpdateWorkspaceDisplayNameRequest"];
+export type ResolveWorkspaceFromPathRequest =
+  components["schemas"]["ResolveWorkspaceFromPathRequest"];
+export type CreateWorkspaceRequest = components["schemas"]["CreateWorkspaceRequest"];
+export type WorktreeCheckoutMode = components["schemas"]["WorktreeCheckoutMode"];
+export type WorktreeNameConflictPolicy =
+  components["schemas"]["WorktreeNameConflictPolicy"];
+export type CreateWorktreeWorkspaceRequest =
+  components["schemas"]["CreateWorktreeWorkspaceRequest"];
+export type SetupScriptStatus = components["schemas"]["SetupScriptStatus"];
+export type SetupScriptExecution = components["schemas"]["SetupScriptExecution"];
+export type CreateWorktreeWorkspaceResponse =
+  components["schemas"]["CreateWorktreeWorkspaceResponse"];
+export type RestoreWorktreeWorkspaceOutcome =
+  components["schemas"]["RestoreWorktreeWorkspaceOutcome"];
+export type RestoreWorktreeWorkspaceResponse =
+  components["schemas"]["RestoreWorktreeWorkspaceResponse"];
+export type SetupHintCategory = components["schemas"]["SetupHintCategory"];
+export type SetupHint = components["schemas"]["SetupHint"];
+export type DetectProjectSetupResponse =
+  components["schemas"]["DetectProjectSetupResponse"];
+export type GetSetupStatusResponse = components["schemas"]["GetSetupStatusResponse"];
+export type StartWorkspaceSetupRequest =
+  components["schemas"]["StartWorkspaceSetupRequest"];
+export type WorkspaceRetireBlockerCode =
+  components["schemas"]["WorkspaceRetireBlockerCode"];
+export type WorkspaceRetireBlockerSeverity =
+  components["schemas"]["WorkspaceRetireBlockerSeverity"];
+export type WorkspaceRetireBlocker =
+  components["schemas"]["WorkspaceRetireBlocker"];
+export type WorkspacePurgeOutcome = components["schemas"]["WorkspacePurgeOutcome"];
+export type WorkspacePurgeResponse =
+  components["schemas"]["WorkspacePurgeResponse"];
+
+// ── archiving (R4) ──
+export type WorkspaceLifecycleFilter =
+  components["schemas"]["WorkspaceLifecycleFilter"];
+export type ArchiveWorkspaceRequest =
+  components["schemas"]["ArchiveWorkspaceRequest"];
+export type WorkspaceArchiveNoticeKind =
+  components["schemas"]["WorkspaceArchiveNoticeKind"];
+export type WorkspaceArchiveNotice =
+  components["schemas"]["WorkspaceArchiveNotice"];
+export type ArchiveWorkspaceResponse =
+  components["schemas"]["ArchiveWorkspaceResponse"];
+export type WorkspaceUnarchiveBranchStrategy =
+  components["schemas"]["WorkspaceUnarchiveBranchStrategy"];
+export type UnarchiveWorkspaceRequest =
+  components["schemas"]["UnarchiveWorkspaceRequest"];
+export type WorkspaceUnarchiveNoticeKind =
+  components["schemas"]["WorkspaceUnarchiveNoticeKind"];
+export type WorkspaceUnarchiveNotice =
+  components["schemas"]["WorkspaceUnarchiveNotice"];
+export type UnarchiveWorkspaceResponse =
+  components["schemas"]["UnarchiveWorkspaceResponse"];
+export type WorkspaceUnarchiveScenario =
+  components["schemas"]["WorkspaceUnarchiveScenario"];
+export type WorkspaceUnarchiveStrategy =
+  components["schemas"]["WorkspaceUnarchiveStrategy"];
+export type WorkspaceUnarchiveScenarioBody =
+  components["schemas"]["WorkspaceUnarchiveScenarioBody"];
+export type WorkspaceGitLockedBody =
+  components["schemas"]["WorkspaceGitLockedBody"];

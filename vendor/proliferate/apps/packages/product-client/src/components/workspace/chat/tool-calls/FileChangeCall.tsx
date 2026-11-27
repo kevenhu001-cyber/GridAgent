@@ -1,0 +1,300 @@
+import { useCallback, type ReactNode } from "react";
+import { DiffViewer } from "#product/components/content/ui/DiffViewer";
+import { FileDiffCard } from "#product/components/content/ui/FileDiffCard";
+import { HighlightedCodeBlock } from "#product/components/content/ui/HighlightedCodeBlock";
+import {
+  ArrowRight,
+  Minus,
+} from "#product/primitives/icons/core";
+import {
+  FilePen,
+  FilePlus,
+} from "#product/primitives/icons/workspace";
+import { useFileReferenceActions } from "#product/hooks/workspaces/workflows/files/use-file-reference-actions";
+import { TOOL_CALL_BODY_MAX_HEIGHT_CLASS } from "#product/domain/chats/tools/tool-call-layout";
+import { resolveDiffDisplayPolicy } from "#product/lib/domain/workspaces/changes/diff-display-policy";
+import { ToolActionDetailsPanel } from "#product/components/workspace/chat/tool-calls/ToolActionDetailsPanel";
+import { ToolActionRow } from "#product/components/workspace/chat/tool-calls/ToolActionRow";
+import { ToolFileChip } from "#product/components/workspace/chat/tool-calls/ToolFileChip";
+import type { FileChangeOperation } from "@anyharness/sdk";
+
+interface FileChangeCallProps {
+  operation: FileChangeOperation;
+  path: string;
+  workspacePath?: string | null;
+  basename?: string | null;
+  newPath?: string | null;
+  newWorkspacePath?: string | null;
+  newBasename?: string | null;
+  additions?: number | null;
+  deletions?: number | null;
+  patch?: string | null;
+  preview?: string | null;
+  status: "running" | "completed" | "failed";
+  duration?: string;
+  defaultExpanded?: boolean;
+  contentSearchUnitId?: string;
+}
+
+export function FileChangeCall({
+  operation,
+  path,
+  workspacePath = null,
+  basename = null,
+  newPath,
+  newWorkspacePath = null,
+  newBasename = null,
+  additions,
+  deletions,
+  patch,
+  preview,
+  status,
+  duration,
+  defaultExpanded = false,
+  contentSearchUnitId,
+}: FileChangeCallProps) {
+  const hasDiff = !!patch;
+  const actionLabel = getOperationLabel(operation, status);
+  const rawReferencePath = newPath ?? path;
+  // A move whose destination lives outside the workspace has no structured
+  // path of its own; falling back to the source workspacePath would silently
+  // route file-reference actions to the pre-move location.
+  const structuredWorkspacePath = newPath != null
+    ? (typeof newWorkspacePath === "string" ? newWorkspacePath : null)
+    : workspacePath;
+  const displayPath = firstNonblankPath(
+    newWorkspacePath,
+    newPath,
+    workspacePath,
+    path,
+  );
+  const fileReferenceActions = useFileReferenceActions({
+    rawPath: rawReferencePath,
+    workspacePath: structuredWorkspacePath,
+  });
+  const handleOpenFile = useCallback(() => {
+    void fileReferenceActions.openPrimary();
+  }, [fileReferenceActions]);
+  const label = buildLabel(
+    actionLabel,
+    operation,
+    path,
+    workspacePath,
+    basename,
+    newPath,
+    newWorkspacePath,
+    newBasename,
+  );
+  const statsHint = buildStatsHint(additions, deletions);
+  const diffDisplayPolicy = patch
+    ? resolveDiffDisplayPolicy({
+        path: displayPath,
+        additions,
+        deletions,
+        patch,
+      })
+    : null;
+
+  if (status === "completed" && hasDiff) {
+    const nextAdditions = additions ?? 0;
+    const nextDeletions = deletions ?? 0;
+
+    return (
+      <div className="flex min-w-0 flex-col">
+        <ToolActionRow
+          icon={getOperationIcon(operation)}
+          label={label}
+          hint={statsHint}
+          status={status}
+          duration={duration}
+          expandable={false}
+        />
+        <div className="mt-1.5">
+          <FileDiffCard
+            filePath={displayPath}
+            additions={nextAdditions}
+            deletions={nextDeletions}
+            isExpanded
+            collapsible={false}
+            headerTone="inlineTool"
+            showOpenAction={false}
+            onOpenFile={fileReferenceActions.canOpenPrimary
+              ? handleOpenFile
+              : undefined}
+          >
+            {diffDisplayPolicy && !diffDisplayPolicy.canRenderInline ? (
+              <DiffDisplayPolicyPlaceholder
+                title={diffDisplayPolicy.placeholderTitle}
+                description={diffDisplayPolicy.placeholderDescription}
+              />
+            ) : (
+              <DiffViewer
+                patch={patch!}
+                filePath={displayPath}
+                contentSearchUnitId={contentSearchUnitId}
+                className="w-full"
+                viewportClassName={TOOL_CALL_BODY_MAX_HEIGHT_CLASS}
+                variant="chat"
+              />
+            )}
+          </FileDiffCard>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <ToolActionRow
+      icon={getOperationIcon(operation)}
+      label={label}
+      hint={statsHint}
+      status={status}
+      duration={duration}
+      defaultExpanded={defaultExpanded}
+      expandable={hasDiff || !!preview}
+    >
+      {hasDiff || preview ? (
+        <ToolActionDetailsPanel>
+          {hasDiff && diffDisplayPolicy && !diffDisplayPolicy.canRenderInline ? (
+            <DiffDisplayPolicyPlaceholder
+              title={diffDisplayPolicy.placeholderTitle}
+              description={diffDisplayPolicy.placeholderDescription}
+            />
+          ) : hasDiff ? (
+            <DiffViewer
+              patch={patch!}
+              filePath={displayPath}
+              contentSearchUnitId={contentSearchUnitId}
+              className="w-full"
+              viewportClassName={TOOL_CALL_BODY_MAX_HEIGHT_CLASS}
+              variant="chat"
+            />
+          ) : preview ? (
+            <div className="p-2">
+              <HighlightedCodeBlock
+                code={preview}
+                filename={displayPath}
+                showLanguageLabel={false}
+                className="border-0 bg-transparent"
+                contentClassName={TOOL_CALL_BODY_MAX_HEIGHT_CLASS}
+              />
+            </div>
+          ) : null}
+        </ToolActionDetailsPanel>
+      ) : null}
+    </ToolActionRow>
+  );
+}
+
+function DiffDisplayPolicyPlaceholder({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="px-3 py-4 text-chat text-muted-foreground">
+      <p className="font-medium text-foreground">{title}</p>
+      <p className="mt-0.5 leading-5">{description}</p>
+    </div>
+  );
+}
+
+function buildLabel(
+  actionLabel: string,
+  operation: FileChangeOperation,
+  path: string,
+  workspacePath: string | null,
+  basename: string | null,
+  newPath: string | null | undefined,
+  newWorkspacePath: string | null,
+  newBasename: string | null,
+): ReactNode {
+  const resolvedBasename = basename || extractBasename(path);
+  const resolvedNewBasename = newBasename || (newPath ? extractBasename(newPath) : null);
+  const hasMoveDestination = typeof newPath === "string"
+    || typeof newWorkspacePath === "string"
+    || resolvedNewBasename !== null;
+
+  const primaryChip = (
+    <ToolFileChip
+      basename={resolvedBasename}
+      rawPath={path}
+      workspacePath={workspacePath}
+    />
+  );
+
+  if (operation === "move" && hasMoveDestination) {
+    return (
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="shrink-0 text-inherit">{actionLabel}</span>
+        {primaryChip}
+        <ArrowRight className="icon-compact shrink-0 text-muted-foreground" />
+        <ToolFileChip
+          basename={resolvedNewBasename ?? resolvedBasename}
+          rawPath={newPath ?? path}
+          workspacePath={newWorkspacePath}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <span className="shrink-0 text-inherit">{actionLabel}</span>
+      {primaryChip}
+    </div>
+  );
+}
+
+function buildStatsHint(
+  additions?: number | null,
+  deletions?: number | null,
+): string | undefined {
+  const nextAdditions = additions ?? 0;
+  const nextDeletions = deletions ?? 0;
+  if (!nextAdditions && !nextDeletions) {
+    return undefined;
+  }
+  return `+${nextAdditions} -${nextDeletions}`;
+}
+
+function extractBasename(path: string): string {
+  const segments = path.split(/[\\/]/).filter(Boolean);
+  return segments[segments.length - 1] ?? path;
+}
+
+function firstNonblankPath(...paths: Array<string | null | undefined>): string {
+  return paths.find((candidate) => candidate?.trim()) ?? "";
+}
+
+function getOperationIcon(operation: FileChangeOperation) {
+  switch (operation) {
+    case "create":
+      return <FilePlus />;
+    case "edit":
+      return <FilePen />;
+    case "delete":
+      return <Minus />;
+    case "move":
+      return <ArrowRight />;
+  }
+}
+
+function getOperationLabel(
+  operation: FileChangeOperation,
+  status: "running" | "completed" | "failed",
+): string {
+  const inProgress = status === "running";
+  switch (operation) {
+    case "create":
+      return inProgress ? "Creating" : "Created";
+    case "edit":
+      return inProgress ? "Editing" : "Edited";
+    case "delete":
+      return inProgress ? "Deleting" : "Deleted";
+    case "move":
+      return inProgress ? "Moving" : "Moved";
+  }
+}

@@ -1,0 +1,213 @@
+import { useRef, useState, type Dispatch, type SetStateAction } from "react";
+import type {
+  CloudSessionProjection,
+  CloudTranscriptItem,
+  CloudWorkspaceDetail,
+  ProliferateCloudClient,
+} from "@proliferate/cloud-sdk";
+import type {
+  CloudHarnessLaunchOptionsResponse,
+} from "@proliferate/product-client/internal/domain/chats/cloud/launch-options-model";
+import {
+  resolveCloudLaunchSelection,
+  type CloudLaunchComposerSelection,
+} from "@proliferate/product-client/internal/domain/chats/cloud/composer-controls";
+import { latestCloudTranscriptSeq } from "@proliferate/product-client/internal/domain/chats/cloud/transcript-view";
+import type { CloudChatTranscriptRowView } from "@proliferate/product-client/internal/domain/chats/cloud/transcript-view";
+import { cloudCommandReadiness } from "@proliferate/product-client/internal/domain/workspaces/cloud-work-inventory";
+
+import type { MobilePendingPrompt } from "../../../navigation/navigation-model";
+import { savePendingMobilePrompt } from "../../../lib/access/cloud/pending-mobile-prompt-store";
+import {
+  getMobileCloudSandboxAnyHarnessClient,
+  isMobileCloudSandboxWorkspace,
+} from "../../../lib/access/anyharness/cloud-sandbox-runtime";
+import type { OptimisticPrompt } from "../../../lib/domain/chat/mobile-chat-transcript";
+
+export function useMobileChatPromptActions({
+  ownerUserId,
+  client,
+  productToken,
+  workspace,
+  session,
+  draft,
+  pendingPrompt,
+  pendingPromptFailed,
+  hasActiveOptimisticPrompt,
+  isUnclaimed,
+  canStartNewSession,
+  workspaceHarnessAvailabilityMessage,
+  resolvedLaunchSelection,
+  launchOptions,
+  transcriptItems,
+  transcriptRows,
+  setDraft,
+  setPendingPrompt,
+  setPendingPromptStatus,
+  setPendingPromptFailed,
+  setOptimisticPrompts,
+  transcriptRefetch,
+  sessionEventsRefetch,
+}: {
+  ownerUserId: string | null;
+  client: ProliferateCloudClient;
+  productToken: string | null;
+  workspace: CloudWorkspaceDetail | null;
+  session: CloudSessionProjection | null;
+  draft: string;
+  pendingPrompt: MobilePendingPrompt | null;
+  pendingPromptFailed: boolean;
+  hasActiveOptimisticPrompt: boolean;
+  isUnclaimed: boolean;
+  canStartNewSession: boolean;
+  workspaceHarnessAvailabilityMessage?: string | null;
+  resolvedLaunchSelection: CloudLaunchComposerSelection;
+  launchOptions: CloudHarnessLaunchOptionsResponse | null | undefined;
+  transcriptItems: readonly CloudTranscriptItem[];
+  transcriptRows: readonly CloudChatTranscriptRowView[];
+  setDraft: Dispatch<SetStateAction<string>>;
+  setPendingPrompt: Dispatch<SetStateAction<MobilePendingPrompt | null>>;
+  setPendingPromptStatus: Dispatch<SetStateAction<string | null>>;
+  setPendingPromptFailed: Dispatch<SetStateAction<boolean>>;
+  setOptimisticPrompts: Dispatch<SetStateAction<OptimisticPrompt[]>>;
+  transcriptRefetch: () => void | Promise<unknown>;
+  sessionEventsRefetch: () => void | Promise<unknown>;
+}) {
+  const [directPromptDispatching, setDirectPromptDispatching] = useState(false);
+  const directPromptDispatchingRef = useRef(false);
+  const sessionPromptDispatchingRef = useRef(false);
+
+  async function submitPrompt() {
+    const text = draft.trim();
+    if (!text || !workspace) {
+      return;
+    }
+    if (isUnclaimed) {
+      setPendingPromptStatus("Claim this workspace before sending prompts from mobile.");
+      return;
+    }
+    const readiness = cloudCommandReadiness(workspace);
+    if (!readiness.commandable) {
+      setPendingPromptStatus(readiness.message ?? "This workspace cannot accept cloud commands right now.");
+      return;
+    }
+    if (!isMobileCloudSandboxWorkspace(workspace)) {
+      setPendingPromptStatus("Cloud workspace runtime is unavailable.");
+      return;
+    }
+    if (!session) {
+      await submitPendingSessionPrompt(text);
+      return;
+    }
+    await submitExistingSessionPrompt(text, session);
+  }
+
+  async function submitPendingSessionPrompt(text: string) {
+    if (!ownerUserId) {
+      setPendingPromptStatus("Account is still loading. Try again in a moment.");
+      return;
+    }
+    if (!workspace) {
+      return;
+    }
+    if (directPromptDispatchingRef.current || (pendingPrompt && !pendingPromptFailed)) {
+      return;
+    }
+    if (!canStartNewSession) {
+      setPendingPromptStatus(
+        workspaceHarnessAvailabilityMessage ?? "No cloud agent is ready for a new session.",
+      );
+      return;
+    }
+    const promptSelection = resolveCloudLaunchSelection({
+      launchOptions,
+      selection: resolvedLaunchSelection,
+    });
+    directPromptDispatchingRef.current = true;
+    const prompt: MobilePendingPrompt = {
+      id: `mobile-chat:${workspace.id}:${Date.now().toString(36)}`,
+      text,
+      agentKind: promptSelection.agentKind,
+      modelId: promptSelection.modelId,
+      controlValues: promptSelection.controlValues,
+      createdAt: Date.now(),
+    };
+    setDraft("");
+    setPendingPrompt(prompt);
+    setPendingPromptStatus("Starting a session for this prompt.");
+    setPendingPromptFailed(false);
+    setDirectPromptDispatching(true);
+    try {
+      await savePendingMobilePrompt(workspace.id, ownerUserId, prompt);
+    } catch (error) {
+      setPendingPromptStatus(
+        error instanceof Error
+          ? `Prompt will send while this chat stays open. Storage failed: ${error.message}`
+          : "Prompt will send while this chat stays open, but could not be saved.",
+      );
+    } finally {
+      directPromptDispatchingRef.current = false;
+      setDirectPromptDispatching(false);
+    }
+  }
+
+  async function submitExistingSessionPrompt(
+    text: string,
+    activeSession: CloudSessionProjection,
+  ) {
+    if (!workspace) {
+      return;
+    }
+    if (sessionPromptDispatchingRef.current || hasActiveOptimisticPrompt) {
+      return;
+    }
+    sessionPromptDispatchingRef.current = true;
+    const optimisticPrompt: OptimisticPrompt = {
+      id: `mobile:${workspace.id}:${activeSession.sessionId}:${Date.now()}`,
+      sessionId: activeSession.sessionId,
+      text,
+      baseTranscriptSeq: latestCloudTranscriptSeq(transcriptItems, transcriptRows),
+      status: "sending",
+    };
+    setOptimisticPrompts((current) => [...current, optimisticPrompt]);
+    setDraft("");
+    setPendingPromptStatus(null);
+    try {
+      const { anyharness } = await getMobileCloudSandboxAnyHarnessClient({
+        workspace,
+        productToken,
+        client,
+      });
+      await anyharness.sessions.prompt(activeSession.sessionId, {
+        blocks: [{ type: "text", text }],
+        promptId: optimisticPrompt.id,
+      });
+      setOptimisticPrompts((current) =>
+        current.map((prompt) =>
+          prompt.id === optimisticPrompt.id
+            ? { ...prompt, status: "queued" }
+            : prompt
+        )
+      );
+      void transcriptRefetch();
+      void sessionEventsRefetch();
+    } catch (error) {
+      setOptimisticPrompts((current) =>
+        current.map((prompt) =>
+          prompt.id === optimisticPrompt.id ? { ...prompt, status: "failed" } : prompt
+        )
+      );
+      setPendingPromptStatus(error instanceof Error ? error.message : "Prompt could not be sent.");
+    } finally {
+      sessionPromptDispatchingRef.current = false;
+    }
+  }
+
+  return {
+    promptSubmitting:
+      directPromptDispatching
+      || (Boolean(pendingPrompt) && !pendingPromptFailed)
+      || hasActiveOptimisticPrompt,
+    submitPrompt,
+  };
+}

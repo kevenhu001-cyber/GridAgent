@@ -1,0 +1,528 @@
+use std::sync::Arc;
+
+use sentry::protocol::{Breadcrumb, Event, Frame, Log, LogEntry, Stacktrace, Value};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
+
+const TARGET_SENTRY_DSN_ENV: &str = "PROLIFERATE_TARGET_SENTRY_DSN";
+const TARGET_SENTRY_ENVIRONMENT_ENV: &str = "PROLIFERATE_TARGET_SENTRY_ENVIRONMENT";
+// Component-specific emergency override. The shared
+// PROLIFERATE_TARGET_SENTRY_RELEASE was removed because one value could not
+// distinguish supervisor from worker events; each binary otherwise stamps its
+// own `<component>@<version>+<sha>` from its compile-time build stamp.
+const SUPERVISOR_SENTRY_RELEASE_ENV: &str = "PROLIFERATE_SUPERVISOR_SENTRY_RELEASE";
+const TARGET_SENTRY_TRACES_SAMPLE_RATE_ENV: &str = "PROLIFERATE_TARGET_SENTRY_TRACES_SAMPLE_RATE";
+/// The single env-like Sentry tag preserved as bounded deployment identity.
+/// Its allowed live value is `e2b`; every other env-like tag stays redacted.
+const RUNTIME_ENV_TAG: &str = "runtime_env";
+
+pub struct TelemetryGuards {
+    _sentry: Option<sentry::ClientInitGuard>,
+}
+
+fn env_or_default(key: &str, default: &str) -> String {
+    std::env::var(key).unwrap_or_else(|_| default.to_string())
+}
+
+fn sample_rate(key: &str, default: f32) -> f32 {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| value.parse::<f32>().ok())
+        .unwrap_or(default)
+}
+
+fn env_filter_from_env() -> tracing_subscriber::EnvFilter {
+    tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "proliferate_supervisor=info,info".into())
+}
+
+/// The build SHA stamped by `build.rs`, or `None` for an unstamped dev build.
+fn stamped_git_sha() -> Option<&'static str> {
+    let sha = env!("PROLIFERATE_STAMPED_GIT_SHA");
+    if sha.is_empty() {
+        None
+    } else {
+        Some(sha)
+    }
+}
+
+/// This binary's canonical release ID: `proliferate-supervisor@<version>+<sha>`.
+/// Uses the same compile-time build stamp as anyharness/worker (supervisor
+/// previously had no build.rs and reported a static `0.1.0`). The SHA is
+/// omitted only for an unstamped local/dev build.
+fn default_release() -> String {
+    let version = env!("PROLIFERATE_STAMPED_VERSION");
+    match stamped_git_sha() {
+        Some(sha) => format!("proliferate-supervisor@{version}+{sha}"),
+        None => format!("proliferate-supervisor@{version}"),
+    }
+}
+
+/// Sentry user context for the authenticated owner, when known. The `user_id`
+/// scope tag remains only as a temporary adapter fallback during the migration
+/// to user context (support-system "Sentry users").
+fn sentry_user_from_env() -> Option<sentry::User> {
+    sentry_user_from_id(std::env::var("PROLIFERATE_USER_ID").ok().as_deref())
+}
+
+/// Pure: build Sentry user context from an optional raw user-id value.
+fn sentry_user_from_id(raw: Option<&str>) -> Option<sentry::User> {
+    let user_id = raw?.trim();
+    if user_id.is_empty() {
+        return None;
+    }
+    Some(sentry::User {
+        id: Some(user_id.to_string()),
+        ..Default::default()
+    })
+}
+
+fn scrub_text(value: &str) -> String {
+    redact_absolute_paths(&strip_query_segments(&redact_bearer_tokens(value)))
+}
+
+fn redact_bearer_tokens(value: &str) -> String {
+    let mut output = String::new();
+    let mut remaining = value;
+    while let Some(index) = remaining.find("Bearer ") {
+        output.push_str(&remaining[..index]);
+        output.push_str("[redacted-token]");
+        let token_start = index + "Bearer ".len();
+        let token_end = remaining[token_start..]
+            .find(char::is_whitespace)
+            .map(|offset| token_start + offset)
+            .unwrap_or(remaining.len());
+        remaining = &remaining[token_end..];
+    }
+    output.push_str(remaining);
+    output
+}
+
+fn strip_query_segments(value: &str) -> String {
+    let chars: Vec<char> = value.chars().collect();
+    let mut output = String::new();
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] == '?' && preceding_token_is_urlish(&output) {
+            index += 1;
+            while index < chars.len()
+                && !chars[index].is_whitespace()
+                && !matches!(chars[index], '"' | '\'' | ')' | '<' | '>')
+            {
+                index += 1;
+            }
+            continue;
+        }
+        output.push(chars[index]);
+        index += 1;
+    }
+    output
+}
+
+fn preceding_token_is_urlish(value: &str) -> bool {
+    let token = value
+        .rsplit(|ch: char| ch.is_whitespace() || matches!(ch, '"' | '\'' | '(' | '<' | '>'))
+        .next()
+        .unwrap_or_default();
+    token.contains("://")
+        || token.starts_with('/')
+        || token.starts_with("./")
+        || token.starts_with("../")
+}
+
+fn redact_absolute_paths(value: &str) -> String {
+    let mut output = String::new();
+    let mut index = 0;
+    while index < value.len() {
+        let rest = &value[index..];
+        if rest.starts_with("/Users/")
+            || rest.starts_with("/home/")
+            || rest.starts_with("/private/var/mobile/")
+            || rest.starts_with("/var/mobile/")
+            || rest.starts_with("/data/user/")
+            || rest.starts_with("/data/data/")
+            || starts_with_windows_path(rest)
+        {
+            output.push_str("[redacted-path]");
+            index += rest
+                .find(|ch: char| {
+                    ch.is_whitespace() || matches!(ch, '"' | '\'' | ',' | ')' | '<' | '>')
+                })
+                .unwrap_or(rest.len());
+            continue;
+        }
+        let ch = rest.chars().next().expect("non-empty rest");
+        output.push(ch);
+        index += ch.len_utf8();
+    }
+    output
+}
+
+fn starts_with_windows_path(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(drive) = chars.next() else {
+        return false;
+    };
+    if !drive.is_ascii_alphabetic() || chars.next() != Some(':') {
+        return false;
+    }
+    match chars.next() {
+        Some('\\') => true,
+        Some('/') => chars.next() != Some('/'),
+        _ => false,
+    }
+}
+
+fn sensitive_key(key: &str) -> bool {
+    let normalized = key.to_ascii_lowercase();
+    [
+        "authorization",
+        "cookie",
+        "token",
+        "secret",
+        "password",
+        "api_key",
+        "apikey",
+        "credential",
+        "prompt",
+        "content",
+        "stdout",
+        "stderr",
+        "request_body",
+        "body",
+        "env",
+        "file_path",
+        "path",
+        "query",
+        "search",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
+}
+
+fn scrub_value(value: &mut Value, key: Option<&str>) {
+    if key.is_some_and(sensitive_key) {
+        *value = Value::String("[redacted]".to_string());
+        return;
+    }
+
+    match value {
+        Value::String(text) => {
+            *text = scrub_text(text);
+        }
+        Value::Array(items) => {
+            for item in items {
+                scrub_value(item, None);
+            }
+        }
+        Value::Object(map) => {
+            for (entry_key, entry_value) in map {
+                scrub_value(entry_value, Some(entry_key));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn scrub_optional_text(value: &mut Option<String>) {
+    if let Some(text) = value {
+        *text = scrub_text(text);
+    }
+}
+
+fn scrub_log_entry(logentry: &mut Option<LogEntry>) {
+    if let Some(logentry) = logentry {
+        logentry.message = scrub_text(&logentry.message);
+        for param in &mut logentry.params {
+            scrub_value(param, None);
+        }
+    }
+}
+
+fn scrub_frame(frame: &mut Frame) {
+    scrub_optional_text(&mut frame.filename);
+    scrub_optional_text(&mut frame.abs_path);
+    frame.context_line = None;
+    frame.pre_context.clear();
+    frame.post_context.clear();
+    frame.vars.clear();
+}
+
+fn scrub_stacktrace(stacktrace: &mut Option<Stacktrace>) {
+    if let Some(stacktrace) = stacktrace {
+        for frame in &mut stacktrace.frames {
+            scrub_frame(frame);
+        }
+    }
+}
+
+fn scrub_breadcrumb(mut breadcrumb: Breadcrumb) -> Option<Breadcrumb> {
+    scrub_optional_text(&mut breadcrumb.message);
+    for (key, value) in &mut breadcrumb.data {
+        scrub_value(value, Some(key));
+    }
+    Some(breadcrumb)
+}
+
+fn scrub_event(mut event: Event<'static>) -> Option<Event<'static>> {
+    scrub_optional_text(&mut event.message);
+    scrub_optional_text(&mut event.culprit);
+    scrub_optional_text(&mut event.transaction);
+    scrub_log_entry(&mut event.logentry);
+
+    if let Some(user) = &mut event.user {
+        user.email = None;
+        user.username = None;
+        user.ip_address = None;
+        user.other.clear();
+    }
+
+    if let Some(request) = &mut event.request {
+        if let Some(url) = &mut request.url {
+            url.set_query(None);
+            url.set_fragment(None);
+        }
+        request.data = None;
+        request.query_string = None;
+        request.cookies = None;
+        request.headers.clear();
+        request.env.clear();
+    }
+
+    for breadcrumb in &mut event.breadcrumbs.values {
+        scrub_optional_text(&mut breadcrumb.message);
+        for (key, value) in &mut breadcrumb.data {
+            scrub_value(value, Some(key));
+        }
+    }
+    for exception in &mut event.exception.values {
+        scrub_optional_text(&mut exception.value);
+        scrub_stacktrace(&mut exception.stacktrace);
+        scrub_stacktrace(&mut exception.raw_stacktrace);
+    }
+    scrub_stacktrace(&mut event.stacktrace);
+    if let Some(template) = &mut event.template {
+        scrub_optional_text(&mut template.filename);
+        scrub_optional_text(&mut template.abs_path);
+        template.context_line = None;
+        template.pre_context.clear();
+        template.post_context.clear();
+    }
+    for thread in &mut event.threads.values {
+        scrub_optional_text(&mut thread.name);
+        scrub_stacktrace(&mut thread.stacktrace);
+        scrub_stacktrace(&mut thread.raw_stacktrace);
+    }
+    for (key, value) in &mut event.extra {
+        scrub_value(value, Some(key));
+    }
+    for (key, value) in &mut event.tags {
+        if key == RUNTIME_ENV_TAG {
+            // Bounded deployment identity: the runtime-environment tag survives
+            // (allowed live value `e2b`). Every other env-like tag key still
+            // matches `sensitive_key` and stays redacted.
+            *value = scrub_text(value);
+        } else if sensitive_key(key) {
+            *value = "[redacted]".to_string();
+        } else {
+            *value = scrub_text(value);
+        }
+    }
+
+    Some(event)
+}
+
+fn scrub_log(mut log: Log) -> Option<Log> {
+    log.body = scrub_text(&log.body);
+    for (key, attribute) in &mut log.attributes {
+        scrub_value(&mut attribute.0, Some(key));
+    }
+    Some(log)
+}
+
+pub fn init() -> TelemetryGuards {
+    let dsn = std::env::var(TARGET_SENTRY_DSN_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let telemetry = dsn.map(|dsn| {
+        sentry::init((
+            dsn,
+            sentry::ClientOptions {
+                environment: Some(
+                    env_or_default(TARGET_SENTRY_ENVIRONMENT_ENV, "trusted-beta").into(),
+                ),
+                release: Some(
+                    env_or_default(SUPERVISOR_SENTRY_RELEASE_ENV, &default_release()).into(),
+                ),
+                traces_sample_rate: sample_rate(TARGET_SENTRY_TRACES_SAMPLE_RATE_ENV, 1.0),
+                attach_stacktrace: true,
+                send_default_pii: false,
+                before_send: Some(Arc::new(scrub_event)),
+                before_breadcrumb: Some(Arc::new(scrub_breadcrumb)),
+                before_send_log: Some(Arc::new(scrub_log)),
+                ..Default::default()
+            },
+        ))
+    });
+
+    let console_layer = tracing_subscriber::fmt::layer().with_filter(env_filter_from_env());
+    let _ = tracing_subscriber::registry()
+        .with(console_layer)
+        .with(sentry_tracing::layer())
+        .try_init();
+
+    if telemetry.is_some() {
+        sentry::configure_scope(|scope| {
+            scope.set_tag("surface", "proliferate_supervisor");
+            scope.set_tag("telemetry_mode", "hosted_product");
+
+            let runtime_env = std::env::var("PROLIFERATE_RUNTIME_ENV")
+                .unwrap_or_else(|_| "local".to_string());
+            scope.set_tag(RUNTIME_ENV_TAG, &runtime_env);
+
+            if let Ok(org_id) = std::env::var("PROLIFERATE_ORG_ID") {
+                if !org_id.trim().is_empty() {
+                    scope.set_tag("org_id", &org_id);
+                }
+            }
+            if let Ok(sandbox_id) = std::env::var("PROLIFERATE_SANDBOX_ID") {
+                if !sandbox_id.trim().is_empty() {
+                    scope.set_tag("sandbox_id", &sandbox_id);
+                }
+            }
+            if let Ok(user_id) = std::env::var("PROLIFERATE_USER_ID") {
+                if !user_id.trim().is_empty() {
+                    scope.set_tag("user_id", &user_id);
+                }
+            }
+            if let Some(user) = sentry_user_from_env() {
+                scope.set_user(Some(user));
+            }
+        });
+    }
+
+    TelemetryGuards { _sentry: telemetry }
+}
+
+#[cfg(test)]
+mod tests {
+    use sentry::protocol::{Event, Exception, Frame, Stacktrace, Value};
+
+    use super::{default_release, scrub_event, sentry_user_from_id, stamped_git_sha};
+
+    #[test]
+    fn default_release_is_canonical_and_build_stamped() {
+        // Supervisor now shares the anyharness/worker build stamp; it no longer
+        // reports a static release detached from PROLIFERATE_BUILD_VERSION.
+        let release = default_release();
+        assert!(release.starts_with("proliferate-supervisor@"), "{release}");
+        let expected = match stamped_git_sha() {
+            Some(sha) => {
+                assert_eq!(sha.len(), 12);
+                format!(
+                    "proliferate-supervisor@{}+{sha}",
+                    env!("PROLIFERATE_STAMPED_VERSION")
+                )
+            }
+            None => format!("proliferate-supervisor@{}", env!("PROLIFERATE_STAMPED_VERSION")),
+        };
+        assert_eq!(release, expected);
+    }
+
+    #[test]
+    fn sentry_user_context_is_id_only_and_trimmed() {
+        let user = sentry_user_from_id(Some("  user-9  ")).expect("user present");
+        assert_eq!(user.id.as_deref(), Some("user-9"));
+        assert!(user.email.is_none());
+        assert!(sentry_user_from_id(None).is_none());
+        assert!(sentry_user_from_id(Some("  ")).is_none());
+    }
+
+    #[test]
+    fn sentry_event_scrubber_removes_paths_urls_and_bodies() {
+        let mut event = Event::new();
+        event.message = Some(
+            "failed at /home/proliferate/workspace/file.rs?code=secret Bearer abc123".to_string(),
+        );
+        event.extra.insert(
+            "body".to_string(),
+            Value::String("raw response".to_string()),
+        );
+        event.exception.values.push(Exception {
+            value: Some(
+                "request failed https://app.proliferate.com/auth/callback?code=abc&state=def"
+                    .to_string(),
+            ),
+            stacktrace: Some(Stacktrace {
+                frames: vec![Frame {
+                    abs_path: Some("/home/proliferate/app/main.rs".to_string()),
+                    context_line: Some("let token = secret;".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+
+        let scrubbed = scrub_event(event).expect("event should remain");
+
+        assert_eq!(
+            scrubbed.message.as_deref(),
+            Some("failed at [redacted-path] [redacted-token]")
+        );
+        assert_eq!(
+            scrubbed.extra["body"],
+            Value::String("[redacted]".to_string())
+        );
+        assert_eq!(
+            scrubbed.exception.values[0].value.as_deref(),
+            Some("request failed https://app.proliferate.com/auth/callback")
+        );
+        let frame = &scrubbed.exception.values[0]
+            .stacktrace
+            .as_ref()
+            .expect("stacktrace")
+            .frames[0];
+        assert_eq!(frame.abs_path.as_deref(), Some("[redacted-path]"));
+        assert!(frame.context_line.is_none());
+    }
+
+    #[test]
+    fn tracing_error_reaches_the_sentry_client() {
+        // Regression (B2 amendment): a `sentry` / `sentry-tracing` version split
+        // links two `sentry-core` instances, so the tracing layer captures into
+        // a clientless Hub and every ERROR event is silently dropped (observed
+        // live in production from 2026-06-14). Fails with 0 events on any
+        // future divergence.
+        use tracing_subscriber::layer::SubscriberExt;
+        let subscriber = tracing_subscriber::registry().with(sentry_tracing::layer());
+        let events = sentry::test::with_captured_events(|| {
+            tracing::subscriber::with_default(subscriber, || {
+                tracing::error!("sentry emission regression probe");
+            });
+        });
+        assert_eq!(events.len(), 1, "tracing ERROR must reach the Sentry client");
+    }
+
+    #[test]
+    fn runtime_env_tag_survives_while_other_env_tags_are_redacted() {
+        let mut event = Event::new();
+        event.tags.insert("runtime_env".to_string(), "e2b".to_string());
+        event.tags.insert("deploy_env".to_string(), "prod".to_string());
+        event
+            .tags
+            .insert("environment_name".to_string(), "prod".to_string());
+
+        let scrubbed = scrub_event(event).expect("event should remain");
+
+        // Bounded deployment identity is preserved; other env-like tags are not.
+        assert_eq!(scrubbed.tags.get("runtime_env").map(String::as_str), Some("e2b"));
+        assert_eq!(
+            scrubbed.tags.get("deploy_env").map(String::as_str),
+            Some("[redacted]")
+        );
+        assert_eq!(
+            scrubbed.tags.get("environment_name").map(String::as_str),
+            Some("[redacted]")
+        );
+    }
+}

@@ -1,0 +1,399 @@
+import { useEffect, useMemo } from "react";
+import { useQueries } from "@tanstack/react-query";
+import { cadence } from "@proliferate/design/cadence";
+import { useShallow } from "zustand/react/shallow";
+import {
+  anyHarnessCoworkManagedWorkspacesKey,
+  anyHarnessSessionReviewsKey,
+  anyHarnessSessionSubagentsKey,
+  resolveWorkspaceConnectionFromContext,
+  useAnyHarnessCacheScopeKey,
+  useAnyHarnessWorkspaceContext,
+} from "@anyharness/sdk-react";
+import type {
+  CoworkManagedWorkspacesResponse,
+  SessionSubagentsResponse,
+  SessionReviewsResponse,
+} from "@anyharness/sdk";
+import {
+  collectReviewSessionRelationshipHints,
+} from "#product/lib/domain/reviews/session-relationship-hints";
+import { getSessionSubagents } from "#product/lib/access/anyharness/sessions";
+import { listSessionReviews } from "#product/lib/access/anyharness/reviews";
+import { getCoworkManagedWorkspaces } from "#product/lib/access/anyharness/cowork";
+import {
+  collectSubagentSessionRelationshipHints,
+} from "#product/domain/chats/subagents/session-relationship-hints";
+import { useHarnessConnectionStore } from "#product/stores/sessions/harness-connection-store";
+import { useSessionDirectoryStore } from "#product/stores/sessions/session-directory-store";
+import { measureDebugComputation } from "#product/lib/infra/measurement/measurement-port";
+import {
+  resolveHierarchyMaterializedSessionId,
+} from "#product/lib/domain/workspaces/tabs/workspace-header-tabs-model-helpers";
+import {
+  buildCoworkRelationshipHintSignature,
+  type HeaderCoworkRelationshipHint,
+} from "#product/lib/domain/workspaces/tabs/workspace-header-cowork-hierarchy";
+import { useBatchedHeaderHierarchySessionIds } from "#product/hooks/workspaces/ui/tabs/use-batched-header-hierarchy-session-ids";
+import {
+  isReplacedSessionTombstoned,
+} from "#product/hooks/sessions/workflows/session-replacement-tombstones";
+import {
+  buildHierarchyQuerySignature,
+  buildReviewRelationshipHintSignature,
+  buildSubagentRelationshipHintSignature,
+  buildWorkspaceHeaderSubagentHierarchy,
+  type HeaderHierarchyQueryRow,
+  type WorkspaceHeaderSubagentHierarchy,
+} from "#product/lib/domain/workspaces/tabs/workspace-header-subagent-hierarchy";
+
+// Was a raw 5_000ms literal; already exactly on-scale, so this is a rename onto `cadence.standardMs` rather than a value change.
+// Named exception (does not sit on the `cadence` scale): the reviews staleTime is 2_500ms, strictly between `cadence.fastMs` (1s)
+// and `cadence.standardMs` (5s) — snapping down tightens (forbidden), and snapping up would double how long a stale review list
+// can back the header tabs' subagent hierarchy after a review posts elsewhere (UX Latency + Transitions ADR §4.7, Rung 6, Q8).
+const HEADER_SUBAGENT_HIERARCHY_STALE_MS = cadence.standardMs;
+const HEADER_SESSION_REVIEWS_STALE_MS = 2_500;
+
+export function useWorkspaceHeaderSubagentHierarchy(args: {
+  prioritySessionIds?: string[];
+  workspaceId: string | null;
+  sessionIds: string[];
+}): WorkspaceHeaderSubagentHierarchy {
+  const workspace = useAnyHarnessWorkspaceContext();
+  const cacheScopeKey = useAnyHarnessCacheScopeKey();
+  const runtimeUrl = useHarnessConnectionStore((state) => state.runtimeUrl);
+  const recordSessionRelationshipHint = useSessionDirectoryStore(
+    (state) => state.recordRelationshipHint,
+  );
+  const promotedRootSessionIds = useSessionDirectoryStore(
+    (state) => state.promotedRootSessionIds,
+  );
+  const uniqueSessionIds = useMemo(
+    () => [...new Set(args.sessionIds)].filter(Boolean),
+    [args.sessionIds],
+  );
+  const enabledSessionIds = useBatchedHeaderHierarchySessionIds({
+    prioritySessionIds: args.prioritySessionIds ?? [],
+    sessionIds: uniqueSessionIds,
+    workspaceId: args.workspaceId,
+  });
+  const materializedSessionIds = useSessionDirectoryStore(useShallow((state) =>
+    uniqueSessionIds.map((sessionId) => resolveHierarchyMaterializedSessionId({
+      sessionId,
+      materializedSessionId: state.entriesById[sessionId]?.materializedSessionId ?? null,
+    }))
+  ));
+  const clientSessionIdByMaterializedSessionId = useSessionDirectoryStore(
+    (state) => state.clientSessionIdByMaterializedSessionId,
+  );
+  const resolveClientSessionId = useMemo(
+    () => (sessionId: string) =>
+      clientSessionIdByMaterializedSessionId[sessionId] ?? sessionId,
+    [clientSessionIdByMaterializedSessionId],
+  );
+
+  const subagentQueries = useQueries({
+    queries: uniqueSessionIds.map((sessionId, index) => {
+      const materializedSessionId = materializedSessionIds[index];
+      return {
+        queryKey: buildHeaderSessionSubagentsQueryKey({
+          cacheScopeKey,
+          workspaceId: args.workspaceId,
+          materializedSessionId,
+        }),
+        enabled: shouldEnableHeaderSessionScopedQuery({
+          workspaceId: args.workspaceId,
+          sessionId,
+          materializedSessionId,
+          enabledByBatch: enabledSessionIds.has(sessionId),
+        }),
+        queryFn: async ({ signal }): Promise<SessionSubagentsResponse> => {
+          if (!materializedSessionId) {
+            throw new Error("Session is still starting. Try again in a moment.");
+          }
+          const resolved = await resolveWorkspaceConnectionFromContext(
+            workspace,
+            args.workspaceId,
+          );
+          return getSessionSubagents(resolved.connection, materializedSessionId, { signal });
+        },
+        staleTime: HEADER_SUBAGENT_HIERARCHY_STALE_MS,
+        retry: false,
+      };
+    }),
+  });
+  const reviewQueries = useQueries({
+    queries: uniqueSessionIds.map((sessionId, index) => {
+      const materializedSessionId = materializedSessionIds[index];
+      return {
+        queryKey: anyHarnessSessionReviewsKey(
+          cacheScopeKey,
+          args.workspaceId,
+          sessionId,
+        ),
+        enabled: shouldEnableHeaderSessionScopedQuery({
+          workspaceId: args.workspaceId,
+          sessionId,
+          materializedSessionId,
+          enabledByBatch: enabledSessionIds.has(sessionId),
+        }),
+        queryFn: async ({ signal }): Promise<SessionReviewsResponse> => {
+          if (!materializedSessionId) {
+            throw new Error("Session is still starting. Try again in a moment.");
+          }
+          const resolved = await resolveWorkspaceConnectionFromContext(
+            workspace,
+            args.workspaceId,
+          );
+          return listSessionReviews(resolved.connection, materializedSessionId, { signal });
+        },
+        staleTime: HEADER_SESSION_REVIEWS_STALE_MS,
+        retry: false,
+      };
+    }),
+  });
+  const coworkQueries = useQueries({
+    queries: uniqueSessionIds.map((sessionId, index) => {
+      const materializedSessionId = materializedSessionIds[index];
+      return {
+        queryKey: anyHarnessCoworkManagedWorkspacesKey(
+          runtimeUrl,
+          materializedSessionId,
+          cacheScopeKey,
+        ),
+        enabled: shouldEnableHeaderSessionScopedQuery({
+          workspaceId: args.workspaceId,
+          sessionId,
+          materializedSessionId,
+          enabledByBatch: enabledSessionIds.has(sessionId),
+        }),
+        queryFn: async ({ signal }): Promise<CoworkManagedWorkspacesResponse> => {
+          if (!materializedSessionId) {
+            throw new Error("Session is still starting. Try again in a moment.");
+          }
+          const resolved = await resolveWorkspaceConnectionFromContext(
+            workspace,
+            args.workspaceId,
+          );
+          return getCoworkManagedWorkspaces(
+            resolved.connection,
+            materializedSessionId,
+            { signal },
+          );
+        },
+        staleTime: HEADER_SUBAGENT_HIERARCHY_STALE_MS,
+        retry: false,
+      };
+    }),
+  });
+  const filteredSubagentQueries = subagentQueries.map((query, index) => ({
+    data: filterPromotedHeaderSubagents({
+      sessionId: uniqueSessionIds[index] ?? null,
+      response: query.data,
+      promotedRootSessionIds,
+      resolveClientSessionId,
+    }) ?? undefined,
+    isSuccess: query.isSuccess,
+  }));
+  const subagentRelationshipHintRows = filteredSubagentQueries.flatMap((query, index) => {
+    const sessionId = uniqueSessionIds[index];
+    return sessionId
+      ? collectSubagentSessionRelationshipHints(sessionId, query.data)
+        .map((hint) => ({
+          ...hint,
+          sessionId: resolveClientSessionId(hint.sessionId),
+          parentSessionId: resolveClientSessionId(hint.parentSessionId),
+        }))
+      : [];
+  });
+  const subagentRelationshipHintSignature =
+    buildSubagentRelationshipHintSignature(subagentRelationshipHintRows);
+  const subagentRelationshipHints = useMemo(
+    () => subagentRelationshipHintRows,
+    // The query result array is intentionally not a dependency: useQueries returns
+    // a new array each render, while this signature only changes when the
+    // relationship hints we record into the store actually change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [subagentRelationshipHintSignature],
+  );
+  const reviewRelationshipHintRows = reviewQueries.flatMap((query) =>
+    collectReviewSessionRelationshipHints(query.data?.reviews)
+      .map((hint) => ({
+        ...hint,
+        sessionId: resolveClientSessionId(hint.sessionId),
+        parentSessionId: resolveClientSessionId(hint.parentSessionId),
+      }))
+  );
+  const reviewRelationshipHintSignature =
+    buildReviewRelationshipHintSignature(reviewRelationshipHintRows);
+  const reviewRelationshipHints = useMemo(
+    () => reviewRelationshipHintRows,
+    // The query result array is intentionally not a dependency: useQueries returns
+    // a new array each render, while this signature only changes when the
+    // relationship hints we record into the store actually change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [reviewRelationshipHintSignature],
+  );
+  const coworkRelationshipHintRows: HeaderCoworkRelationshipHint[] =
+    coworkQueries.flatMap((query, index) => {
+      const parentSessionId = uniqueSessionIds[index];
+      if (!parentSessionId) {
+        return [];
+      }
+      return (query.data?.workspaces ?? []).flatMap((managedWorkspace) =>
+        managedWorkspace.sessions.map((session) => ({
+          sessionId: resolveClientSessionId(session.codingSessionId),
+          parentSessionId,
+          sessionLinkId: session.sessionLinkId,
+          workspaceId: managedWorkspace.workspaceId,
+        }))
+      );
+    });
+  const coworkRelationshipHintSignature =
+    buildCoworkRelationshipHintSignature(coworkRelationshipHintRows);
+  const coworkRelationshipHints = useMemo(
+    () => coworkRelationshipHintRows,
+    // The query result array is intentionally not a dependency: useQueries returns
+    // a new array each render, while this signature only changes when the
+    // relationship hints we record into the store actually change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [coworkRelationshipHintSignature],
+  );
+  const hierarchyQuerySignature = buildHierarchyQuerySignature({
+    sessionIds: uniqueSessionIds,
+    subagentQueries: filteredSubagentQueries,
+    reviewQueries,
+    coworkQueries,
+  });
+  const hierarchyQueryRows = useMemo<HeaderHierarchyQueryRow[]>(
+    () => uniqueSessionIds.map((sessionId, index) => ({
+      sessionId,
+      subagentSuccess: subagentQueries[index]?.isSuccess === true,
+      subagentData: filteredSubagentQueries[index]?.data ?? null,
+      reviewSuccess: reviewQueries[index]?.isSuccess === true,
+      reviewData: reviewQueries[index]?.data ?? null,
+      coworkSuccess: coworkQueries[index]?.isSuccess === true,
+      coworkData: coworkQueries[index]?.data ?? null,
+    })),
+    // useQueries returns new wrapper arrays every render. The signature captures
+    // the response fields that affect the header hierarchy model.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [hierarchyQuerySignature, uniqueSessionIds],
+  );
+
+  useEffect(() => {
+    for (const hint of subagentRelationshipHints) {
+      recordSessionRelationshipHint(hint.sessionId, {
+        kind: "subagent_child",
+        parentSessionId: hint.parentSessionId,
+        sessionLinkId: hint.sessionLinkId,
+        relation: "subagent",
+        workspaceId: args.workspaceId,
+      });
+    }
+  }, [args.workspaceId, recordSessionRelationshipHint, subagentRelationshipHints]);
+
+  useEffect(() => {
+    for (const hint of reviewRelationshipHints) {
+      recordSessionRelationshipHint(hint.sessionId, {
+        kind: "review_child",
+        parentSessionId: hint.parentSessionId,
+        sessionLinkId: hint.sessionLinkId,
+        relation: "review",
+        workspaceId: args.workspaceId,
+      });
+    }
+  }, [args.workspaceId, recordSessionRelationshipHint, reviewRelationshipHints]);
+
+  useEffect(() => {
+    for (const hint of coworkRelationshipHints) {
+      recordSessionRelationshipHint(hint.sessionId, {
+        kind: "cowork_child",
+        parentSessionId: hint.parentSessionId,
+        sessionLinkId: hint.sessionLinkId,
+        relation: "cowork_coding_session",
+        workspaceId: hint.workspaceId,
+      });
+    }
+  }, [coworkRelationshipHints, recordSessionRelationshipHint]);
+
+  return useMemo(() => measureDebugComputation({
+    category: "header_subagent_hierarchy.derive",
+    label: "build_hierarchy",
+    keys: [
+      "activeSessionId",
+      "subagentQueries",
+      "reviewQueries",
+      "coworkQueries",
+      "uniqueSessionIds",
+    ],
+    count: (hierarchy) => hierarchy.resolvedSessionIds.size,
+  }, () => {
+    return buildWorkspaceHeaderSubagentHierarchy({
+      rows: hierarchyQueryRows,
+      resolveClientSessionId,
+    });
+  }), [
+    hierarchyQueryRows,
+    resolveClientSessionId,
+  ]);
+}
+
+export function shouldEnableHeaderSessionScopedQuery(input: {
+  workspaceId: string | null;
+  sessionId: string | null | undefined;
+  materializedSessionId: string | null | undefined;
+  enabledByBatch: boolean;
+}): boolean {
+  return !!input.workspaceId
+    && !!input.sessionId
+    && !!input.materializedSessionId
+    && input.enabledByBatch
+    && !isReplacedSessionTombstoned(input.workspaceId, input.materializedSessionId);
+}
+
+export function buildHeaderSessionSubagentsQueryKey(input: {
+  cacheScopeKey: string | null | undefined;
+  workspaceId: string | null | undefined;
+  materializedSessionId: string | null | undefined;
+}) {
+  return anyHarnessSessionSubagentsKey(
+    input.cacheScopeKey,
+    input.workspaceId,
+    input.materializedSessionId,
+  );
+}
+
+export function filterPromotedHeaderSubagents(input: {
+  sessionId: string | null | undefined;
+  response: SessionSubagentsResponse | null | undefined;
+  promotedRootSessionIds: ReadonlySet<string>;
+  resolveClientSessionId: (sessionId: string) => string;
+}): SessionSubagentsResponse | null | undefined {
+  const { response } = input;
+  if (!response) {
+    return response;
+  }
+
+  const isPromoted = (sessionId: string | null | undefined) => !!sessionId && (
+    input.promotedRootSessionIds.has(sessionId)
+    || input.promotedRootSessionIds.has(input.resolveClientSessionId(sessionId))
+  );
+  const shouldDetachParent = isPromoted(input.sessionId)
+    || isPromoted(response.parent.identity.sessionId);
+  const children = response.children.filter(
+    (child) => !isPromoted(child.agent.identity.sessionId),
+  );
+
+  if (!shouldDetachParent && children.length === response.children.length) {
+    return response;
+  }
+
+  return {
+    ...response,
+    children,
+    parent: shouldDetachParent
+      ? { ...response.parent, parent: null }
+      : response.parent,
+  };
+}

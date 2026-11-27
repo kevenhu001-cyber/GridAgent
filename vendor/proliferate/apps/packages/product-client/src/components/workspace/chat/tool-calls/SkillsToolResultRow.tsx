@@ -1,0 +1,204 @@
+import { AutoHideScrollArea } from "#product/primitives/patterns/AutoHideScrollArea";
+import { ProliferateIcon } from "#product/primitives/icons/proliferate-icons";
+import { MarkdownBody } from "#product/components/workspace/chat/transcript/MarkdownBody";
+import { renderDesktopCodeBlock } from "#product/components/content/ui/desktop-markdown-code-block";
+import {
+  renderTranscriptInlineCode,
+  renderTranscriptLink,
+} from "#product/components/workspace/chat/transcript/transcript-markdown";
+import { TOOL_CALL_BODY_MAX_HEIGHT_CLASS } from "#product/domain/chats/tools/tool-call-layout";
+import type { SkillsToolResultPresentation } from "#product/domain/chats/tools/skills-tool-result";
+import { ToolActionDetailsPanel } from "#product/components/workspace/chat/tool-calls/ToolActionDetailsPanel";
+import { ToolActionRow, type ToolActionStatus } from "#product/components/workspace/chat/tool-calls/ToolActionRow";
+
+interface SkillsToolResultRowProps {
+  presentation: SkillsToolResultPresentation;
+  status: ToolActionStatus;
+}
+
+export function SkillsToolResultRow({
+  presentation,
+  status,
+}: SkillsToolResultRowProps) {
+  return (
+    <ToolActionRow
+      icon={<ProliferateIcon className="icon-compact text-faint" />}
+      label={labelFor(presentation)}
+      hint={hintFor(presentation)}
+      status={status}
+      expandable
+    >
+      <ToolActionDetailsPanel>
+        <AutoHideScrollArea
+          className="w-full"
+          viewportClassName={TOOL_CALL_BODY_MAX_HEIGHT_CLASS}
+          chainVerticalWheel
+        >
+          <SkillsToolResultDetails presentation={presentation} />
+        </AutoHideScrollArea>
+      </ToolActionDetailsPanel>
+    </ToolActionRow>
+  );
+}
+
+function SkillsToolResultDetails({
+  presentation,
+}: {
+  presentation: SkillsToolResultPresentation;
+}) {
+  // Recorded cause (DESIGN_SYSTEM.md § UI-conformance review, check 4) for the
+  // `font-[520]` below: the UI face is variable, and 520 is the intermediate
+  // weight that reads as emphasis at 14px without the optical jump `font-medium`
+  // (500 → 600 on this face) produces next to body text. There is no scale step
+  // between the two.
+  switch (presentation.kind) {
+    case "list":
+      return (
+        <div className="space-y-2 px-3 py-2 text-chat">
+          {presentation.skills.length > 0 ? (
+            presentation.skills.map((skill) => (
+              <div key={skill.skillId} className="space-y-1">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="min-w-0 truncate font-[520] text-foreground">
+                    {skill.displayName}
+                  </span>
+                  <MetadataPill>{skill.skillId}</MetadataPill>
+                </div>
+                <p className="m-0 text-muted-foreground">
+                  {skill.description}
+                </p>
+                <MetadataLine
+                  servers={skill.requiredMcpServers}
+                  resourceCount={skill.resourceCount}
+                />
+              </div>
+            ))
+          ) : (
+            <p className="m-0 text-muted-foreground">No skills are available for this session.</p>
+          )}
+        </div>
+      );
+    case "activate":
+      return (
+        <div className="space-y-2 px-3 py-2 text-chat">
+          <div className="space-y-1">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="min-w-0 truncate font-[520] text-foreground">
+                {presentation.displayName}
+              </span>
+              <MetadataPill>{presentation.skillId}</MetadataPill>
+            </div>
+            <p className="m-0 text-muted-foreground">
+              {presentation.description}
+            </p>
+            <MetadataLine
+              servers={presentation.requiredMcpServers}
+              credentials={presentation.credentialBindingIds}
+              resourceCount={presentation.resources.length}
+            />
+          </div>
+          <MarkdownBody
+            content={presentation.instructions}
+            className="[&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+            renderCodeBlock={renderDesktopCodeBlock}
+            renderLink={renderTranscriptLink}
+            renderInlineCode={renderTranscriptInlineCode}
+          />
+          {presentation.resources.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5 border-t border-border/60 pt-2">
+              {presentation.resources.map((resource) => (
+                <MetadataPill key={resource.resourceId}>
+                  {resource.displayName ?? resource.resourceId}
+                </MetadataPill>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      );
+    case "resource":
+      return (
+        <div className="space-y-2 px-3 py-2 text-chat">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="min-w-0 truncate font-[520] text-foreground">
+              {presentation.displayName ?? presentation.resourceId}
+            </span>
+            <MetadataPill>{`${presentation.skillId}/${presentation.resourceId}`}</MetadataPill>
+          </div>
+          {presentation.contentType.includes("markdown") ? (
+            <MarkdownBody
+              content={presentation.content}
+              className="[&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+              renderCodeBlock={renderDesktopCodeBlock}
+              renderLink={renderTranscriptLink}
+              renderInlineCode={renderTranscriptInlineCode}
+            />
+          ) : (
+            <pre className="m-0 whitespace-pre-wrap font-mono text-readable-code text-foreground">
+              {presentation.content}
+            </pre>
+          )}
+        </div>
+      );
+  }
+}
+
+function MetadataLine({
+  servers,
+  credentials,
+  resourceCount,
+}: {
+  servers?: readonly string[];
+  credentials?: readonly string[];
+  resourceCount?: number | null;
+}) {
+  const items = [
+    servers && servers.length > 0 ? `${servers.join(", ")} MCP` : null,
+    credentials && credentials.length > 0 ? `${credentials.length} credential` : null,
+    typeof resourceCount === "number"
+      ? `${resourceCount} ${resourceCount === 1 ? "resource" : "resources"}`
+      : null,
+  ].filter((item): item is string => !!item);
+
+  if (items.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {items.map((item) => <MetadataPill key={item}>{item}</MetadataPill>)}
+    </div>
+  );
+}
+
+function MetadataPill({ children }: { children: string }) {
+  return (
+    <span
+      title={children}
+      className="max-w-[260px] truncate rounded-sm border border-border/60 bg-muted/45 px-1.5 py-0.5 text-chat leading-none text-muted-foreground"
+    >
+      {children}
+    </span>
+  );
+}
+
+function labelFor(presentation: SkillsToolResultPresentation): string {
+  switch (presentation.kind) {
+    case "list":
+      return "Skills listed";
+    case "activate":
+      return "Skill activated";
+    case "resource":
+      return "Skill resource loaded";
+  }
+}
+
+function hintFor(presentation: SkillsToolResultPresentation): string {
+  switch (presentation.kind) {
+    case "list":
+      return "Skills";
+    case "activate":
+      return presentation.skillId;
+    case "resource":
+      return `${presentation.skillId}/${presentation.resourceId}`;
+  }
+}

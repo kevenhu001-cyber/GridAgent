@@ -1,0 +1,193 @@
+import type { ReactNode, RefObject } from "react";
+import type { TranscriptVirtualRow } from "#product/domain/chats/transcript/transcript-virtual-rows";
+import type { ChatTranscriptScrollHandle } from "#product/hooks/chat/ui/chat-transcript-view-types";
+import { estimateRenderableRowHeight } from "#product/hooks/chat/ui/transcript-row-height-estimate";
+
+/** Classification of a viewport scroll event and whether input intent proved user ownership. */
+export interface TranscriptScrollSample {
+  programmatic: boolean;
+  userInitiated?: true;
+}
+
+export const TRANSCRIPT_TOP_PADDING_PX = 16;
+// Stick-to-bottom engine tuning (see useTranscriptStickToBottom).
+// A user scroll re-pins only within this tight band of the true bottom. The
+// legacy 96px "sticky window" was retired: it kept a small upward scroll
+// "pinned" and let the next streaming snap fight the user back to the bottom.
+export const REPIN_BOTTOM_THRESHOLD_PX = 24;
+// A programmatic snap's resulting scroll event is recognized (and excluded from
+// pin/direction tracking) when scrollTop lands within this tolerance of the
+// value we wrote — absorbs subpixel scrollHeight and clamp slop.
+export const PROGRAMMATIC_MATCH_TOL_PX = 2;
+// Ignore subpixel scroll jitter when classifying user scroll direction.
+export const DIRECTION_EPSILON_PX = 1;
+// Minimum overflow (scrollHeight - clientHeight) for the viewport to count as
+// scrollable. The pre-emptive intent-to-leave listeners must not unpin when the
+// content fits in the viewport: such a gesture produces no scroll event, so
+// nothing would re-pin and the scroll-to-bottom button would wrongly show while
+// already at the bottom.
+export const SCROLLABLE_OVERFLOW_EPSILON_PX = 1;
+// User input and the rendering gate share one expiry so a late native or
+// virtualizer correction cannot re-open a gate after the proven intent ended.
+export const TRANSCRIPT_USER_SCROLL_SETTLE_MS = 150;
+export const HISTORY_PREFETCH_TOP_THRESHOLD_PX = 480;
+export const HISTORY_LOADING_ROW_KEY = "history-loader";
+
+export interface TranscriptRowListBaseProps {
+  rows: readonly TranscriptVirtualRow[];
+  selectionRootRef: RefObject<HTMLDivElement | null>;
+  hasOlderHistory: boolean;
+  isLoadingOlderHistory: boolean;
+  olderHistoryCursor: number | null;
+  bottomInsetPx: number;
+  nonDisplacingBottomInsetPx?: number;
+  selectedWorkspaceId: string | null;
+  activeSessionId: string;
+  isSessionBusy: boolean;
+  /** Epoch ms of the newest prompt submission; drives the engine's submit re-pin. */
+  lastPromptSubmittedAtMs: number | null;
+  onLoadOlderHistory: () => void;
+  onScrollSample: (sample?: TranscriptScrollSample) => void;
+  /**
+   * Reports the stick-to-bottom engine's live pin state upward. Optional:
+   * most callers have no use for it (it already drives the in-list
+   * scroll-to-bottom button internally); the background-work transcript row
+   * is the first consumer that needs to know from OUTSIDE this subtree,
+   * since it must hide itself while the user has scrolled away from the
+   * bottom rather than float over whatever mid-transcript content is
+   * currently in view.
+   */
+  onIsPinnedToBottomChange?: (isPinnedToBottom: boolean) => void;
+  renderRow: (row: TranscriptVirtualRow, rowIndex: number) => ReactNode;
+  getRowRenderRevision?: (row: TranscriptVirtualRow) => unknown;
+  columnClassName?: string;
+  gutterClassName?: string;
+  scrollHandleRef?: RefObject<ChatTranscriptScrollHandle | null>;
+}
+
+export function resolveTranscriptBottomInsets(
+  bottomInsetPx: number,
+  nonDisplacingBottomInsetPx: number,
+): { structural: number; nonDisplacing: number } {
+  const total = Math.max(0, bottomInsetPx);
+  const nonDisplacing = Math.min(total, Math.max(0, nonDisplacingBottomInsetPx));
+  return {
+    structural: total - nonDisplacing,
+    nonDisplacing,
+  };
+}
+
+// Preserves the user's read position across a content-height change above the
+// viewport using measured DOM deltas (immune to virtualizer estimate error):
+// after the change, scrollTop = scrollTop + (newScrollHeight - scrollHeight).
+export interface ContentHeightScrollAnchor {
+  rowCount: number;
+  scrollHeight: number;
+  scrollTop: number;
+}
+
+export interface HistoryPrependScrollAnchor extends ContentHeightScrollAnchor {
+  cursor: number | null;
+}
+
+export type TranscriptRenderableRow =
+  | {
+    kind: "history_loader";
+    key: typeof HISTORY_LOADING_ROW_KEY;
+  }
+  | {
+    kind: "transcript";
+    key: TranscriptVirtualRow["key"];
+    row: TranscriptVirtualRow;
+    rowIndex: number;
+  };
+
+export type HistoryPrefetchTrigger = "scroll" | "settled";
+export type HistoryPrefetchDecisionReason =
+  | "below_threshold"
+  | "blocked"
+  | "requested";
+
+interface HistoryPrefetchDecisionLogInput {
+  component: "full" | "virtual";
+  trigger: HistoryPrefetchTrigger;
+  reason: HistoryPrefetchDecisionReason;
+  sessionId: string;
+  workspaceId: string | null;
+  cursor: number | null;
+  lastRequestedCursor: number | null;
+  hasOlderHistory: boolean;
+  isLoadingOlderHistory: boolean;
+  pendingAnchor: HistoryPrependScrollAnchor | null;
+  rowCount: number;
+  viewport: HTMLDivElement;
+  renderableRowCount?: number;
+  virtualItemCount?: number;
+  totalContentHeight?: number;
+}
+
+interface PrefetchDecisionSignatureRef {
+  current: string | null;
+}
+
+export function logHistoryPrefetchDecisionOnce(
+  input: HistoryPrefetchDecisionLogInput,
+  lastSignatureRef: PrefetchDecisionSignatureRef,
+) {
+  const includeScrollMetrics = input.reason === "requested";
+  const signature = [
+    input.trigger,
+    input.reason,
+    input.cursor,
+    input.lastRequestedCursor,
+    input.isLoadingOlderHistory,
+    input.hasOlderHistory,
+    input.pendingAnchor?.cursor ?? "none",
+    input.rowCount,
+    input.renderableRowCount ?? "none",
+    includeScrollMetrics ? Math.round(input.viewport.scrollTop) : "any-scroll",
+    includeScrollMetrics ? Math.round(input.viewport.scrollHeight) : "any-height",
+  ].join(":");
+  if (lastSignatureRef.current === signature) {
+    return;
+  }
+  lastSignatureRef.current = signature;
+}
+
+export function buildRenderableRows(
+  rows: readonly TranscriptVirtualRow[],
+  isLoadingOlderHistory: boolean,
+): TranscriptRenderableRow[] {
+  const renderableRows: TranscriptRenderableRow[] = [];
+  if (isLoadingOlderHistory) {
+    renderableRows.push({
+      kind: "history_loader",
+      key: HISTORY_LOADING_ROW_KEY,
+    });
+  }
+  rows.forEach((row, rowIndex) => {
+    renderableRows.push({
+      kind: "transcript",
+      key: row.key,
+      row,
+      rowIndex,
+    });
+  });
+  return renderableRows;
+}
+
+export function estimateRenderableRowsHeight(
+  rows: readonly TranscriptRenderableRow[],
+): number {
+  return rows.reduce(
+    (sum, row) => sum + estimateRenderableRowHeight(row),
+    0,
+  );
+}
+
+// The composition-derived estimate mapping and per-row invalidation token
+// live in their own module (transcript-row-height-estimate.ts) — it imports
+// `TranscriptRenderableRow` from here, so re-exporting keeps this file's
+// public surface (and every existing import site) unchanged.
+export { estimateRenderableRowHeight };
+export { getRowCompositionToken } from "#product/hooks/chat/ui/transcript-row-height-estimate";

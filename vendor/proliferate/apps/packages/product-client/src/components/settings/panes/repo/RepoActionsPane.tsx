@@ -1,0 +1,343 @@
+import { type ChangeEvent } from "react";
+import type { SetupHint } from "@anyharness/sdk";
+import { useDetectRepoRootSetupQuery } from "@anyharness/sdk-react";
+import { ScriptBlock } from "#product/components/settings/panes/repo/ScriptBlock";
+import { PageHeader } from "#product/primitives/patterns/PageHeader";
+import { SettingsPageBody } from "#product/primitives/patterns/settings/SettingsPageBody";
+import { SettingsRow } from "#product/primitives/patterns/settings/SettingsRow";
+import { SettingsSaveFooter } from "#product/primitives/patterns/settings/SettingsSaveFooter";
+import { SettingsSection } from "#product/primitives/patterns/settings/SettingsSection";
+import { Checkbox } from "#product/primitives/Checkbox";
+import { Input } from "#product/primitives/Input";
+import { Label } from "#product/primitives/Label";
+import { Switch } from "#product/primitives/Switch";
+import { LoadingBoundary } from "#product/primitives/LoadingBoundary";
+import { RunCommandHelp } from "#product/components/settings/shared/RunCommandHelp";
+import { useCloudRepoEnvironmentEditor } from "#product/hooks/settings/workflows/use-cloud-repo-environment-editor";
+import { useRepositorySettings } from "#product/hooks/settings/workflows/use-repository-settings";
+import {
+  isSetupHintEnabled,
+  toggleSetupHint,
+} from "#product/lib/domain/settings/setup-hints";
+import { type SettingsRepositoryEntry } from "#product/lib/domain/settings/repositories";
+import { RepoCloudGate } from "#product/components/settings/panes/repo/RepoCloudGate";
+import {
+  LocalNoCheckoutState,
+  RepoScopeEmptyState,
+  type RepoScopePaneProps,
+  type RepoScopeSelectionCallbacks,
+} from "#product/components/settings/panes/repo/RepoScopeStates";
+
+const SCRIPT_PLACEHOLDER = "pnpm install\npnpm prisma generate";
+const ARCHIVE_SCRIPT_PLACEHOLDER = "pnpm run build:clean\npnpm run export-state";
+const RUN_COMMAND_INPUT_CLASS = "h-8 w-full rounded-lg px-2.5 font-mono text-ui-sm";
+
+/**
+ * Repo → Actions: scripts that run around agent workspaces for this repo, per
+ * the picked Cloud|Local context.
+ *
+ * HONEST OMISSIONS vs the design-system bench (no backing API anywhere):
+ * the setup-script attached-file chips (there is no attach-files-to-script
+ * API — cloud secret files belong to the Environment page). The bench's RUN
+ * SCRIPT renders as "Run command" because the API field is a single-line
+ * command.
+ */
+export function RepoActionsPane({
+  repository,
+  context,
+  controlPlaneReachable,
+  cloudActive,
+  cloudSignInChecking,
+  cloudSignInAvailable,
+  onSelectRepo,
+  onSelectCloudEnvironment,
+}: RepoScopePaneProps) {
+  if (!repository) {
+    return (
+      <RepoScopeEmptyState
+        onSelectRepo={onSelectRepo}
+        onSelectCloudEnvironment={onSelectCloudEnvironment}
+      />
+    );
+  }
+  return (
+    <SettingsPageBody>
+      <PageHeader
+        variant="flat"
+        title="Actions"
+        description="Commands that run in agent workspaces for this repo."
+      />
+      {context === "cloud" ? (
+        <ActionsCloud
+          repository={repository}
+          controlPlaneReachable={controlPlaneReachable}
+          cloudActive={cloudActive}
+          cloudSignInChecking={cloudSignInChecking}
+          cloudSignInAvailable={cloudSignInAvailable}
+        />
+      ) : (
+        <ActionsLocal
+          repository={repository}
+          onSelectRepo={onSelectRepo}
+          onSelectCloudEnvironment={onSelectCloudEnvironment}
+        />
+      )}
+    </SettingsPageBody>
+  );
+}
+
+function ActionsCloud({
+  repository,
+  controlPlaneReachable,
+  cloudActive,
+  cloudSignInChecking,
+  cloudSignInAvailable,
+}: {
+  repository: SettingsRepositoryEntry;
+  controlPlaneReachable: boolean;
+  cloudActive: boolean;
+  cloudSignInChecking: boolean;
+  cloudSignInAvailable: boolean;
+}) {
+  const editor = useCloudRepoEnvironmentEditor({ repository, cloudActive });
+  const { draft } = editor;
+
+  return (
+    <RepoCloudGate
+      editor={editor}
+      controlPlaneReachable={controlPlaneReachable}
+      cloudActive={cloudActive}
+      cloudSignInChecking={cloudSignInChecking}
+      cloudSignInAvailable={cloudSignInAvailable}
+    >
+      <SettingsSection
+        title="Setup script"
+        description="Runs once when a cloud workspace is created."
+        surface="plain"
+      >
+        <ScriptBlock
+          ariaLabel="Cloud setup script"
+          fileLabel="setup.sh"
+          value={draft.setupScript}
+          placeholder={SCRIPT_PLACEHOLDER}
+          onChange={draft.setSetupScript}
+          className="w-full"
+        />
+      </SettingsSection>
+      <SettingsSection
+        title="Run command"
+        description="Runs from the workspace Run action."
+      >
+        <div className="px-3.5 py-4">
+          <Input
+            aria-label="Cloud run command"
+            value={draft.runCommand}
+            placeholder="make dev"
+            className={RUN_COMMAND_INPUT_CLASS}
+            onChange={(event: ChangeEvent<HTMLInputElement>) => draft.setRunCommand(event.currentTarget.value)}
+          />
+        </div>
+      </SettingsSection>
+      <SettingsSaveFooter
+        statusLabel={editor.status.label}
+        statusTone={editor.status.tone}
+        error={editor.saveError}
+        saving={editor.saving}
+        saveDisabled={!cloudActive || editor.repoConfigsLoading || editor.saving || !draft.canSave}
+        revertDisabled={editor.saving || !draft.dirty}
+        onSave={() => {
+          void editor.save();
+        }}
+        onRevert={draft.revert}
+      />
+    </RepoCloudGate>
+  );
+}
+
+function ActionsLocal({
+  repository,
+  ...callbacks
+}: RepoScopeSelectionCallbacks & {
+  repository: SettingsRepositoryEntry;
+}) {
+  if (repository.availability === "cloud") {
+    return <LocalNoCheckoutState repository={repository} {...callbacks} />;
+  }
+  return <ActionsLocalEditor repository={repository} />;
+}
+
+function ActionsLocalEditor({ repository }: { repository: SettingsRepositoryEntry }) {
+  const {
+    setupDraft,
+    setSetupDraft,
+    runCommandDraft,
+    setRunCommandDraft,
+    archiveScriptDraft,
+    setArchiveScriptDraft,
+    rerunSetupOnUnarchiveDraft,
+    setRerunSetupOnUnarchiveDraft,
+    canSave,
+    canRevert,
+    save,
+    revert,
+  } = useRepositorySettings(repository);
+  const { data: detectionResult, isLoading: isDetecting } = useDetectRepoRootSetupQuery({
+    repoRootId: repository.repoRootId,
+    enabled: true,
+  });
+  const buildToolHints = detectionResult?.hints.filter((hint) => hint.category === "build_tool") ?? [];
+  const secretSyncHints = detectionResult?.hints.filter((hint) => hint.category === "secret_sync") ?? [];
+  const hasHints = buildToolHints.length > 0 || secretSyncHints.length > 0;
+
+  return (
+    <>
+      <SettingsSection
+        title="Setup script"
+        description="Runs once when a local worktree is created."
+        surface="plain"
+      >
+        <div className="space-y-2">
+          <ScriptBlock
+            ariaLabel="Local setup script"
+            fileLabel="setup.sh"
+            value={setupDraft}
+            placeholder={SCRIPT_PLACEHOLDER}
+            onChange={setSetupDraft}
+            className="w-full"
+          />
+          <p className="text-ui-sm text-muted-foreground/80">
+            Available variables:{" "}
+            <code>PROLIFERATE_WORKTREE_DIR</code>, <code>PROLIFERATE_REPO_DIR</code>,{" "}
+            <code>PROLIFERATE_BRANCH</code>, and <code>PROLIFERATE_BASE_REF</code>.
+          </p>
+        </div>
+        {isDetecting || hasHints ? (
+          <SettingsRow
+            label="Suggestions"
+            description="Detected commands and ignored-file sync helpers."
+            className="sm:flex-col sm:items-stretch"
+          >
+            {isDetecting ? (
+              // Class C big-surface treatment (UX Latency + Transitions ADR §4
+              // Rung 4, FR-1): retired the placeholder-line skeleton. The
+              // Suggestions row label is the stable shell; detection shows
+              // nothing until it resolves.
+              <LoadingBoundary
+                state="pending"
+                diagnostics={{ flow: "repo_setup_detect" }}
+                treatment={null}
+              />
+            ) : (
+              <div className="w-full space-y-4">
+                <SetupHintRows
+                  title="Detected"
+                  hints={buildToolHints}
+                  currentScript={setupDraft}
+                  onChange={setSetupDraft}
+                />
+                <SetupHintRows
+                  title="Sync ignored files"
+                  hints={secretSyncHints}
+                  currentScript={setupDraft}
+                  onChange={setSetupDraft}
+                />
+              </div>
+            )}
+          </SettingsRow>
+        ) : null}
+      </SettingsSection>
+      <SettingsSection
+        title="Archive script"
+        description="Runs in phase 2 while the worktree still exists. Failure is non-fatal."
+        surface="plain"
+      >
+        <ScriptBlock
+          ariaLabel="Local archive script"
+          fileLabel="archive.sh"
+          value={archiveScriptDraft}
+          placeholder={ARCHIVE_SCRIPT_PLACEHOLDER}
+          onChange={setArchiveScriptDraft}
+          className="w-full"
+        />
+      </SettingsSection>
+      <SettingsSection title="Unarchive">
+        <SettingsRow
+          label="Run setup script on unarchive"
+          description="Reruns the setup script above when this workspace is restored."
+        >
+          <Switch
+            checked={rerunSetupOnUnarchiveDraft}
+            onChange={setRerunSetupOnUnarchiveDraft}
+          />
+        </SettingsRow>
+      </SettingsSection>
+      <SettingsSection title="Run command">
+        <div className="space-y-2 px-3.5 py-4">
+          <Input
+            aria-label="Local run command"
+            value={runCommandDraft}
+            placeholder="make dev PROFILE=my-profile"
+            className={RUN_COMMAND_INPUT_CLASS}
+            onChange={(event: ChangeEvent<HTMLInputElement>) => setRunCommandDraft(event.currentTarget.value)}
+          />
+          <RunCommandHelp scope="selected workspace" className="text-ui-sm text-muted-foreground/80" />
+        </div>
+      </SettingsSection>
+      <SettingsSaveFooter
+        saveDisabled={!canSave}
+        revertDisabled={!canRevert}
+        onSave={save}
+        onRevert={revert}
+      />
+    </>
+  );
+}
+
+function SetupHintRows({
+  title,
+  hints,
+  currentScript,
+  onChange,
+}: {
+  title: string;
+  hints: SetupHint[];
+  currentScript: string;
+  onChange: (script: string) => void;
+}) {
+  if (hints.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <p className="text-ui-sm font-medium text-muted-foreground">{title}</p>
+      <div className="flex flex-col gap-0.5">
+        {hints.map((hint) => {
+          const checked = isSetupHintEnabled(currentScript, hint.suggestedCommand);
+          return (
+            <Label
+              key={hint.id}
+              className="mb-0 flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-hover"
+            >
+              <Checkbox
+                checked={checked}
+                onCheckedChange={(next) => onChange(toggleSetupHint(
+                  currentScript,
+                  hint.suggestedCommand,
+                  next === true,
+                ))}
+                className="size-3.5 shrink-0"
+              />
+              <span className="min-w-0 flex-1 truncate font-mono text-ui-sm text-foreground">
+                {hint.suggestedCommand}
+              </span>
+              <span className="shrink-0 text-ui-sm text-muted-foreground">
+                {hint.detectedFile}
+              </span>
+            </Label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}

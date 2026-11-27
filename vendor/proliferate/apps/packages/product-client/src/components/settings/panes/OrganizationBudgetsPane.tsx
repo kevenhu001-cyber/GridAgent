@@ -1,0 +1,398 @@
+import { useMemo, useState } from "react";
+import { ArrowLeft } from "#product/primitives/icons/core";
+import {
+  useCloudBilling,
+  useLlmBalance,
+  useOrgUsageByUser,
+  useOrgUserUsageTimeseries,
+  useUsageTimeseries,
+} from "@proliferate/cloud-sdk-react";
+import { Button } from "#product/primitives/Button";
+import { ProgressBar } from "#product/primitives/ProgressBar";
+import { Select } from "#product/primitives/Select";
+import { SegmentedControl } from "#product/primitives/SegmentedControl";
+import { PageHeader } from "#product/primitives/patterns/PageHeader";
+import { SettingsPageBody } from "#product/primitives/patterns/settings/SettingsPageBody";
+import { SettingsSection } from "#product/primitives/patterns/settings/SettingsSection";
+import { Card } from "#product/primitives/patterns/Card";
+import { LoadingBoundary, type LoadingBoundaryState } from "#product/primitives/LoadingBoundary";
+import { useOrganizationMembers } from "#product/hooks/access/cloud/organizations/use-organization-members";
+import { useActiveOrganization } from "#product/hooks/organizations/facade/use-active-organization";
+import type { OrganizationMemberRecord } from "#product/lib/domain/organizations/organization-records";
+import {
+  USAGE_GRANULARITY_OPTIONS,
+  USAGE_KIND_ITEMS,
+  USAGE_RANGE_OPTIONS,
+  buildOrgUsageRows,
+  chartMax,
+  computeGrantBalance,
+  formatUsd,
+  llmGrantBalance,
+  secondsToPcus,
+  toChartPoints,
+  type BudgetBalanceView,
+  type OrgUsageRowView,
+  type UsageChartKind,
+  type UsageChartPoint,
+  type UsageGranularity,
+  type UsageRangeDays,
+} from "#product/lib/domain/settings/organization-limits-presentation";
+import { LimitsEditor } from "#product/components/settings/panes/OrganizationLimitsEditor";
+
+const EMPTY_MEMBERS: OrganizationMemberRecord[] = [];
+
+export function OrganizationBudgetsPane() {
+  const { activeOrganization, activeOrganizationId, organizationsQuery } = useActiveOrganization();
+  const membersQuery = useOrganizationMembers(activeOrganizationId);
+  const members = membersQuery.data?.members ?? EMPTY_MEMBERS;
+
+  const [range, setRange] = useState<UsageRangeDays>(30);
+  const [granularity, setGranularity] = useState<UsageGranularity>("day");
+  const [kind, setKind] = useState<UsageChartKind>("all");
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+
+  const hasOrganization = Boolean(activeOrganizationId);
+  const orgOwner = activeOrganizationId
+    ? { ownerScope: "organization" as const, organizationId: activeOrganizationId }
+    : undefined;
+
+  const billingQuery = useCloudBilling(orgOwner, hasOrganization);
+  const llmBalanceQuery = useLlmBalance(orgOwner, hasOrganization);
+  const timeseriesQuery = useUsageTimeseries({ granularity, days: range, kind }, orgOwner, hasOrganization);
+  const byUserQuery = useOrgUsageByUser(activeOrganizationId, range);
+  const userTimeseriesQuery = useOrgUserUsageTimeseries(activeOrganizationId, selectedUserId, {
+    granularity,
+    days: range,
+    kind,
+  });
+
+  const computeBalance = computeGrantBalance(billingQuery.data);
+  const llmBalance = llmGrantBalance(llmBalanceQuery.data);
+  const chartPoints = useMemo(
+    () => toChartPoints(timeseriesQuery.data?.buckets, granularity),
+    [timeseriesQuery.data, granularity],
+  );
+  const userChartPoints = useMemo(
+    () => toChartPoints(userTimeseriesQuery.data?.buckets, granularity),
+    [userTimeseriesQuery.data, granularity],
+  );
+  const usageRows = useMemo(() => buildOrgUsageRows(byUserQuery.data?.users), [byUserQuery.data]);
+  const selectedRow = usageRows.find((row) => row.userId === selectedUserId) ?? null;
+
+  return (
+    <SettingsPageBody>
+      <PageHeader
+        variant="flat"
+        title="Usage & limits"
+        description="Track compute seconds and LLM spend, and set caps for the organization or individual members."
+      />
+
+      {!activeOrganization && organizationsQuery.isLoading ? (
+        <div className="text-ui-sm text-muted-foreground">Loading organization…</div>
+      ) : null}
+
+      <SettingsSection
+        title="Balances"
+        description="Compute units and LLM credits have separate balances — never combined into one figure."
+        surface="plain"
+      >
+        <div className="grid gap-4 md:grid-cols-2">
+          <BudgetBalanceCard {...computeBalance} loading={billingQuery.isLoading} />
+          <BudgetBalanceCard {...llmBalance} loading={llmBalanceQuery.isLoading} />
+        </div>
+      </SettingsSection>
+
+      <SettingsSection
+        title="Consumption"
+        description="Compute seconds and LLM spend never share an axis, so the chart juxtaposes them instead of summing."
+        surface="plain"
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="w-36">
+              <Select
+                aria-label="Usage range"
+                value={String(range)}
+                onChange={(event) => setRange(Number(event.target.value) as UsageRangeDays)}
+              >
+                {USAGE_RANGE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </Select>
+            </div>
+            <div className="w-32">
+              <Select
+                aria-label="Usage granularity"
+                value={granularity}
+                onChange={(event) => setGranularity(event.target.value as UsageGranularity)}
+              >
+                {USAGE_GRANULARITY_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </Select>
+            </div>
+            <SegmentedControl
+              items={USAGE_KIND_ITEMS}
+              value={kind}
+              onChange={setKind}
+              ariaLabel="Usage kind"
+            />
+          </div>
+        }
+      >
+        <UsageBarChart points={chartPoints} kind={kind} loading={timeseriesQuery.isLoading} />
+      </SettingsSection>
+
+      {selectedUserId && selectedRow ? (
+        <UserDrillDown
+          row={selectedRow}
+          points={userChartPoints}
+          loading={userTimeseriesQuery.isLoading}
+          kind={kind}
+          onBack={() => setSelectedUserId(null)}
+        />
+      ) : (
+        <OrgUsageTable
+          rows={usageRows}
+          loading={byUserQuery.isLoading}
+          onSelectUser={setSelectedUserId}
+        />
+      )}
+
+      <LimitsEditor
+        organizationId={activeOrganizationId}
+        members={members}
+        byUserRows={byUserQuery.data?.users}
+      />
+    </SettingsPageBody>
+  );
+}
+
+function BudgetBalanceCard({
+  label,
+  available,
+  total,
+  used,
+  percentAvailable,
+  loading,
+}: BudgetBalanceView & { loading?: boolean }) {
+  // Class C big-surface treatment (UX Latency ADR §4 Rung 4, FR-1): skeleton
+  // retired; nothing shows until the Class C show-delay elapses, then fades in.
+  if (loading) {
+    return (
+      <LoadingBoundary
+        state="pending"
+        diagnostics={{ flow: "org_budget_balance" }}
+        treatment={null}
+      />
+    );
+  }
+
+  return (
+    <Card surface="tint" className="space-y-3 p-4">
+      <div className="space-y-1">
+        <div className="text-ui font-medium text-foreground">{label}</div>
+        <div className="text-title font-semibold tracking-tight text-foreground">{available}</div>
+        <div className="text-ui-sm text-muted-foreground">available of {total}</div>
+      </div>
+      <ProgressBar
+        value={percentAvailable}
+        className="h-4 overflow-hidden rounded-full border border-border-light bg-surface-control p-0.5"
+        indicatorClassName="h-full rounded-full bg-primary/70"
+        aria-label={`${label} available`}
+      />
+      <div className="flex items-center justify-between text-ui-sm text-muted-foreground">
+        <span>{used}</span>
+        <span>{percentAvailable}% remaining</span>
+      </div>
+    </Card>
+  );
+}
+
+function UsageBarChart({
+  points,
+  kind,
+  loading,
+}: {
+  points: UsageChartPoint[];
+  kind: UsageChartKind;
+  loading: boolean;
+}) {
+  // Class C + Q19 empty split: pending renders nothing; "No usage in this
+  // range." may only appear once the usage query settles with zero points.
+  const chartState: LoadingBoundaryState = loading
+    ? "pending"
+    : points.length === 0
+      ? "empty"
+      : "ready";
+
+  const showCompute = kind !== "llm";
+  const showLlm = kind !== "compute";
+  const maxCompute = chartMax(points.map((point) => secondsToPcus(point.computeSeconds)));
+  const maxLlm = chartMax(points.map((point) => point.llmCostUsd));
+
+  return (
+    <LoadingBoundary
+      state={chartState}
+      diagnostics={{ flow: "org_budget_usage_chart" }}
+      treatment={null}
+      emptyContent={
+        <Card surface="tint" className="flex h-48 items-center justify-center text-ui-sm text-muted-foreground">
+          No usage in this range.
+        </Card>
+      }
+    >
+    <Card surface="tint" className="p-4">
+      <div className="flex flex-wrap items-center gap-4 pb-3 text-ui-sm text-muted-foreground">
+        {showCompute ? (
+          <span className="inline-flex items-center gap-1.5">
+            <span className="icon-status rounded-full bg-primary [font-size:var(--text-ui-sm)]" />
+            Compute (PCUs)
+          </span>
+        ) : null}
+        {showLlm ? (
+          <span className="inline-flex items-center gap-1.5">
+            <span className="icon-status rounded-full bg-foreground/60 [font-size:var(--text-ui-sm)]" />
+            LLM ($)
+          </span>
+        ) : null}
+      </div>
+      <div className="flex h-40 items-end gap-2">
+        {points.map((point, index) => {
+          const computeValue = secondsToPcus(point.computeSeconds);
+          const computePercent = Math.round((computeValue / maxCompute) * 100);
+          const llmPercent = Math.round((point.llmCostUsd / maxLlm) * 100);
+          return (
+            <div key={`${point.label}-${index}`} className="flex flex-1 flex-col items-center gap-1">
+              <div className="flex h-32 w-full items-end justify-center gap-1">
+                {showCompute ? (
+                  <div
+                    className="w-full max-w-3 rounded-t-sm bg-primary/70"
+                    style={{ height: `${Math.max(computePercent, computeValue > 0 ? 2 : 0)}%` }}
+                    title={`${point.label}: ${computeValue.toFixed(1)} PCUs`}
+                  />
+                ) : null}
+                {showLlm ? (
+                  <div
+                    className="w-full max-w-3 rounded-t-sm bg-foreground/40"
+                    style={{ height: `${Math.max(llmPercent, point.llmCostUsd > 0 ? 2 : 0)}%` }}
+                    title={`${point.label}: ${formatUsd(point.llmCostUsd)}`}
+                  />
+                ) : null}
+              </div>
+              <span className="text-ui-sm text-muted-foreground">{point.label}</span>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+    </LoadingBoundary>
+  );
+}
+
+function OrgUsageTable({
+  rows,
+  loading,
+  onSelectUser,
+}: {
+  rows: OrgUsageRowView[];
+  loading: boolean;
+  onSelectUser: (userId: string) => void;
+}) {
+  // This member list predates this rung (unvirtualized on main); the skeleton
+  // retirement only rewrapped it. Virtualizing it stays a settings follow-up.
+  const memberRows = rows.map((row) => (
+          <Button
+            key={row.userId}
+            type="button"
+            variant="ghost"
+            size="unstyled"
+            onClick={() => onSelectUser(row.userId)}
+            // py-[13px]: whole-row click target, not SettingsRow's shape.
+            className="flex w-full items-center justify-between gap-4 px-3.5 py-[13px] text-left"
+          >
+            <div className="min-w-0">
+              <div className="truncate text-ui font-medium text-foreground">{row.name}</div>
+              <div className="truncate text-ui-sm text-muted-foreground">{row.email}</div>
+            </div>
+            <div className="flex shrink-0 items-center gap-4">
+              <UsageMiniStat label="Compute" value={row.computePcus} percent={row.computePercent} />
+              <UsageMiniStat label="LLM" value={row.llmCost} percent={row.llmPercent} />
+            </div>
+          </Button>
+  ));
+  return (
+    <SettingsSection title="Usage by member" description="Select a member to see their usage over time.">
+      {/* Class C + Q19 empty split: skeleton retired; the empty copy may only
+          render once the query resolves with zero rows, never mid-fetch. */}
+      <LoadingBoundary
+        state={loading ? "pending" : rows.length === 0 ? "empty" : "ready"}
+        diagnostics={{ flow: "org_usage_table" }}
+        treatment={null}
+        emptyContent={
+          <div className="px-6 py-[30px] text-center text-ui text-muted-foreground">No usage recorded in this range.</div>
+        }
+      >
+        {memberRows}
+      </LoadingBoundary>
+    </SettingsSection>
+  );
+}
+
+function UsageMiniStat({
+  label,
+  value,
+  percent,
+}: {
+  label: string;
+  value: string;
+  percent: number | null;
+}) {
+  return (
+    <div className="w-28 text-right">
+      <div className="text-ui-sm text-muted-foreground">{label}</div>
+      <div className="text-ui font-medium text-foreground">{value}</div>
+      {percent !== null ? (
+        <ProgressBar
+          value={percent}
+          className="mt-1 h-1 overflow-hidden rounded-full bg-surface-control"
+          indicatorClassName="h-full rounded-full bg-primary/70"
+          aria-label={`${label} of cap`}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function UserDrillDown({
+  row,
+  points,
+  loading,
+  kind,
+  onBack,
+}: {
+  row: OrgUsageRowView;
+  points: UsageChartPoint[];
+  loading: boolean;
+  kind: UsageChartKind;
+  onBack: () => void;
+}) {
+  return (
+    <SettingsSection surface="plain">
+      <Button
+        type="button"
+        variant="ghost"
+        size="unstyled"
+        onClick={onBack}
+        className="mb-3 inline-flex h-7 items-center gap-1.5 rounded-md px-0 text-ui"
+      >
+        <ArrowLeft className="icon-paired" />
+        Back to usage by member
+      </Button>
+      <div className="mb-3">
+        <div className="text-ui font-medium text-foreground">{row.name}</div>
+        <div className="text-ui-sm text-muted-foreground">{row.email}</div>
+      </div>
+      <UsageBarChart points={points} kind={kind} loading={loading} />
+    </SettingsSection>
+  );
+}

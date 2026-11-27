@@ -1,0 +1,42 @@
+name: Retire legacy desktop source
+on:
+  push:
+    branches: [migration/proliferate]
+    paths: ['.github/workflows/retire-legacy-desktop.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: retire-legacy-desktop
+  cancel-in-progress: false
+jobs:
+  retire:
+    if: github.ref == 'refs/heads/migration/proliferate'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: migration/proliferate
+      - name: Remove retired CSharp clients and packaging only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm -r --ignore-unmatch -- desktop/GridAgent.WinUI desktop/GridAgent.Windows desktop/GridAgent.Presentation.Tests desktop/msix
+          git rm --ignore-unmatch -- desktop/package-windows.ps1 desktop/package-msix.ps1 docs/winui-workbench.md
+          # Do not remove shared Python runtime checks, branding, solver code or vendor source.
+          test -f src/gridagent/scientific_runtime.py
+          test -f src/gridagent/mcp_server.py
+          test -f vendor/proliferate/apps/desktop/package.json
+          test -f desktop/branding/gridagent-logo.webp
+          if git ls-files desktop | grep -E '(^desktop/GridAgent\.|\.xaml$|\.csproj$|\.cs$|^desktop/msix/|^desktop/package-(windows|msix)\.ps1$)'; then
+            echo "Unexpected legacy files remain; review before committing."
+            exit 1
+          fi
+          if git diff --cached --quiet; then
+            echo "Retired desktop already removed."
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'refactor: remove retired WinUI and WPF desktop implementations'
+          git push origin HEAD:refs/heads/migration/proliferate

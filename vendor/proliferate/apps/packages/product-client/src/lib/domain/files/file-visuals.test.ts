@@ -1,0 +1,96 @@
+import { describe, expect, it } from "vitest";
+import {
+  getExpandedFileVisualKind,
+  getFileVisual,
+} from "#product/lib/domain/files/file-visuals";
+
+describe("getFileVisual", () => {
+  it("maps directories to specialized folder icons", () => {
+    expect(getFileVisual("src", "src", "directory")).toEqual({
+      kind: "directory-src",
+    });
+    expect(getFileVisual(".git", ".git", "directory")).toEqual({
+      kind: "directory-git",
+    });
+    expect(getFileVisual(".github", ".github", "directory")).toEqual({
+      kind: "directory",
+    });
+    expect(getFileVisual("docs", "docs", "directory")).toEqual({
+      kind: "directory-docs",
+    });
+  });
+
+  it("maps important config and package files to tool-specific icons", () => {
+    expect(getFileVisual("package.json", "package.json", "file")).toEqual({
+      kind: "npm",
+    });
+    expect(getFileVisual("pnpm-lock.yaml", "pnpm-lock.yaml", "file")).toEqual({
+      kind: "pnpm",
+    });
+    expect(getFileVisual("eslint.config.js", "eslint.config.js", "file")).toEqual({
+      kind: "eslint",
+    });
+    expect(getFileVisual("tsconfig.base.json", "tsconfig.base.json", "file")).toEqual({
+      kind: "tsconfig",
+    });
+  });
+
+  it("maps common language files to language-specific icons", () => {
+    expect(getFileVisual("main.rs", "src/main.rs", "file")).toEqual({
+      kind: "rust",
+    });
+    expect(getFileVisual("App.tsx", "src/App.tsx", "file")).toEqual({
+      kind: "react-ts",
+    });
+    expect(getFileVisual("index.jsx", "src/index.jsx", "file")).toEqual({
+      kind: "react",
+    });
+    expect(getFileVisual("main.py", "main.py", "file")).toEqual({
+      kind: "python",
+    });
+  });
+
+  it("maps special-purpose filenames before falling back to extensions", () => {
+    expect(getFileVisual(".env.local", ".env.local", "file")).toEqual({
+      kind: "env",
+    });
+    expect(getFileVisual("README.md", "README.md", "file")).toEqual({
+      kind: "readme",
+    });
+    expect(getFileVisual("docker-compose.yml", "docker-compose.yml", "file")).toEqual({
+      kind: "docker",
+    });
+    expect(getFileVisual("widget.test.tsx", "widget.test.tsx", "file")).toEqual({
+      kind: "test-jsx",
+    });
+  });
+
+  // This is the single extension→visual authority that transcript file
+  // references consult to decide whether a referenced file gets a
+  // type-appropriate glyph instead of the generic path-mention glyph, so the
+  // markdown/image/default classes it promises are pinned here.
+  it("classifies markdown, image, and unknown referenced files", () => {
+    expect(getFileVisual("FORMATTING.md", "docs/FORMATTING.md", "file").kind)
+      .toBe("markdown");
+    expect(getFileVisual("notes.mdx", "notes.mdx", "file").kind).toBe("markdown");
+    for (const name of ["shot.png", "shot.jpg", "shot.jpeg", "shot.gif", "shot.webp"]) {
+      expect(getFileVisual(name, name, "file").kind).toBe("image");
+    }
+    expect(getFileVisual("logo.svg", "logo.svg", "file").kind).toBe("svg");
+    expect(getFileVisual("NOTES", "NOTES", "file").kind).toBe("default");
+    expect(getFileVisual("archive.zzz", "archive.zzz", "file").kind).toBe("default");
+  });
+});
+
+describe("getExpandedFileVisualKind", () => {
+  it("maps closed folder visuals to their open variants", () => {
+    expect(getExpandedFileVisualKind("directory")).toBe("directory-open");
+    expect(getExpandedFileVisualKind("directory-src")).toBe("directory-src-open");
+    expect(getExpandedFileVisualKind("directory-test")).toBe("directory-test-open");
+  });
+
+  it("leaves file visuals unchanged", () => {
+    expect(getExpandedFileVisualKind("typescript")).toBe("typescript");
+    expect(getExpandedFileVisualKind("docker")).toBe("docker");
+  });
+});

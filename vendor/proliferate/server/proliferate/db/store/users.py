@@ -1,0 +1,144 @@
+"""DB adapter for fastapi-users and user lookup store helpers."""
+
+from dataclasses import dataclass
+from typing import cast
+from uuid import UUID
+
+from sqlalchemy import func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import InstrumentedAttribute, selectinload
+
+from proliferate.db.models.auth import OAuthAccount, User
+
+
+@dataclass(frozen=True)
+class EngagementSyncUserValue:
+    id: UUID
+    email: str | None
+
+
+async def list_engagement_sync_users_page(
+    db: AsyncSession,
+    *,
+    after_id: UUID | None,
+    limit: int,
+) -> tuple[EngagementSyncUserValue, ...]:
+    user_id_column = cast(InstrumentedAttribute[UUID], User.id)
+    user_email_column = cast(InstrumentedAttribute[str | None], User.email)
+    statement = select(user_id_column, user_email_column).order_by(user_id_column).limit(limit)
+    if after_id is not None:
+        statement = statement.where(user_id_column > after_id)
+    rows = (await db.execute(statement)).all()
+    return tuple(EngagementSyncUserValue(id=row.id, email=row.email) for row in rows)
+
+
+async def get_user_by_id(
+    db: AsyncSession,
+    user_id: UUID,
+) -> User | None:
+    return await db.get(User, user_id)
+
+
+async def get_active_user_by_id(
+    db: AsyncSession,
+    user_id: UUID,
+) -> User | None:
+    user = await get_user_by_id(db, user_id)
+    if user is None or not user.is_active:
+        return None
+    return user
+
+
+async def bump_user_token_generation(
+    db: AsyncSession,
+    user_id: UUID,
+) -> int | None:
+    """Increment the user's ``token_generation``, revoking all issued tokens.
+
+    Every access/refresh token embeds the generation current at mint time, so
+    incrementing it invalidates every previously issued token for this user
+    (all surfaces) on their next use — the "log out everywhere" primitive.
+    Returns the new generation, or ``None`` when the user is missing.
+
+    The increment is a single atomic ``UPDATE ... RETURNING`` (no read-modify-
+    write race). If the user is already loaded in this session, the cached ORM
+    instance is refreshed so callers that then re-mint tokens observe the new
+    generation.
+    """
+    result = await db.execute(
+        update(User)
+        .where(User.id == user_id)
+        .values(token_generation=User.token_generation + 1)
+        .returning(User.token_generation)
+    )
+    new_generation = result.scalar_one_or_none()
+    if new_generation is None:
+        return None
+    cached = await db.get(User, user_id)
+    if cached is not None:
+        await db.refresh(cached)
+    return new_generation
+
+
+async def get_user_with_oauth_accounts_by_id(
+    db: AsyncSession,
+    user_id: UUID,
+) -> User | None:
+    return (
+        await db.execute(
+            select(User).options(selectinload(User.oauth_accounts)).filter_by(id=user_id)
+        )
+    ).scalar_one_or_none()
+
+
+async def github_oauth_account_or_email_exists(
+    db: AsyncSession,
+    *,
+    account_id: str,
+    account_email: str,
+) -> bool:
+    account = (
+        await db.execute(
+            select(OAuthAccount.id)
+            .where(
+                OAuthAccount.oauth_name == "github",
+                OAuthAccount.account_id == account_id,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if account is not None:
+        return True
+    normalized_email = account_email.strip().lower()
+    user = (
+        await db.execute(
+            select(User.id).where(func.lower(User.email) == normalized_email).limit(1)
+        )
+    ).scalar_one_or_none()
+    return user is not None
+
+
+async def update_user_github_profile(
+    db: AsyncSession,
+    user_id: UUID,
+    *,
+    github_login: str,
+    avatar_url: str | None,
+    display_name: str | None,
+) -> User | None:
+    user = await get_user_by_id(db, user_id)
+    if user is None:
+        return None
+
+    user.github_login = github_login
+    user.avatar_url = avatar_url
+    if display_name and not (user.display_name or "").strip():
+        user.display_name = display_name
+    return user
+
+
+async def load_user_with_oauth_accounts_by_id(
+    db: AsyncSession,
+    user_id: UUID,
+) -> User | None:
+    return await get_user_with_oauth_accounts_by_id(db, user_id)

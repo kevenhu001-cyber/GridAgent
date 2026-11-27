@@ -1,0 +1,74 @@
+use std::sync::Arc;
+
+use super::LiveSessionManager;
+use crate::domains::sessions::runtime_event::{
+    RuntimeEventInjectionError, RuntimeEventInjectionResult, RuntimeInjectedSessionEvent,
+};
+use crate::live::sessions::model::EventPersist;
+use crate::live::sessions::runtime_events::into_session_event;
+
+impl LiveSessionManager {
+    /// Inject a runtime-owned event into a session.
+    ///
+    /// If the live actor dies between handle lookup and command delivery, this
+    /// transparently removes the stale handle and appends the event offline
+    /// under the same start/inject critical section. `ActorUnavailable` is
+    /// therefore terminal from the caller's perspective, not a normal retry
+    /// signal.
+    pub(crate) async fn emit_runtime_event(
+        &self,
+        session_id: &str,
+        event: RuntimeInjectedSessionEvent,
+    ) -> RuntimeEventInjectionResult {
+        loop {
+            let handle = {
+                let sessions = self.live_sessions.write().await;
+                if let Some(handle) = sessions.get(session_id) {
+                    handle.clone()
+                } else {
+                    return append_offline_runtime_event(
+                        session_id,
+                        self.caps.events.as_ref(),
+                        event,
+                    );
+                }
+            };
+
+            let result = handle.inject_runtime_event(event.clone()).await;
+            match result {
+                Ok(result) => return Ok(result),
+                Err(RuntimeEventInjectionError::ActorUnavailable) => {
+                    // A closed mailbox precedes the actor's final event writes.
+                    // Wait only for this generation to relinquish sequencing,
+                    // without holding the registry lock, then re-check so a
+                    // replacement generation receives the event through its
+                    // own sink instead of an offline append racing it.
+                    handle.wait_for_event_sequence_relinquishment().await;
+                    let mut sessions = self.live_sessions.write().await;
+                    if matches!(sessions.get(session_id), Some(current) if Arc::ptr_eq(current, &handle))
+                    {
+                        sessions.remove(session_id);
+                    }
+                    drop(sessions);
+                    continue;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+}
+
+fn append_offline_runtime_event(
+    session_id: &str,
+    events: &dyn EventPersist,
+    event: RuntimeInjectedSessionEvent,
+) -> RuntimeEventInjectionResult {
+    let touch_session_activity = event.updates_session_activity_at();
+    events
+        .append_event_with_next_seq(
+            session_id,
+            into_session_event(event),
+            touch_session_activity,
+        )
+        .map_err(|error| RuntimeEventInjectionError::PersistenceFailed(error.to_string()))
+}

@@ -1,0 +1,245 @@
+import type { GitStatusSnapshot } from "@anyharness/sdk";
+import type { RepoConfigResponse } from "@proliferate/cloud-sdk";
+import { useEffect, useMemo, useRef } from "react";
+import { useShallow } from "zustand/react/shallow";
+import {
+  type SidebarSessionActivityState,
+} from "#product/domain/sessions/activity";
+import {
+  buildSidebarGroupStates,
+  resolveSidebarEmptyState,
+} from "#product/lib/domain/workspaces/sidebar/sidebar-groups";
+import { collectPinnedSidebarItems } from "#product/lib/domain/workspaces/sidebar/sidebar-pinned";
+import type {
+  SidebarEmptyState,
+  SidebarGroupState,
+  SidebarWorkspaceItemState,
+} from "#product/lib/domain/workspaces/sidebar/sidebar-model";
+import {
+  isDocumentVisibleAndFocused,
+  useDocumentFocusVisibilityNonce,
+} from "#product/hooks/ui/document/use-document-focus-visibility";
+import { useLogicalWorkspaces } from "#product/hooks/workspaces/derived/use-logical-workspaces";
+import { useDesktopInstallId } from "#product/hooks/workspaces/derived/use-desktop-install-id";
+import { useStandardRepoProjection } from "#product/hooks/workspaces/derived/use-standard-repo-projection";
+import { useWorkspaceGitStatuses } from "#product/hooks/workspaces/derived/use-workspace-git-statuses";
+import { useWorkspaceMetadataSync } from "#product/hooks/workspaces/lifecycle/use-workspace-metadata-sync";
+import { useDebouncedWorkspaceCollectionsInvalidation } from "#product/hooks/workspaces/cache/use-workspace-collections-invalidation";
+import { useWorkspaceSidebarActivityStatesWithErrorAttention } from "#product/hooks/workspaces/derived/use-workspace-sidebar-activities";
+import { useWorkspaceUiStore } from "#product/stores/preferences/workspace-ui-store";
+import { useSessionSelectionStore } from "#product/stores/sessions/session-selection-store";
+import { usePendingWorkspaceEntries } from "#product/hooks/workspaces/derived/use-pending-workspace-entries";
+import { useSessionDirectoryStore } from "#product/stores/sessions/session-directory-store";
+import { useDeferredHomeLaunchStore } from "#product/stores/home/deferred-home-launch-store";
+import { measureDebugComputation } from "#product/lib/infra/measurement/measurement-port";
+
+interface UseWorkspaceSidebarStateArgs {
+  showArchived: boolean;
+  repoConfigs?: readonly RepoConfigResponse[];
+  /** Whether Cloud compute is enabled on this deployment (PRO-10); gates the
+   * `add-cloud-copy` availability command. */
+  cloudComputeEnabled: boolean;
+}
+
+interface WorkspaceSidebarState {
+  groups: SidebarGroupState[];
+  /** Pinned workspaces' items in pin order, for the sidebar Pinned section. */
+  pinnedItems: SidebarWorkspaceItemState[];
+  workspaceActivities: Record<string, SidebarSessionActivityState>;
+  selectedWorkspaceId: string | null;
+  selectedLogicalWorkspaceId: string | null;
+  gitStatus: GitStatusSnapshot | undefined;
+  emptyState: SidebarEmptyState;
+  isLoading: boolean;
+}
+
+const EMPTY_LAST_VIEWED_SESSION_ERROR_AT_BY_SESSION: Record<string, string> = {};
+
+export function useWorkspaceSidebarState({
+  repoConfigs = [],
+  showArchived,
+  cloudComputeEnabled,
+}: UseWorkspaceSidebarStateArgs): WorkspaceSidebarState {
+  const selectedWorkspaceId = useSessionSelectionStore((state) => state.selectedWorkspaceId);
+  const selectedLogicalWorkspaceId = useSessionSelectionStore((state) => state.selectedLogicalWorkspaceId);
+  const activeSessionId = useSessionSelectionStore((state) => state.activeSessionId);
+  // Every live attempt gets a row, not just the attended one (PRO-230).
+  const pendingWorkspaceEntries = usePendingWorkspaceEntries();
+  const lastViewedSessionErrorAtBySession = useWorkspaceUiStore((state) =>
+    state.lastViewedSessionErrorAtBySession
+    ?? EMPTY_LAST_VIEWED_SESSION_ERROR_AT_BY_SESSION
+  );
+  const workspaceActivities = useWorkspaceSidebarActivityStatesWithErrorAttention(
+    lastViewedSessionErrorAtBySession,
+  );
+  // SPINNER STALENESS FIX: the sidebar 'iterating' spinner can be pinned by
+  // the server-side executionSummary, which lives in the cached workspace
+  // collections and refreshes only on collections sync — after a turn ended,
+  // nothing refetched it, so the spinner ran on stale 'running' data
+  // indefinitely (measured via sidebar_activity.summary_override
+  // diagnostics). Refetch the collections whenever any workspace's LIVE
+  // activity transitions to idle, so the summary self-corrects within one
+  // roundtrip. The invalidation lives in the cache-owner hook and is
+  // debounced so several agents finishing at once coalesce into one refetch.
+  const invalidateWorkspaceCollections = useDebouncedWorkspaceCollectionsInvalidation();
+  const previousActivitiesRef = useRef<Record<string, SidebarSessionActivityState> | null>(null);
+  useEffect(() => {
+    const previous = previousActivitiesRef.current;
+    previousActivitiesRef.current = workspaceActivities;
+    if (!previous) {
+      return;
+    }
+    const anyWentIdle = Object.entries(workspaceActivities).some(([id, activity]) => {
+      const before = previous[id];
+      return (activity === "idle" || activity === "closed")
+        && before !== undefined
+        && before !== "idle"
+        && before !== "closed";
+    });
+    if (anyWentIdle) {
+      invalidateWorkspaceCollections();
+    }
+  }, [invalidateWorkspaceCollections, workspaceActivities]);
+  const deferredLaunchesById = useDeferredHomeLaunchStore((state) => state.launches);
+  const activeSessionTitle = useSessionDirectoryStore((state) => {
+    const entry = activeSessionId ? state.entriesById[activeSessionId] : null;
+    return entry
+      ? entry.title?.trim() || entry.activity.transcriptTitle?.trim() || null
+      : null;
+  });
+
+  const {
+    pinnedWorkspaceIds,
+    hiddenRepoRootIds,
+    lastViewedAt,
+    sessionLastInteracted,
+    sessionLastViewedAt,
+    workspaceLastInteracted,
+    workspaceTypes,
+  } = useWorkspaceUiStore(useShallow((state) => ({
+    pinnedWorkspaceIds: state.pinnedWorkspaceIds,
+    hiddenRepoRootIds: state.hiddenRepoRootIds,
+    lastViewedAt: state.lastViewedAt,
+    sessionLastInteracted: state.sessionLastInteracted,
+    sessionLastViewedAt: state.sessionLastViewedAt,
+    workspaceLastInteracted: state.workspaceLastInteracted,
+    workspaceTypes: state.workspaceTypes,
+  })));
+
+  const focusVisibilityNonce = useDocumentFocusVisibilityNonce();
+  const windowFocused = useMemo(
+    () => isDocumentVisibleAndFocused(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [focusVisibilityNonce],
+  );
+  const { logicalWorkspaces, isLoading: workspacesLoading } = useLogicalWorkspaces();
+  const { repoRoots } = useStandardRepoProjection();
+  const desktopInstallId = useDesktopInstallId();
+  const { data: gitStatus } = useWorkspaceMetadataSync();
+  const { statusesByLogicalId: gitStatusesByLogicalId } = useWorkspaceGitStatuses();
+
+  const sessionWorkspaceIds = useSessionDirectoryStore(useShallow((state) => {
+    const ids: Record<string, string | null> = {};
+    for (const [sessionId, entry] of Object.entries(state.entriesById)) {
+      ids[sessionId] = entry.workspaceId;
+    }
+    return ids;
+  }));
+  const pinnedSet = useMemo(
+    () => new Set(pinnedWorkspaceIds),
+    [pinnedWorkspaceIds],
+  );
+  const hiddenRepoRootSet = useMemo(
+    () => new Set(hiddenRepoRootIds),
+    [hiddenRepoRootIds],
+  );
+
+  const pendingPromptCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const launch of Object.values(deferredLaunchesById)) {
+      counts[launch.workspaceId] = (counts[launch.workspaceId] ?? 0) + 1;
+    }
+    return counts;
+  }, [deferredLaunchesById]);
+
+  const groups = useMemo(() => measureDebugComputation({
+    category: "workspace_sidebar_state.derive",
+    label: "groups",
+    keys: [
+      "repoRoots",
+      "repoConfigs",
+      "logicalWorkspaces",
+      "workspaceTypes",
+      "selection",
+      "pendingWorkspaceEntries",
+      "workspaceActivities",
+      "gitStatus",
+      "gitStatuses",
+    ],
+    count: (value) => value.length,
+  }, () => buildSidebarGroupStates({
+      repoRoots,
+      repoConfigs,
+      logicalWorkspaces,
+      showArchived,
+      workspaceTypes,
+      pinnedSet,
+      hiddenRepoRootIds: hiddenRepoRootSet,
+      selectedLogicalWorkspaceId,
+      selectedWorkspaceId,
+      pendingWorkspaceEntries,
+      workspaceActivities,
+      pendingPromptCounts,
+      gitStatus,
+      gitStatusesByLogicalId,
+      activeSessionTitle,
+      lastViewedAt,
+      workspaceLastInteracted,
+      sessionWorkspaceIds,
+      sessionLastInteracted,
+      sessionLastViewedAt,
+      suppressActiveNeedsReview: windowFocused,
+      desktopInstallId,
+      cloudComputeEnabled,
+    })), [
+    activeSessionTitle,
+    cloudComputeEnabled,
+    desktopInstallId,
+    gitStatus,
+    gitStatusesByLogicalId,
+    hiddenRepoRootSet,
+    lastViewedAt,
+    logicalWorkspaces,
+    pendingWorkspaceEntries,
+    pendingPromptCounts,
+    pinnedSet,
+    repoConfigs,
+    repoRoots,
+    workspaceTypes,
+    selectedLogicalWorkspaceId,
+    selectedWorkspaceId,
+    sessionLastInteracted,
+    sessionLastViewedAt,
+    sessionWorkspaceIds,
+    showArchived,
+    windowFocused,
+    workspaceActivities,
+    workspaceLastInteracted,
+  ]);
+  const emptyState = resolveSidebarEmptyState(logicalWorkspaces.length, groups.length);
+  const pinnedItems = useMemo(
+    () => collectPinnedSidebarItems(groups, pinnedWorkspaceIds),
+    [groups, pinnedWorkspaceIds],
+  );
+
+  return {
+    groups,
+    pinnedItems,
+    workspaceActivities,
+    selectedWorkspaceId,
+    selectedLogicalWorkspaceId,
+    gitStatus,
+    emptyState,
+    isLoading: workspacesLoading,
+  };
+}

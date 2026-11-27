@@ -1,0 +1,440 @@
+use agent_client_protocol as acp;
+use anyharness_contract::v1::{
+    PromptCapabilities, RawSessionConfigOption, RawSessionConfigValue, SessionConfigOptionType,
+};
+
+use super::controls::normalize_controls;
+use super::*;
+
+fn model_option(values: &[&str]) -> RawSessionConfigOption {
+    RawSessionConfigOption {
+        id: "model".into(),
+        name: "Model".into(),
+        description: None,
+        category: Some("model".into()),
+        option_type: SessionConfigOptionType::Select,
+        current_value: values.first().copied().unwrap_or_default().to_string(),
+        options: values
+            .iter()
+            .map(|value| RawSessionConfigValue {
+                value: (*value).to_string(),
+                name: (*value).to_string(),
+                description: None,
+            })
+            .collect(),
+    }
+}
+
+fn effort_option(values: &[&str]) -> RawSessionConfigOption {
+    RawSessionConfigOption {
+        id: "effort".into(),
+        name: "Effort".into(),
+        description: None,
+        category: Some("thought_level".into()),
+        option_type: SessionConfigOptionType::Select,
+        current_value: values.first().copied().unwrap_or_default().to_string(),
+        options: values
+            .iter()
+            .map(|value| RawSessionConfigValue {
+                value: (*value).to_string(),
+                name: (*value).to_string(),
+                description: None,
+            })
+            .collect(),
+    }
+}
+
+fn mode_option(values: &[&str]) -> RawSessionConfigOption {
+    RawSessionConfigOption {
+        id: "approval_mode".into(),
+        name: "Mode".into(),
+        description: None,
+        category: Some("mode".into()),
+        option_type: SessionConfigOptionType::Select,
+        current_value: values.first().copied().unwrap_or_default().to_string(),
+        options: values
+            .iter()
+            .map(|value| RawSessionConfigValue {
+                value: (*value).to_string(),
+                name: (*value).to_string(),
+                description: None,
+            })
+            .collect(),
+    }
+}
+
+fn legacy_mode_state(values: &[(&str, &str)]) -> LegacyModeState {
+    LegacyModeState {
+        current_mode_id: values
+            .first()
+            .map(|(id, _)| (*id).to_string())
+            .unwrap_or_default(),
+        available_modes: values
+            .iter()
+            .map(|(id, name)| LegacyModeOption {
+                id: (*id).to_string(),
+                name: (*name).to_string(),
+                description: None,
+            })
+            .collect(),
+    }
+}
+
+fn session_model_option(id: &str, name: &str) -> SessionModelOption {
+    SessionModelOption {
+        id: id.to_string(),
+        name: name.to_string(),
+        description: None,
+    }
+}
+
+#[test]
+fn normalize_controls_preserves_all_live_model_values() {
+    let controls = normalize_controls(
+        &[model_option(&["default", "sonnet", "sonnet[1m]", "haiku"])],
+        None,
+        &[],
+        None,
+    );
+
+    let model = controls.model.expect("model control");
+    let values = model
+        .values
+        .into_iter()
+        .map(|value| value.value)
+        .collect::<Vec<_>>();
+
+    assert_eq!(values, vec!["default", "sonnet", "sonnet[1m]", "haiku"]);
+}
+
+#[test]
+fn normalize_controls_preserves_uncurated_live_model_values() {
+    let controls = normalize_controls(
+        &[model_option(&["default", "sonnet", "unlisted-live-model"])],
+        None,
+        &[],
+        None,
+    );
+
+    let model = controls.model.expect("model control");
+    let values = model
+        .values
+        .into_iter()
+        .map(|value| value.value)
+        .collect::<Vec<_>>();
+
+    assert_eq!(values, vec!["default", "sonnet", "unlisted-live-model"]);
+}
+
+#[test]
+fn normalize_controls_synthesizes_model_from_acp_model_state_when_no_raw_model_option_exists() {
+    let controls = normalize_controls(
+        &[],
+        Some("grok-4.3"),
+        &[
+            session_model_option("grok-4.3", "Grok 4.3"),
+            session_model_option("grok-build-0.1", "Grok Build"),
+        ],
+        None,
+    );
+
+    let model = controls.model.expect("model control");
+    let labels = model
+        .values
+        .iter()
+        .map(|value| value.label.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(model.raw_config_id, ACP_MODEL_COMPAT_CONFIG_ID);
+    assert_eq!(model.current_value.as_deref(), Some("grok-4.3"));
+    assert!(model.settable);
+    assert_eq!(labels, vec!["Grok 4.3", "Grok Build"]);
+}
+
+#[test]
+fn normalize_controls_prefers_raw_model_option_over_acp_model_state() {
+    let controls = normalize_controls(
+        &[model_option(&["sonnet", "haiku"])],
+        Some("grok-4.3"),
+        &[session_model_option("grok-4.3", "Grok 4.3")],
+        None,
+    );
+
+    let model = controls.model.expect("model control");
+
+    assert_eq!(model.raw_config_id, "model");
+    assert_eq!(model.current_value.as_deref(), Some("sonnet"));
+    assert_eq!(model.values[0].label, "sonnet");
+}
+
+#[test]
+fn normalize_controls_preserves_effort_values_including_max() {
+    let controls = normalize_controls(&[effort_option(&["low", "high", "max"])], None, &[], None);
+
+    let effort = controls.effort.expect("effort control");
+    let values = effort
+        .values
+        .into_iter()
+        .map(|value| value.value)
+        .collect::<Vec<_>>();
+
+    assert_eq!(values, vec!["low", "high", "max"]);
+}
+
+#[test]
+fn normalize_controls_synthesizes_legacy_mode_when_no_raw_mode_option_exists() {
+    let controls = normalize_controls(
+        &[model_option(&["default", "sonnet"])],
+        None,
+        &[],
+        Some(&legacy_mode_state(&[
+            ("default", "Default"),
+            ("auto_edit", "Auto Edit"),
+        ])),
+    );
+
+    let mode = controls.mode.expect("mode control");
+    let values = mode
+        .values
+        .into_iter()
+        .map(|value| value.value)
+        .collect::<Vec<_>>();
+
+    assert_eq!(mode.raw_config_id, LEGACY_MODE_COMPAT_CONFIG_ID);
+    assert_eq!(mode.current_value.as_deref(), Some("default"));
+    assert_eq!(values, vec!["default", "auto_edit"]);
+}
+
+#[test]
+fn normalize_controls_prefers_raw_mode_option_over_legacy_modes() {
+    let controls = normalize_controls(
+        &[
+            model_option(&["default", "sonnet"]),
+            mode_option(&["ask", "code"]),
+        ],
+        None,
+        &[],
+        Some(&legacy_mode_state(&[
+            ("default", "Default"),
+            ("auto_edit", "Auto Edit"),
+        ])),
+    );
+
+    let mode = controls.mode.expect("mode control");
+
+    assert_eq!(mode.raw_config_id, "approval_mode");
+    assert_eq!(mode.current_value.as_deref(), Some("ask"));
+}
+
+#[test]
+fn normalize_controls_detects_mode_from_approval_label_without_mode_category() {
+    let controls = normalize_controls(
+        &[RawSessionConfigOption {
+            id: "approval_preset".into(),
+            name: "Approval Preset".into(),
+            description: None,
+            category: Some("other".into()),
+            option_type: SessionConfigOptionType::Select,
+            current_value: "auto".into(),
+            options: vec![
+                RawSessionConfigValue {
+                    value: "read-only".into(),
+                    name: "Read Only".into(),
+                    description: None,
+                },
+                RawSessionConfigValue {
+                    value: "auto".into(),
+                    name: "Auto".into(),
+                    description: None,
+                },
+            ],
+        }],
+        None,
+        &[],
+        None,
+    );
+
+    let mode = controls.mode.expect("mode control");
+    assert_eq!(mode.raw_config_id, "approval_preset");
+    assert_eq!(mode.current_value.as_deref(), Some("auto"));
+}
+
+#[test]
+fn build_live_config_snapshot_keeps_raw_options_exact_when_mode_is_synthesized() {
+    let mut model = acp::schema::SessionConfigOption::select(
+        "provider_model",
+        "Model",
+        "default",
+        vec![
+            acp::schema::SessionConfigSelectOption::new("default", "Default"),
+            acp::schema::SessionConfigSelectOption::new("sonnet", "Sonnet"),
+        ],
+    );
+    model.category = Some(acp::schema::SessionConfigOptionCategory::Model);
+
+    let snapshot = build_live_config_snapshot(
+        "grok",
+        &[model],
+        None,
+        &[],
+        Some(&legacy_mode_state(&[
+            ("default", "Default"),
+            ("auto_edit", "Auto Edit"),
+        ])),
+        PromptCapabilities::default(),
+        1,
+        "2026-04-01T00:00:00Z".into(),
+    );
+
+    assert_eq!(snapshot.raw_config_options.len(), 1);
+    assert_eq!(snapshot.raw_config_options[0].id, "provider_model");
+    assert_eq!(
+        snapshot
+            .models
+            .iter()
+            .map(|model| model.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["default", "sonnet"]
+    );
+    validate_canonical_live_config_current(&snapshot).expect("canonical full snapshot");
+    assert_eq!(
+        snapshot
+            .normalized_controls
+            .mode
+            .as_ref()
+            .map(|control| control.raw_config_id.as_str()),
+        Some(LEGACY_MODE_COMPAT_CONFIG_ID)
+    );
+}
+
+#[test]
+fn normalize_controls_keeps_collaboration_mode_distinct_from_mode() {
+    let controls = normalize_controls(
+        &[
+            RawSessionConfigOption {
+                id: "collaboration_mode".into(),
+                name: "Collaboration Mode".into(),
+                description: None,
+                category: Some("collaboration_mode".into()),
+                option_type: SessionConfigOptionType::Select,
+                current_value: "plan".into(),
+                options: vec![
+                    RawSessionConfigValue {
+                        value: "default".into(),
+                        name: "Default".into(),
+                        description: None,
+                    },
+                    RawSessionConfigValue {
+                        value: "plan".into(),
+                        name: "Plan".into(),
+                        description: None,
+                    },
+                ],
+            },
+            RawSessionConfigOption {
+                id: "mode".into(),
+                name: "Approval Preset".into(),
+                description: None,
+                category: Some("mode".into()),
+                option_type: SessionConfigOptionType::Select,
+                current_value: "auto".into(),
+                options: vec![
+                    RawSessionConfigValue {
+                        value: "read-only".into(),
+                        name: "Read Only".into(),
+                        description: None,
+                    },
+                    RawSessionConfigValue {
+                        value: "auto".into(),
+                        name: "Auto".into(),
+                        description: None,
+                    },
+                ],
+            },
+        ],
+        None,
+        &[],
+        None,
+    );
+
+    assert_eq!(
+        controls
+            .collaboration_mode
+            .as_ref()
+            .and_then(|control| control.current_value.as_deref()),
+        Some("plan")
+    );
+    assert_eq!(
+        controls
+            .mode
+            .as_ref()
+            .and_then(|control| control.current_value.as_deref()),
+        Some("auto")
+    );
+}
+
+#[test]
+fn normalize_controls_keeps_fast_mode_distinct_from_mode() {
+    let controls = normalize_controls(
+        &[
+            RawSessionConfigOption {
+                id: "fast_mode".into(),
+                name: "Fast Mode".into(),
+                description: None,
+                category: Some("fast_mode".into()),
+                option_type: SessionConfigOptionType::Select,
+                current_value: "on".into(),
+                options: vec![
+                    RawSessionConfigValue {
+                        value: "off".into(),
+                        name: "Off".into(),
+                        description: None,
+                    },
+                    RawSessionConfigValue {
+                        value: "on".into(),
+                        name: "On".into(),
+                        description: None,
+                    },
+                ],
+            },
+            RawSessionConfigOption {
+                id: "mode".into(),
+                name: "Approval Preset".into(),
+                description: None,
+                category: Some("mode".into()),
+                option_type: SessionConfigOptionType::Select,
+                current_value: "auto".into(),
+                options: vec![
+                    RawSessionConfigValue {
+                        value: "read-only".into(),
+                        name: "Read Only".into(),
+                        description: None,
+                    },
+                    RawSessionConfigValue {
+                        value: "auto".into(),
+                        name: "Auto".into(),
+                        description: None,
+                    },
+                ],
+            },
+        ],
+        None,
+        &[],
+        None,
+    );
+
+    assert_eq!(
+        controls
+            .fast_mode
+            .as_ref()
+            .and_then(|control| control.current_value.as_deref()),
+        Some("on")
+    );
+    assert_eq!(
+        controls
+            .mode
+            .as_ref()
+            .and_then(|control| control.current_value.as_deref()),
+        Some("auto")
+    );
+}
