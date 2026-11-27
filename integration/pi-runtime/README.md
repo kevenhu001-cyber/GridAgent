@@ -89,3 +89,7 @@ remove the external Agent catalog, discovery, installer, launch and
 authentication paths from the product, and verify real desktop and sandbox
 execution. Current tests exercise SDK factories, dispatch, event projection
 and mocked shell job responses; they are not real model or sandbox tests.
+
+### Home and workspace selection
+
+In opt-in native mode the existing Home composer receives the same Pi picker props and persisted model selection as the workspace composer. Existing authorized standard local workspaces only: no Cowork/worktree/cloud creation or deferred Agent launch. Both entry points use submitPiWorkspacePrompt and the original outbox. Native workspace selection reuses the original selection and shell-intent stores without bootstrapping an external Agent session. Header tabs derive native slots from the existing directory and suppress the old runtime roster/hierarchy reads. Live session history is still in memory, and the workspace inventory/file transport still depends on retained services; full standalone runtime migration and real desktop qualification remain pending.

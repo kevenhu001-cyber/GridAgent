@@ -1,4 +1,7 @@
 import { useRef, useState } from "react";
+import { usePiModelSelector } from "#product/hooks/chat/derived/use-pi-model-selector";
+import { resolvePiHomeGate } from "#product/lib/access/pi/home-adapter";
+import { hasOpenPiSession } from "#product/lib/access/pi/product-session";
 import { HomeComposerForm } from "#product/components/home/screen/HomeComposerForm";
 import { HomeOnboardingCards } from "#product/components/home/screen/HomeOnboardingCards";
 import { HomeProjectMenu } from "#product/components/home/screen/HomeProjectMenu";
@@ -30,6 +33,8 @@ import { type HomeNextModelSelection } from "#product/lib/domain/home/home-next-
 import { resolveHomeTargetLaunchKindForRepository } from "#product/lib/domain/home/home-target-picker";
 
 export function HomeNextScreen() {
+  const native = usePiModelSelector();
+  const nativeMode = native.mode !== "legacy";
   const {
     desktopTargetsAvailable,
     destination,
@@ -87,7 +92,7 @@ export function HomeNextScreen() {
   const homeSessionConfigControls = buildHomeSessionConfigControls({
     launchControls: homeLaunchControls.controls,
   });
-  const homeModelSelectorProps = buildHomeModelSelectorProps({
+  const legacyModelSelectorProps = buildHomeModelSelectorProps({
     groups: homeNext.modelGroups,
     selectedModel: homeNext.selectedModel,
     gate: homeNext.modelGate,
@@ -98,6 +103,8 @@ export function HomeNextScreen() {
       setLaunchControlOverrides({});
     },
   });
+  const homeModelSelectorProps = nativeMode ? native.props : legacyModelSelectorProps;
+  const nativeGate = resolvePiHomeGate(native.mode, native.props, native.selection, homeNext.launchTarget, hasOpenPiSession());
   const launchKindForRepository = (sourceRoot: string) =>
     desktopTargetsAvailable
       ? resolveHomeTargetLaunchKindForRepository({
@@ -117,10 +124,10 @@ export function HomeNextScreen() {
   // resolves — there is no "done" state, so a null result just omits the
   // card.
   const readinessCard = useHomeInstallationReadiness(homeNext.modelGate.kind);
-  const homeOnboardingVisible = onboardingCards.length > 0
+  const homeOnboardingVisible = !nativeMode && (onboardingCards.length > 0
     || authSetupStep === "settingUp"
     || (authSetupEvidence !== undefined && authSetupEvidence !== null)
-    || readinessCard !== null;
+    || readinessCard !== null);
   // One mapping, keyed on the gate. Every silent arm is silent on purpose:
   // selection_required and observed_empty are cured by the enabled picker
   // itself (owner revisions r2/r3), and the in-flight arms belong to the
@@ -129,7 +136,7 @@ export function HomeNextScreen() {
   // install_required/login_required readiness.
   // A refused probe writes no durable state, so the gate cannot move and the
   // same sentence would render again unchanged. The notice says so instead.
-  const modelAvailabilityNotice = resolveHomeModelGateNotice(homeNext.modelGate, {
+  const modelAvailabilityNotice = nativeMode ? null : resolveHomeModelGateNotice(homeNext.modelGate, {
     refreshPending: homeNext.retryPending,
     refreshRejected: homeNext.retryRejected,
   });
@@ -245,19 +252,19 @@ export function HomeNextScreen() {
         >
           <div className="mx-auto w-full max-w-transcript-thread">
             <HomeComposerForm
-              targetDisabledReason={homeNext.targetDisabledReason}
-              modelGate={homeNext.modelGate}
-              canLaunchTarget={homeNext.canLaunchTarget}
-              modelSelection={homeNext.effectiveModelSelection}
-              launchControlValues={homeLaunchControls.launchControlValues}
+              targetDisabledReason={nativeMode ? nativeGate.targetDisabledReason : homeNext.targetDisabledReason}
+              modelGate={nativeMode ? nativeGate.modelGate : homeNext.modelGate}
+              canLaunchTarget={nativeMode ? nativeGate.canLaunchTarget : homeNext.canLaunchTarget}
+              modelSelection={nativeMode ? native.selection : homeNext.effectiveModelSelection}
+              launchControlValues={nativeMode ? {} : homeLaunchControls.launchControlValues}
               launchTarget={homeNext.launchTarget}
               attachments={attachments}
               controlsSlot={(
                 <ComposerLeadingControls
                   runtimeControlsDisabled={false}
                   modelSelectorProps={homeModelSelectorProps}
-                  agentKind={homeAgentKind}
-                  sessionConfigControls={homeSessionConfigControls}
+                  agentKind={nativeMode ? native.selection?.kind ?? null : homeAgentKind}
+                  sessionConfigControls={nativeMode ? [] : homeSessionConfigControls}
                   activeSessionId={null}
                 />
               )}
@@ -267,8 +274,8 @@ export function HomeNextScreen() {
                   isEditingQueuedPrompt={false}
                   chatDisabled={false}
                   isSubmitting={false}
-                  supportsAttachments={attachments.supportsAttachments}
-                  canAttachFiles={attachments.canAttachFiles}
+                  supportsAttachments={!nativeMode && attachments.supportsAttachments}
+                  canAttachFiles={!nativeMode && attachments.canAttachFiles}
                   activeSessionId={null}
                   onAttachFile={() => fileInputRef.current?.click()}
                 />
@@ -327,7 +334,7 @@ export function HomeNextScreen() {
                 </div>
               ) : null}
               submitDisabledReasonCtaSlot={
-                repoLaunchKind === "cloud" && homeNext.cloudRepoAction.kind === "configure" ? (
+                !nativeMode && repoLaunchKind === "cloud" && homeNext.cloudRepoAction.kind === "configure" ? (
                   <Button
                     variant="ghost"
                     size="sm"

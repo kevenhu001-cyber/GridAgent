@@ -1,3 +1,4 @@
+import { usePiMode } from "#product/hooks/chat/derived/use-pi-model-selector";
 import { useEffect, useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { cadence } from "@proliferate/design/cadence";
@@ -59,6 +60,7 @@ export function useWorkspaceHeaderSubagentHierarchy(args: {
   workspaceId: string | null;
   sessionIds: string[];
 }): WorkspaceHeaderSubagentHierarchy {
+  const {mode}=usePiMode();
   const workspace = useAnyHarnessWorkspaceContext();
   const cacheScopeKey = useAnyHarnessCacheScopeKey();
   const runtimeUrl = useHarnessConnectionStore((state) => state.runtimeUrl);
@@ -69,8 +71,8 @@ export function useWorkspaceHeaderSubagentHierarchy(args: {
     (state) => state.promotedRootSessionIds,
   );
   const uniqueSessionIds = useMemo(
-    () => [...new Set(args.sessionIds)].filter(Boolean),
-    [args.sessionIds],
+    () => mode==="legacy" ? [...new Set(args.sessionIds)].filter(Boolean) : [],
+    [args.sessionIds,mode],
   );
   const enabledSessionIds = useBatchedHeaderHierarchySessionIds({
     prioritySessionIds: args.prioritySessionIds ?? [],

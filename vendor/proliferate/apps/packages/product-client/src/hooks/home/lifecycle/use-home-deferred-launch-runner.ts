@@ -1,3 +1,4 @@
+import { usePiMode } from "#product/hooks/chat/derived/use-pi-model-selector";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { CloudWorkspaceSummary } from "#product/lib/domain/workspaces/cloud/cloud-workspace-model";
 import { useWorkspaces } from "#product/hooks/workspaces/cache/use-workspaces";
@@ -53,6 +54,7 @@ function launchFailureRetryMode(intentId: string): ChatLaunchRetryMode {
 
 // Owns deferred cloud launch consumption. Does not own initial Home launch initiation.
 export function useHomeDeferredLaunchRunner() {
+  const {mode}=usePiMode();
   const launchesById = useDeferredHomeLaunchStore((state) => state.launches);
   const pendingWorkspaces = useSessionSelectionStore((state) => state.pendingWorkspaces);
   const markConsuming = useDeferredHomeLaunchStore((state) => state.markConsuming);
@@ -66,7 +68,7 @@ export function useHomeDeferredLaunchRunner() {
   } = useWorkspaces();
   const showToast = useToastStore((state) => state.show);
 
-  const launches = useMemo(() => Object.values(launchesById), [launchesById]);
+  const launches = useMemo(() => mode==="legacy" ? Object.values(launchesById) : EMPTY_DEFERRED_LAUNCHES, [launchesById,mode]);
 
   const knownCloudWorkspaceIds = useMemo(() => new Set(
     (workspaceCollections?.cloudWorkspaces ?? []).map((workspace) => workspace.id),

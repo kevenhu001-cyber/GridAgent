@@ -1,6 +1,12 @@
 import { useCallback, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { usePiMode } from "#product/hooks/chat/derived/use-pi-model-selector";
+import { usePiModelSelector, usePiMode } from "#product/hooks/chat/derived/use-pi-model-selector";
+import { useWorkspaces } from "#product/hooks/workspaces/cache/use-workspaces";
+import { useSessionPromptWorkflow } from "#product/hooks/sessions/workflows/use-session-prompt-workflow";
+import { submitPiWorkspacePrompt } from "#product/lib/access/pi/workspace-submit";
+import { hasOpenPiSession } from "#product/lib/access/pi/product-session";
+import { createPromptId } from "#product/lib/domain/chat/composer/prompt-id";
+import { writeChatShellIntentForSession } from "#product/hooks/workspaces/workflows/tabs/workspace-shell-intent-writer";
 import type { PromptAttachmentSnapshot } from "#product/domain/chats/composer/prompt-attachment-snapshot";
 import { useHomeNextLaunchPromptActions } from "#product/hooks/home/workflows/use-home-next-launch-prompt-actions";
 import { useWorkspaceEntryActions } from "#product/hooks/workspaces/workflows/use-workspace-entry-actions";
@@ -44,7 +50,11 @@ interface HomeNextLaunchInput {
 // Owns the Home Next submit action. Does not own read-only selection state or deferred launch replay.
 export function useHomeNextLaunch() {
   const navigate = useNavigate();
-  const {mode: piMode} = usePiMode();
+  const {mode: piMode,pi} = usePiMode();
+  const native = usePiModelSelector();
+  const {data: workspaceCollections}=useWorkspaces();
+  const {promptSession}=useSessionPromptWorkflow();
+  const nativeLaunchInFlight=useRef(false);
   // A count, not a flag: with several launches in flight the first one to
   // settle used to clear the send spinner and re-enable Escape-to-clear while
   // the others were still running (PRO-230 review nit).
@@ -82,8 +92,50 @@ export function useHomeNextLaunch() {
     target,
   }: HomeNextLaunchInput): Promise<HomeNextLaunchOutcome> => {
     if (piMode !== "legacy") {
-      showToast("Native Pi session dispatch is not connected yet. Your draft is preserved.");
-      return "not-started";
+      if (piMode!=="native" || !pi || target.kind!=="local" || !target.existingWorkspaceId ||
+        nativeLaunchInFlight.current || hasOpenPiSession()) {
+        showToast("Select an existing local workspace and close any open Pi session before launching. Your draft is preserved.");
+        return "refused";
+      }
+      const workspace=workspaceCollections?.localWorkspaces.find(w=>w.id===target.existingWorkspaceId && w.surface==="standard");
+      const prompt=text.trim();
+      if (!workspace || !prompt || attachmentSnapshots?.length || !native.selection ||
+        native.selection.kind!==modelSelection.kind || native.selection.modelId!==modelSelection.modelId ||
+        new TextEncoder().encode(prompt).length>8192) {
+        showToast("Select a configured model and an available local workspace; native Pi currently accepts text only. Your draft is preserved.");
+        return "refused";
+      }
+      nativeLaunchInFlight.current=true;
+      setLaunchingCount(count=>count+1);
+      try {
+        const before=useSessionSelectionStore.getState();
+        await selectWorkspace(workspace.id,{force:true,knownWorkspace:workspace,initialActiveSessionId:null});
+        const selected=useSessionSelectionStore.getState();
+        if (selected.selectedWorkspaceId!==workspace.id || selected.workspaceSelectionNonce!==before.workspaceSelectionNonce+1 ||
+          selected.activeSessionId!==null) throw new Error("Workspace selection changed.");
+        const isCurrent=()=>{
+          const now=useSessionSelectionStore.getState();
+          return now.selectedWorkspaceId===workspace.id && now.workspaceSelectionNonce===selected.workspaceSelectionNonce &&
+            now.activeSessionVersion===selected.activeSessionVersion;
+        };
+        await submitPiWorkspacePrompt({bridge:pi,workspace,selection:modelSelection,activeSessionId:null,
+          text:prompt,blocks:[{type:"text",text:prompt}],attachmentSnapshots:[],promptId:createPromptId(),isCurrent},{
+          activate:id=>{
+            useSessionSelectionStore.getState().setActiveSessionId(id);
+            writeChatShellIntentForSession({workspaceId:workspace.id,sessionId:id});
+            navigate("/");
+          },
+          enqueue:async(id,promptId)=>promptSession({sessionId:id,workspaceId:workspace.id,text:prompt,
+            blocks:[{type:"text",text:prompt}],promptId}),
+        });
+        return "launched";
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : "Native Pi launch failed. Your draft is preserved.");
+        return "not-started";
+      } finally {
+        nativeLaunchInFlight.current=false;
+        setLaunchingCount(count=>count-1);
+      }
     }
     const prompt = text.trim();
     const submit = launchSubmitFingerprint(prompt, target, Date.now());
@@ -353,6 +405,10 @@ export function useHomeNextLaunch() {
     }
   }, [
     piMode,
+    pi,
+    native.selection,
+    workspaceCollections,
+    promptSession,
     beginLaunchIntent,
     clearLaunchIntent,
     promptProjectedOrCreateFreshSession,

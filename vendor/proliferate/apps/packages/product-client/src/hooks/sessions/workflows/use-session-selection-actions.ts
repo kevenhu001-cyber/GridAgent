@@ -106,6 +106,14 @@ export function useSessionSelectionWorkflowActions({
       return staleSelection("intent-replaced");
     }
 
+    // Native live/history slots are owned by the existing directory, not an
+    // external session roster. Never cold-load one through AnyHarness.
+    if (existingSlot?.agentKind==="pi") {
+      if (existingSlot.workspaceId!==current.selectedWorkspaceId) return staleSelection("workspace-changed");
+      const outcome=commitSelection();
+      if(measurementOperationId) finishMeasurementOperation(measurementOperationId,"completed");
+      return outcome ?? undefined;
+    }
     const sessionSelectionRelationship = classifyTrustedSessionSelection(sessionId);
     if (existingSlot?.sessionRelationship.kind === "pending") {
       existingSlot = {
