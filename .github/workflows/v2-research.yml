@@ -1,0 +1,27 @@
+name: V2 Research Acceptance
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'scripts/run_v2_research.py'
+      - '.github/workflows/v2-research.yml'
+permissions:
+  contents: read
+jobs:
+  native-research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -e '.[dev,engineering]'
+      - name: Collect and evaluate native research evidence
+        run: python scripts/run_v2_research.py research-v2 research-reports
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v2-research-reports
+          path: research-reports/
+          if-no-files-found: warn

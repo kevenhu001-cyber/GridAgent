@@ -42,13 +42,18 @@ def replay_fixed(root, identifier):
     return spec, manifest["cases"], report
 
 
-def evaluate_policy(spec, jobs, report, budget, *, adaptive):
+def evaluate_policy(spec, jobs, report, budget, *, adaptive, preferred=()):
     """Only reveal the outcome of a probe after its selection."""
     if not 2 <= budget <= len(jobs):
         raise ValueError("Benchmark budget must fit baseline plus pool")
     oracle = {row["index"]: row for row in report["observations"]}
     if set(oracle) != {job["index"] for job in jobs}:
         raise ValueError("Incomplete fixed observation pool")
+    preferred = list(preferred)
+    allowed = [job["index"] for job in jobs[1:]]
+    if len(preferred) != len(set(preferred)) or not set(preferred) <= set(allowed):
+        raise ValueError("Preferred order must contain distinct authorized probes")
+    order = [jobs[0]["index"], *preferred, *(index for index in allowed if index not in preferred)]
     revealed = []
     start = time.perf_counter()
     stop, _, updates = progress(spec, report["source_measurement"], revealed, budget, len(jobs))
@@ -59,7 +64,7 @@ def evaluate_policy(spec, jobs, report, budget, *, adaptive):
                 raise ValueError("Adaptive policy returned no choice")
             index = decision["index"]
         else:
-            index = jobs[len(revealed)]["index"]
+            index = order[len(revealed)]
         if index in {row["index"] for row in revealed} or index not in oracle:
             raise ValueError("Policy chose a repeated or unauthorized probe")
         revealed.append(oracle[index])
