@@ -223,7 +223,8 @@ def dispatch(root, request, emit):
         from .commands import workspace_command
 
         command = request["command"]
-        destination = "workbench_result" if command.startswith("plugin-") or command == "import-knowledge" else "result"
+        destination = ("workbench_result" if command.startswith("plugin-") or command in {"import-knowledge", "register-ngspice"}
+                       else "result")
         for line in workspace_command(root, command, request.get("args", [])):
             emit(destination, line)
         refresh()
