@@ -19,3 +19,8 @@ The primary LLM can list and inspect previous scientific runs, apply exact hash-
 ## Native API discovery
 
 `list_scientific_libraries` reads distribution names and versions from the mapped runtime and selected managed plugin, not the host's import environment. `inspect_native_api` imports and introspects a dotted module/symbol only inside a new authorized sandbox run; it returns the actual signature (where introspectable), docstring and public members as `api.json`. It consumes one execution attempt. It does not modify the persistent project and does not certify import or numerical correctness based on metadata alone. The result is untrusted reference data; consult official version-matched documentation when needed. Real sandbox integration remains to be tested.
+
+
+## Actionable tool failures and binary project inspection
+
+The primary chat loop returns structured `error_code`, bounded `reason` and advisory `next_action` for scientific tool exceptions. Missing files, stale source hashes, ambiguous edits, non-UTF-8 data, workspace contention and authorization/recovery failures can be distinguished without sending raw OS exception paths to the model. These are diagnostic hints only; the LLM decides how to revise its program. `inspect_project_file` returns a hash, byte count and UTF-8 readability hint for text or binary project files without deserializing or executing them. File permissions, quotas and exact revision checks still apply. Tool calls spend the normal tool budget; metadata inspection does not spend numerical execution budget. Scripted-model regression tests exercise recovery from stale hashes and binary reads; they do not establish real-model autonomy or Windows Sandbox acceptance.
