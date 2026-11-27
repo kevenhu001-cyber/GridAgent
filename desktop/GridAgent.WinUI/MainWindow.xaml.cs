@@ -101,11 +101,7 @@ public partial class MainWindow : Window
         if (args.InvokedItemContainer is not NavigationViewItem item) return;
         if (item.Tag is Entry session) await OpenSessionById(session.Id);
         else if (item.Tag as string == "new-chat") NewSession(sender, new RoutedEventArgs());
-        else if (item.Tag as string == "search-chat")
-        {
-            Navigation.SelectedItem = Navigation.MenuItems.OfType<NavigationViewItem>().First(i => (string?)i.Tag == "studies");
-            SessionSearch.Focus(FocusState.Programmatic);
-        }
+        else if (item.Tag as string == "search-chat") OpenConversationHistory(sender, new RoutedEventArgs());
     }
     private void SearchSessions(object sender, TextChangedEventArgs args)
     {
