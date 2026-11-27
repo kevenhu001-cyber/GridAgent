@@ -250,7 +250,8 @@ def main():
                 console.print(format_update(node, value), markup=False)
             return
         sid = store.require_session(args.session) if args.session else store.create_session()
-        graph = build_agent(model, simulator, budget=args.budget, workspace=args.workspace)
+        graph = build_agent(model, simulator, budget=args.budget, workspace=args.workspace,
+                            session_store=store, session_id=sid)
     except ValueError as exc:
         if args.ask or args.dmq or args.dsr:
             parser.error(str(exc))
