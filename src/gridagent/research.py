@@ -353,8 +353,8 @@ class ResearchTasks(ResearchStore):
                                 key = cache.key(plan, payload, limits)
                                 source = cache.restore(
                                     key, payload, reserved["run_id"], cancelled=cancelled,
-                                    recheck=lambda record: evaluate_candidate(
-                                        self.root, record, payload, manifest, program),
+                                    recheck=lambda cached_result: evaluate_candidate(
+                                        self.root, cached_result, payload, manifest, program),
                                 )
                                 if source is not None:
                                     return {"launch": "cache", "cache_origin_run_id": source, "cache_key": key}

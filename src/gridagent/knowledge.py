@@ -14,6 +14,8 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field
 
 ALIASES = {
+    "search_ac_repair_experience": "historical AC repair experience similar diagnosis evidence 经验 相似 工程修正",
+    "diagnose_engineering_study": "diagnosis root cause hypotheses evidence fault constraint failure 故障 诊断 根因 证据",
     "pypower_case_flow": "PYPOWER IEEE AC load flow 潮流 基准",
     "powsybl_case_flow": "PowSyBl AC load flow 潮流 大电网",
     "ramp_tracking_qp": "OSQP sparse quadratic ramp tracking 二次规划 爬坡 跟踪",

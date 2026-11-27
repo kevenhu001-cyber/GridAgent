@@ -20,6 +20,11 @@ WORKSPACE_COMMANDS = {
     "/paper-rank", "/paper-kpi", "/paper-edit", "/paper-dmq", "/paper-dsr", "/paper-mitigate", "/paper-trials",
     "/models", "/import-model", "/knowledge", "/import-knowledge", "/backends", "/native-program", "/native-table",
     "/dispatch-ir", "/dispatch-resume", "/dispatch-status", "/dispatch-cancel",
+    "/optimize-ir", "/optimize-resume", "/math-program", "/math-resume", "/ac-check", "/ac-check-resume", "/diagnose-study",
+    "/diagnostic-experiment", "/diagnostic-experiment-resume",
+    "/ac-diagnostic-experiment", "/ac-diagnostic-experiment-resume",
+    "/adaptive-ac-experiment", "/adaptive-ac-experiment-resume",
+    "/ac-evidence-repair", "/ac-evidence-repair-resume", "/remember-ac-repair", "/search-ac-experience",
     "/drafts", "/model-repair", "/modeling-benchmark", "/experience", "/plugins", "/plugin-install",
     "/plugin-remove", "/plugin-check", "/plugin-update", "/plugin-rollback", "/register-ngspice", "/ngspice-rc",
 }
@@ -270,6 +275,13 @@ class GridApp(App):
                             "/research-cancel ID · "
                             "/research-approve ID · /research-clarify ID ANSWER · /research-report ID PATH"))
             chat.write(Text("/dispatch-ir PATH · /dispatch-resume ID · /dispatch-status ID · /dispatch-cancel ID"))
+            chat.write(Text("/optimize-ir PATH · /optimize-resume ID · /math-program PATH · /math-resume ID"))
+            chat.write(Text("/ac-check PATH · /ac-check-resume ID · /diagnose-study ID"))
+            chat.write(Text("/diagnostic-experiment PATH · /diagnostic-experiment-resume ID"))
+            chat.write(Text("/ac-diagnostic-experiment PATH · /ac-diagnostic-experiment-resume ID"))
+            chat.write(Text("/adaptive-ac-experiment PATH · /adaptive-ac-experiment-resume ID"))
+            chat.write(Text("/ac-evidence-repair PATH · /ac-evidence-repair-resume ID"))
+            chat.write(Text("/remember-ac-repair ID · /search-ac-experience ID"))
             chat.write(Text("/research-python MANIFEST · /research-sandbox enable|disable|status · "
                             "/research-benchmark [TASK [MODE]] · /andes-batch PATH"))
             chat.write(Text("/new · new session | /sessions · list | /open ID · reopen | /dsr PATH · screen faults | /dmq · model review | /studies · list | /runs | /study ID | /wave ID CHANNEL | /study-wave ID PATH CHANNEL | /eigen | /sweep BUS DURATIONS | /resume-dsr ID | /optimize [BUDGET] | /paper-dmq PROFILE | /paper-dsr PROFILE | /paper-mitigate PROFILE | /paper-trials TASK COUNT [PROFILE] | /modeling-benchmark TASK | /model-repair MANIFEST | /experience | /plugins | /plugin-install ID | /plugin-remove ID | /drafts | /backends | /native-program JSON | /native-table RUN TABLE | /knowledge | /import-knowledge JSON | /models | /import-model PATH | /paper-rank | /paper-kpi CSV CLEARING_S | /paper-edit Kqp Kqi Kvp Kvi | Ctrl+E Studies | Ctrl+Q · quit"))

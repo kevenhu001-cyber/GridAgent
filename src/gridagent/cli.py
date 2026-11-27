@@ -21,6 +21,23 @@ def main():
     research.add_argument("--dispatch-resume", metavar="ID")
     research.add_argument("--dispatch-status", metavar="ID")
     research.add_argument("--dispatch-cancel", metavar="ID")
+    research.add_argument("--optimize-ir", metavar="JSON", help="Run authorized AC mixed-variable optimization")
+    research.add_argument("--optimize-resume", metavar="ID", help="Resume an AC optimization study")
+    research.add_argument("--math-program", metavar="JSON", help="Solve typed LP, MILP, polynomial NLP or unit commitment")
+    research.add_argument("--math-resume", metavar="ID", help="Recover a mathematical program study")
+    research.add_argument("--ac-check", metavar="JSON", help="Cross-check verified DC commitment with AC snapshots")
+    research.add_argument("--ac-check-resume", metavar="ID", help="Recover AC cross-check evidence")
+    research.add_argument("--diagnose-study", metavar="ID", help="Diagnose committed study evidence without solving")
+    research.add_argument("--diagnostic-experiment", metavar="JSON", help="Run explicitly authorized contingency probes")
+    research.add_argument("--diagnostic-experiment-resume", metavar="ID", help="Recover diagnostic experiment evidence")
+    research.add_argument("--ac-diagnostic-experiment", metavar="JSON", help="Run authorized single-factor AC probes")
+    research.add_argument("--ac-diagnostic-experiment-resume", metavar="ID", help="Recover AC diagnostic evidence")
+    research.add_argument("--adaptive-ac-experiment", metavar="JSON", help="Run bounded adaptive AC probe selection")
+    research.add_argument("--adaptive-ac-experiment-resume", metavar="ID", help="Recover adaptive AC experiments")
+    research.add_argument("--ac-evidence-repair", metavar="JSON", help="Revalidate authorized AC repair candidates")
+    research.add_argument("--ac-evidence-repair-resume", metavar="ID", help="Recover AC repair evidence")
+    research.add_argument("--remember-ac-repair", metavar="ID", help="Index replay-verified local repair experience")
+    research.add_argument("--search-ac-experience", metavar="ID", help="Find historical AC repairs for a source study")
     research.add_argument("--research-tasks", action="store_true", help="List saved research tasks")
     research.add_argument("--research-status", metavar="ID")
     research.add_argument("--research-resume", metavar="ID")
@@ -97,6 +114,25 @@ def main():
         ("dispatch-resume", [args.dispatch_resume] if args.dispatch_resume else None),
         ("dispatch-status", [args.dispatch_status] if args.dispatch_status else None),
         ("dispatch-cancel", [args.dispatch_cancel] if args.dispatch_cancel else None),
+        ("optimize-ir", [args.optimize_ir] if args.optimize_ir else None),
+        ("optimize-resume", [args.optimize_resume] if args.optimize_resume else None),
+        ("math-program", [args.math_program] if args.math_program else None),
+        ("math-resume", [args.math_resume] if args.math_resume else None),
+        ("ac-check", [args.ac_check] if args.ac_check else None),
+        ("ac-check-resume", [args.ac_check_resume] if args.ac_check_resume else None),
+        ("diagnose-study", [args.diagnose_study] if args.diagnose_study else None),
+        ("diagnostic-experiment", [args.diagnostic_experiment] if args.diagnostic_experiment else None),
+        ("diagnostic-experiment-resume", [args.diagnostic_experiment_resume] if args.diagnostic_experiment_resume else None),
+        ("remember-ac-repair", [args.remember_ac_repair] if args.remember_ac_repair else None),
+        ("search-ac-experience", [args.search_ac_experience] if args.search_ac_experience else None),
+        ("ac-evidence-repair", [args.ac_evidence_repair] if args.ac_evidence_repair else None),
+        ("ac-evidence-repair-resume", [args.ac_evidence_repair_resume] if args.ac_evidence_repair_resume else None),
+        ("adaptive-ac-experiment", [args.adaptive_ac_experiment] if args.adaptive_ac_experiment else None),
+        ("adaptive-ac-experiment-resume",
+         [args.adaptive_ac_experiment_resume] if args.adaptive_ac_experiment_resume else None),
+        ("ac-diagnostic-experiment", [args.ac_diagnostic_experiment] if args.ac_diagnostic_experiment else None),
+        ("ac-diagnostic-experiment-resume",
+         [args.ac_diagnostic_experiment_resume] if args.ac_diagnostic_experiment_resume else None),
         ("research-tasks", [] if args.research_tasks else None),
         ("research-status", [args.research_status] if args.research_status else None),
         ("research-resume", [args.research_resume] if args.research_resume else None),

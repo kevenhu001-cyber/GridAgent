@@ -49,6 +49,91 @@ def study_summary(root: Path, identifier: str):
     lines = [f"Study {identifier}", f"Protocol: {manifest.get('protocol', 'unknown')}"]
     if report is None:
         lines.append("Unfinished · partial artifacts preserved")
+    elif report.get("phase") == "ac_evidence_repair_finished":
+        lines.append(f"AC repair: {report['recommended_candidate_index']}")
+        lines.append(f"Reserved runs: {report['reserved_solver_runs']}/{report['max_solver_runs']}")
+        for candidate in report["candidates"]:
+            lines.append(f"Candidate {candidate['candidate_index']}: "
+                         f"{candidate['verified_snapshots']}/{candidate['required_snapshots']} verified")
+        lines.append(f"Full DC schedule coverage: {report['full_dc_schedule_coverage']}")
+        lines.append("Proposed model only; original not modified and dynamic security not established")
+    elif report.get("phase") == "adaptive_ac_experiment_finished":
+        lines.append(f"Adaptive AC: {report['termination']}")
+        lines.append(f"Reserved runs: {report['reserved_solver_runs']}/{report['max_solver_runs']}")
+        lines.append(f"Verified single-snapshot candidate: {report['verified_candidate_index']}")
+        lines.append(f"Untried candidates: {len(report['untried_candidate_indices'])}")
+        lines.append("Single-snapshot evidence only; full-scope repair required")
+    elif report.get("phase") == "ac_diagnostic_experiment_finished":
+        lines.append(f"AC diagnostic baseline reproduced: {report['baseline_reproduced']}")
+        lines.append(f"Reserved runs: {report['reserved_solver_runs']}/{report['max_solver_runs']}")
+        for finding in report["hypothesis_updates"]:
+            probe = finding["probe"]
+            lines.append(f"{probe['kind']} {probe['device']}: {finding['status']}")
+        lines.append("Counterfactual only; root cause not confirmed and original model unchanged")
+    elif report.get("phase") == "diagnostic_experiment_finished":
+        lines.append(f"Diagnostic experiment: {report['conclusion']}")
+        lines.append(f"Reserved calls: {report['reserved_solver_calls']}/{report['max_solver_calls']}")
+        for finding in report["hypothesis_updates"]:
+            probe = finding["probe"]
+            lines.append(f"{probe['kind']} {probe['component']}: {finding['status']}")
+        lines.append("Counterfactual only; root cause not confirmed and original model unchanged")
+    elif report.get("phase") == "ac_cross_check_finished":
+        snapshots = report["snapshots"]
+        passed = sum(row["passed"] for row in snapshots)
+        lines.append(f"AC cross-check: {passed}/{len(snapshots)} snapshots verified")
+        lines.append(f"Full selected DC schedule coverage: {report['full_dc_schedule_coverage']}")
+        lines.append("AC steady-state only; dynamic security not established")
+    elif report.get("phase") == "mathematical_program_finished":
+        verification = report["verification"]
+        lines.append(f"Mathematical program · {verification['classification']}")
+        lines.append(f"Solver: {report['solver_result']['route']} · {report['solver_result']['status']}")
+        if verification["primal"]["passed"]:
+            lines.append(f"Verified objective: {verification['primal']['objective']:.6g} {report['objective_unit']}")
+        if not verification["optimality_independently_checked"]:
+            lines.append("Independent optimality not established")
+        commitment = verification.get("commitment")
+        if commitment and commitment["physical"] is not None:
+            schedule = commitment["physical"]["schedule"]
+            model = "DC network" if "network" in schedule else "Single-area"
+            lines.append(f"{model} commitment: {len(schedule['units'])} thermal units, "
+                         f"{len(schedule['storage'])} storage devices")
+            lines.append(f"Physical schedule checks: {commitment['physical']['passed']}")
+            if "network" in schedule:
+                lines.append(f"DC network: {len(schedule['network']['buses'])} buses, "
+                             f"{len(schedule['network']['lines'])} lines")
+                if "security" in schedule:
+                    security = schedule["security"]
+                    lines.append(f"Verified line outage cases: {len(security['cases'])}")
+                    lines.append(f"All network lines covered: {security['all_network_lines_covered']}")
+                    if "unit_cases" in security:
+                        lines.append(f"Verified unit outage cases: {len(security['unit_cases'])}")
+                        lines.append(f"All thermal units covered: {security['all_thermal_units_covered']}")
+                    lines.append("Static DC redispatch checked; AC and dynamic security not established")
+                else:
+                    lines.append("System reserve checked; contingency deliverability and AC feasibility not established")
+            else:
+                lines.append("Network flows and AC feasibility are not established")
+        advanced = verification.get("advanced_analysis")
+        if advanced:
+            lines.append(f"Verified baseline candidates: {advanced['baseline_feasible_starts']}")
+            kkt = advanced.get("kkt")
+            if kkt:
+                lines.append(f"First-order KKT diagnostic: {kkt['status']}")
+            lines.append(f"RHS reoptimization cases: {len(advanced['rhs_scan'])}")
+        sensitivity = verification.get("sensitivity")
+        if sensitivity:
+            lines.append(f"Local derivative agreement: {sensitivity['all_derivatives_agree']}")
+            ranked = sensitivity["objective_ranking"][:3]
+            lines.append("Local sensitivity ranking: " + ", ".join(row["variable"] for row in ranked))
+    elif report.get("phase") == "optimization_finished":
+        lines.append(f"AC optimization · {report['termination']}")
+        lines.append(f"Reserved runs: {report['reserved_solver_runs']}/{report['budget']}")
+        best = report["verification"]
+        if report["completed"] and best is not None:
+            lines.append(f"Verified objective: {best['objective']:.6g} {report['objective_unit']}")
+        else:
+            lines.append("No independently verified recommendation")
+        lines.append("Global optimality not established")
     elif report.get("phase") == "modeling_benchmark_finished":
         lines.append(f"Modeling benchmark: {report['task']} · {report['termination']}")
         lines.append(f"Best run: {report['best_run_id']} · {report['attempts']} attempts")

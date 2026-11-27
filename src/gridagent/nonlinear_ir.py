@@ -1,0 +1,178 @@
+"""Bounded polynomial NLP contracts; no executable expression strings."""
+
+from typing import Annotated, Literal
+
+from pydantic import Field, model_validator
+
+from .engineering_ir import fingerprint
+from .math_program_ir import DecisionVariable, Identifier, Number
+from .task_contracts import Contract
+
+
+class Power(Contract):
+    variable: Identifier
+    exponent: int = Field(ge=1, le=4)
+
+
+class Monomial(Contract):
+    coefficient: Annotated[float, Field(ge=-1e6, le=1e6)]
+    powers: tuple[Power, ...] = Field(default=(), max_length=4)
+
+    @model_validator(mode="after")
+    def validate_degree(self):
+        if sum(p.exponent for p in self.powers) > 4 or len({p.variable for p in self.powers}) != len(self.powers):
+            raise ValueError("Monomial degree exceeds four or repeats a variable")
+        return self
+
+
+class PolynomialObjective(Contract):
+    sense: Literal["minimize", "maximize"] = "minimize"
+    terms: tuple[Monomial, ...] = Field(min_length=1, max_length=128)
+    unit: str = Field(min_length=1, max_length=40)
+
+
+class PolynomialConstraint(Contract):
+    id: Identifier
+    terms: tuple[Monomial, ...] = Field(min_length=1, max_length=128)
+    lower: Number | None = None
+    upper: Number | None = None
+    unit: str = Field(min_length=1, max_length=40)
+
+    @model_validator(mode="after")
+    def bounds(self):
+        if self.lower is None and self.upper is None:
+            raise ValueError("Constraint requires a bound")
+        if self.lower is not None and self.upper is not None and self.lower > self.upper:
+            raise ValueError("Invalid constraint interval")
+        return self
+
+
+class BoundPerturbation(Contract):
+    constraint: Identifier
+    side: Literal["lower", "upper", "equality"]
+    delta: Number
+
+    @model_validator(mode="after")
+    def nonzero(self):
+        if self.delta == 0:
+            raise ValueError("Perturbation must be nonzero")
+        return self
+
+
+class AdvancedAnalysis(Contract):
+    schema_version: Literal[1] = 1
+    additional_initials: tuple[dict[Identifier, Number], ...] = Field(default=(), max_length=7)
+    rhs_scan: tuple[BoundPerturbation, ...] = Field(default=(), max_length=4)
+
+
+class NonlinearProgram(Contract):
+    schema_version: Literal[1] = 1
+    family: Literal["polynomial_nlp"] = "polynomial_nlp"
+    description: str = Field(min_length=1, max_length=4000)
+    variables: tuple[DecisionVariable, ...] = Field(min_length=1, max_length=32)
+    initial: dict[Identifier, Number]
+    constraints: tuple[PolynomialConstraint, ...] = Field(default=(), max_length=64)
+    objective: PolynomialObjective
+    max_iterations: int = Field(default=100, ge=1, le=500)
+    max_evaluations: int = Field(default=2000, ge=1, le=10000)
+    time_limit_s: int = Field(default=30, ge=1, le=120)
+    analysis: AdvancedAnalysis | None = None
+
+    @model_validator(mode="after")
+    def validate_program(self):
+        ids = {v.id for v in self.variables}
+        if len(ids) != len(self.variables) or set(self.initial) != ids:
+            raise ValueError("Unique variable IDs and a complete initial point required")
+        if len({c.id for c in self.constraints}) != len(self.constraints):
+            raise ValueError("Duplicate constraint ID")
+        for variable in self.variables:
+            if (variable.kind != "continuous" or variable.lower == variable.upper
+                    or max(abs(variable.lower), abs(variable.upper)) > 1000):
+                raise ValueError("NLP requires continuous nonfixed variables with bounds within [-1000, 1000]")
+            if not variable.lower <= self.initial[variable.id] <= variable.upper:
+                raise ValueError("Initial point outside bounds")
+        if self.analysis is not None:
+            points = [self.initial, *self.analysis.additional_initials]
+            signatures = set()
+            for point in points:
+                if set(point) != ids or any(not v.lower <= point[v.id] <= v.upper for v in self.variables):
+                    raise ValueError("Each initial point must cover all variables within bounds")
+                key = tuple(sorted(point.items()))
+                if key in signatures:
+                    raise ValueError("Duplicate initial point")
+                signatures.add(key)
+            perturbations = {(p.constraint, p.side, p.delta) for p in self.analysis.rhs_scan}
+            if len(perturbations) != len(self.analysis.rhs_scan):
+                raise ValueError("Duplicate RHS perturbation")
+            rows = {row.id: row for row in self.constraints}
+            for perturbation in self.analysis.rhs_scan:
+                if perturbation.constraint not in rows:
+                    raise ValueError("Unknown perturbed constraint")
+                perturbed_constraint(rows[perturbation.constraint], perturbation)
+            count = len(points) * (1 + len(self.analysis.rhs_scan))
+            if self.max_evaluations < count:
+                raise ValueError("Callback budget must cover at least one callback per planned solve")
+        for expression in (self.objective, *self.constraints):
+            signatures = set()
+            for term in expression.terms:
+                signature = tuple(sorted((p.variable, p.exponent) for p in term.powers))
+                if signature in signatures or not {p.variable for p in term.powers} <= ids:
+                    raise ValueError("Duplicate monomial or unknown variable")
+                signatures.add(signature)
+        return self
+
+    def route(self):
+        return "scipy-slsqp-polynomial"
+
+    def canonical(self):
+        data = self.model_dump(mode="json")
+        if self.analysis is None:
+            # Preserve fingerprints of v1 single-start programs.
+            data.pop("analysis")
+        for group in ("variables", "constraints"):
+            data[group].sort(key=lambda row: row["id"])
+        for expression in (data["objective"], *data["constraints"]):
+            for term in expression["terms"]:
+                term["powers"].sort(key=lambda p: p["variable"])
+            expression["terms"].sort(key=lambda term: tuple(
+                (p["variable"], p["exponent"]) for p in term["powers"]))
+        return data
+
+    def sha256(self):
+        return fingerprint(self.canonical())
+
+
+
+def perturbed_constraint(row, perturbation):
+    data = row.model_dump(mode="json")
+    equality = row.lower is not None and row.lower == row.upper
+    if perturbation.side == "equality":
+        if not equality:
+            raise ValueError("Equality perturbation requires an equality row")
+        data["lower"] = data["upper"] = row.lower + perturbation.delta
+    else:
+        if equality or data[perturbation.side] is None:
+            raise ValueError("Perturbation requires an existing nonequality bound")
+        data[perturbation.side] += perturbation.delta
+    if data["lower"] == row.lower and data["upper"] == row.upper:
+        raise ValueError("RHS perturbation is below floating-point resolution")
+    return PolynomialConstraint.model_validate(data)
+
+
+def analysis_cases(spec):
+    """Reconstruct the authorized baseline and RHS variants from the frozen source."""
+    spec = NonlinearProgram.model_validate(spec)
+    data = spec.canonical()
+    data.pop("analysis", None)
+    base = NonlinearProgram.model_validate(data)
+    cases = [("baseline", None, base)]
+    if spec.analysis is not None:
+        for index, perturbation in enumerate(spec.analysis.rhs_scan, 1):
+            variant = base.canonical()
+            variant["constraints"] = [
+                perturbed_constraint(row, perturbation).model_dump(mode="json")
+                if row.id == perturbation.constraint else row.model_dump(mode="json")
+                for row in base.constraints]
+            cases.append((f"rhs-{index:02}", perturbation.model_dump(mode="json"),
+                          NonlinearProgram.model_validate(variant)))
+    return cases
