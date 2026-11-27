@@ -178,8 +178,30 @@ def _launch(root, folder, executable, config, *, cancelled=None):
     return state, reason
 
 
+def isolated_shell_source(shell, command):
+    """Generate trusted guest-only launcher. Never execute this on the host."""
+    if shell not in {"bash", "powershell"} or not isinstance(command, str) or not 1 <= len(command) <= 8000:
+        raise ValueError("Unsupported shell or command length")
+    if "\x00" in command:
+        raise ValueError("Invalid command")
+    return (
+        "import shutil, subprocess, sys\n"
+        f"shell = {shell!r}\n"
+        f"command = {command!r}\n"
+        "program = shutil.which('powershell.exe' if shell == 'powershell' else 'bash')\n"
+        "if not program:\n"
+        "    print('Requested shell unavailable inside scientific sandbox', file=sys.stderr)\n"
+        "    sys.exit(127)\n"
+        "args = [program, '-NoProfile', '-NonInteractive', '-Command', command] if shell == 'powershell' "
+        "else [program, '--noprofile', '--norc', '-c', command]\n"
+        "sys.exit(subprocess.run(args, stdin=subprocess.DEVNULL, check=False).returncode)\n"
+    ).encode("utf-8")
+
+
 def execute(root, entry, plugin=None, arguments=None, *, probe=None, plugin_ids=None,
-            run_id=None, cancelled=None):
+            run_id=None, cancelled=None, shell_command=None):
+    if shell_command is not None and probe is not None:
+        raise ValueError("Cannot combine API probe and shell command")
     ws.require_grant(root)
     ws.safe_parts(entry)
     if not entry.endswith(".py"):
@@ -208,6 +230,14 @@ def execute(root, entry, plugin=None, arguments=None, *, probe=None, plugin_ids=
         folder.mkdir()
         inputs = folder / "input"
         snapshot = ws.snapshot(root, inputs / "project")
+        if shell_command is not None:
+            source = isolated_shell_source(shell_command['shell'], shell_command['command'])
+            entry = "gridagent_shell_" + identifier + ".py"
+            path = ws.scoped(inputs / "project", entry)
+            if path.exists():
+                raise ValueError("Internal shell launcher filename collision")
+            path.write_bytes(source)
+            snapshot.append({"path": entry, "size_bytes": len(source), "sha256": ws.sha(source)})
         if probe is not None:
             from .scientific_library import probe_source
 
@@ -235,7 +265,7 @@ def execute(root, entry, plugin=None, arguments=None, *, probe=None, plugin_ids=
             "move /y C:\\GridAgentOutput\\exit.tmp C:\\GridAgentOutput\\exit-code.txt > NUL\r\n",
             encoding="ascii")
         plan = {"protocol": PROTOCOL, "run_id": identifier, "entry": entry, "inputs": snapshot,
-                "arguments": arguments, "api_probe": probe, "plugin": ids[0] if len(ids) == 1 else None,
+                "arguments": arguments, "api_probe": probe, "shell": shell_command["shell"] if shell_command else None, "plugin": ids[0] if len(ids) == 1 else None,
                 "plugin_ids": list(ids),
                 "plugin_versions": plugins.installed_metadata(ids[0]).get("versions", {}) if len(ids) == 1 else {},
                 "environment": environment, "timeout_seconds": TIMEOUT}
