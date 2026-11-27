@@ -195,7 +195,7 @@ def isolated_shell_source(shell, command):
         "args = [program, '-NoProfile', '-NonInteractive', '-Command', command] if shell == 'powershell' "
         "else [program, '--noprofile', '--norc', '-c', command]\n"
         "sys.exit(subprocess.run(args, stdin=subprocess.DEVNULL, check=False).returncode)\n"
-    ).encode("utf-8")
+    ).encode()
 
 
 def execute(root, entry, plugin=None, arguments=None, *, probe=None, plugin_ids=None,

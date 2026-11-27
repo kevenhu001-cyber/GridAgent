@@ -120,7 +120,9 @@ def run_worker(root, job_id, *, execute=None):
             return
         request = _read(folder / "request.json")
         _save(folder, "state.json", {"job_id": job_id, "status": "running"})
-        cancelled = lambda: (folder / "cancel-requested").exists() or not ws.enabled(root)  # noqa: E731
+        def cancelled():
+            return (folder / "cancel-requested").exists() or not ws.enabled(root)
+
         try:
             if cancelled():
                 result = {"status": "cancelled", "reason": "Cancelled before execution"}
