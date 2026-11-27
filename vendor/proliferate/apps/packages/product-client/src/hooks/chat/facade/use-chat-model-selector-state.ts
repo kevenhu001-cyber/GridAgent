@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from "react";
+import { getPiSessionSelection } from "#product/lib/access/pi/product-session";
 import { usePiModelSelector } from "#product/hooks/chat/derived/use-pi-model-selector";
 import { CHAT_MODEL_SELECTOR_LABELS } from "#product/copy/chat/chat-copy";
 import { getProviderDisplayName } from "#product/lib/domain/agents/provider-display";
@@ -226,11 +227,22 @@ export function useChatModelSelectorState(options?: {
     selectorIsLoading,
   ]);
 
-  if (native.mode !== "legacy") return {
-    ...native.props,
-    launchControls: [],
-    launchAgentKind: null,
-  };
+  if (native.mode !== "legacy") {
+    const pinned = scopedActiveSessionId ? getPiSessionSelection(scopedActiveSessionId) : null;
+    const pinnedRow = pinned ? native.props.groups.flatMap(g=>g.models).find(m=>m.kind===pinned.provider && m.modelId===pinned.modelId) : null;
+    return {
+      ...native.props,
+      ...(pinned ? {
+        currentModel:{kind:pinned.provider,displayName:pinnedRow?.displayName ?? pinned.modelId,pendingState:null},
+        groups:native.props.groups.map(group=>({...group,models:group.models.map(model=>({...model,
+          isSelected:model.kind===pinned.provider && model.modelId===pinned.modelId,
+          isUnsupported:model.kind!==pinned.provider || model.modelId!==pinned.modelId || model.isUnsupported}))})),
+        onSelect:()=>{},
+      } : {}),
+      launchControls: [],
+      launchAgentKind: null,
+    };
+  }
 
   return {
     connectionState: resolvedConnectionState,

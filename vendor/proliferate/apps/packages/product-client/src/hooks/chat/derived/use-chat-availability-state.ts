@@ -1,5 +1,7 @@
 import { useMemo } from "react";
-import { usePiMode } from "#product/hooks/chat/derived/use-pi-model-selector";
+import { usePiModelSelector } from "#product/hooks/chat/derived/use-pi-model-selector";
+import { canSendPiSession, hasOpenPiSession } from "#product/lib/access/pi/product-session";
+import { useSessionDirectoryStore } from "#product/stores/sessions/session-directory-store";
 import { selectPrimaryPendingInteraction } from "@anyharness/sdk";
 import { useWorkspaces } from "#product/hooks/workspaces/cache/use-workspaces";
 import { useSelectedCloudRuntimeState } from "#product/hooks/workspaces/facade/use-selected-cloud-runtime-state";
@@ -34,7 +36,8 @@ export function useChatAvailabilityState(options?: {
     disabledReason: string | null;
   };
 }): ChatAvailabilityState {
-  const {mode: piMode} = usePiMode();
+  const native = usePiModelSelector();
+  const piMode = native.mode;
   const selectedWorkspaceId = useSessionSelectionStore((state) => state.selectedWorkspaceId);
   const pendingWorkspaceEntry = useAttendedPendingWorkspaceEntry();
   const connectionState = useHarnessConnectionStore((state) => state.connectionState);
@@ -45,6 +48,7 @@ export function useChatAvailabilityState(options?: {
   const activeSessionId = options && "activeSessionId" in options
     ? options.activeSessionId ?? null
     : storedActiveSessionId;
+  const activeDirectory = useSessionDirectoryStore(state=>activeSessionId ? state.entriesById[activeSessionId] : null);
   const primaryPendingInteractionKind = useSessionTranscriptStore((state) => {
     const transcript = activeSessionId
       ? state.entriesById[activeSessionId]?.transcript ?? null
@@ -106,9 +110,17 @@ export function useChatAvailabilityState(options?: {
     workspaceSessionRecovery?.sessionId,
     workspaceSessionRecovery?.reason,
   ]);
-  // Do not route a Pi selection into an old AnyHarness prompt or session.
-  // Keep the draft editable and the original model picker available.
-  if (piMode !== "legacy") return {...availability, isDisabled:false, disabledReason:null,
-    sendBlockedReason:"Native Pi session dispatch is not connected yet.", areRuntimeControlsDisabled: piMode !== "native"};
+  if (piMode !== "legacy") {
+    const reason = piMode !== "native" ? "Native Pi runtime is unavailable or starting."
+      : !selectedLocalWorkspace || pendingWorkspaceEntry ? "Select an existing local workspace for Pi."
+      : isWorkspaceDirectoryMissing(selectedLocalWorkspace) ? missingCheckoutCopy(selectedLocalWorkspace.kind).sendBlockedReason
+      : activeSessionId ? (activeDirectory?.agentKind==="pi" && canSendPiSession(activeSessionId,selectedLocalWorkspace.id)
+        ? null : "This session is read-only. Start a native Pi chat.")
+      : hasOpenPiSession() ? "Close the current native Pi session before starting another."
+      : !native.selection ? "Choose a model with a configured API key."
+      : null;
+    return {...availability,isDisabled:false,disabledReason:null,sendBlockedReason:reason,
+      areRuntimeControlsDisabled:piMode!=="native"};
+  }
   return availability;
 }

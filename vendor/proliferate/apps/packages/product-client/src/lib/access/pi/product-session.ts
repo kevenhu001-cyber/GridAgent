@@ -12,7 +12,7 @@ import type { PromptOutboxEntry } from "#product/domain/sessions/intents/session
 
 export const PI_AGENT_KIND = "pi";
 type Binding = { clientId: string; workspaceId: string; hostId: string;
-  controller: PiSessionController; adapter: PiEventAdapter; busy: boolean; failed: boolean };
+  controller: PiSessionController; adapter: PiEventAdapter; selection: PiModelSelection; busy: boolean; failed: boolean };
 let binding: Binding | null = null;
 let opening = false;
 
@@ -55,7 +55,7 @@ function markInterrupted(current: Binding) {
 
 /** Explicitly admitted local workspace and model. No restored session may
  * open a new worker implicitly. Initial host supports one live session.
- * Called by the future workspace/session materializer, not a new UI.
+ * Called by the retained workspace composer workflow, not a new UI.
  */
 export async function openPiProductSession(input:{bridge:DesktopPiBridge;workspaceId:string;workspacePath:string;selection:PiModelSelection}):Promise<string> {
   if (binding || opening) throw new Error("A native Pi session is already open");
@@ -71,7 +71,7 @@ export async function openPiProductSession(input:{bridge:DesktopPiBridge;workspa
       materializedSessionId:hostId,modelId:input.selection.modelId,sessionRelationship:{kind:"root"}});
     putSessionRecord({...record,status:"idle",streamConnectionState:"open",transcriptHydrated:true});
     binding={clientId:hostId,workspaceId:input.workspaceId,hostId,controller,
-      adapter:new PiEventAdapter(hostId),busy:false,failed:false};
+      adapter:new PiEventAdapter(hostId),selection:{...input.selection},busy:false,failed:false};
     return hostId;
   } catch (error) {
     try {await controller.close();} catch { /* native admission uncertain; no retry */ }
@@ -140,3 +140,14 @@ export async function closePiProductSession(sessionId:string):Promise<void> {
   patchSessionRecord(sessionId,{status:"closed",streamConnectionState:"ended",
     executionSummary:{phase:"closed",hasLiveHandle:false,pendingInteractions:[],updatedAt:new Date().toISOString()}});
 }
+
+// Nonsecret transport metadata; never store another transcript.
+export function getPiSessionSelection(sessionId:string): PiModelSelection | null {
+  return binding?.clientId===sessionId ? {...binding.selection} : null;
+}
+export function canSendPiSession(sessionId:string,workspaceId:string):boolean {
+  return binding?.clientId===sessionId && binding.workspaceId===workspaceId && !binding.failed &&
+    !!getSessionRecord(sessionId) && ["ready","sending","running","cancelling"].includes(binding.controller.getSnapshot().status);
+}
+export function hasOpenPiSession():boolean { return binding!==null || opening; }
+export function ownsPiSession(sessionId:string):boolean {return binding?.clientId===sessionId;}

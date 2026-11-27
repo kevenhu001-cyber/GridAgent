@@ -72,6 +72,8 @@ export function useSessionHistoryHydration() {
       if (!slot) {
         return false;
       }
+      // Native history remains in the existing transcript store until durable replay is implemented.
+      if (slot.agentKind==="pi") return slot.transcriptHydrated;
 
       const afterSeq = options?.replace ? undefined : options?.afterSeq;
       const beforeSeq = options?.replace || afterSeq != null ? undefined : options?.beforeSeq;

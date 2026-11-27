@@ -80,6 +80,7 @@ export function useSessionCreationActions() {
   const createSessionWithResolvedConfig = useCallback(async function createWithResolvedConfig(
     options: CreateSessionWithResolvedConfigOptions,
   ): Promise<string> {
+    if (desktop?.pi && await desktop.pi.mode()) throw new Error("Use the native Pi workspace composer to start a session.");
     const current = useSessionSelectionStore.getState();
     const workspaceId = options.workspaceId ?? current.selectedWorkspaceId;
     if (!workspaceId) {
@@ -404,6 +405,7 @@ export function useSessionCreationActions() {
     invalidateWorkspaceCollectionsForRuntime,
     runtimeUrl,
     localRuntime,
+    desktop?.pi,
     cloudClient,
     promptSession,
     removeWorkspaceSessionRecord,

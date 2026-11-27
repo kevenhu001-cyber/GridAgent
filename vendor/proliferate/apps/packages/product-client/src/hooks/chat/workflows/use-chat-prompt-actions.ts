@@ -1,4 +1,7 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
+import { usePiModelSelector, usePiMode } from "#product/hooks/chat/derived/use-pi-model-selector";
+import { useWorkspaces } from "#product/hooks/workspaces/cache/use-workspaces";
+import { submitPiWorkspacePrompt } from "#product/lib/access/pi/workspace-submit";
 import { isWorkspaceDirectoryMissingError } from "#product/lib/domain/sessions/creation/create-session-error";
 import type { ContentPart, PromptInputBlock } from "@anyharness/sdk";
 import { useProductTelemetry } from "#product/hooks/telemetry/facade/use-product-telemetry";
@@ -53,6 +56,10 @@ import { CHAT_PROMPT_FEEDBACK } from "#product/copy/chat/chat-copy";
 
 export function useChatPromptActions(options?: { forceNewSession?: boolean }) {
   const forceNewSession = options?.forceNewSession ?? false;
+  const native = usePiModelSelector();
+  const {pi} = usePiMode();
+  const {data: workspaceCollections} = useWorkspaces();
+  const nativeSubmitting = useRef(false);
   const showToast = useToastStore((store) => store.show);
   const showErrorToast = useToastStore((store) => store.showError);
   const setWorkspaceArrivalEvent = useSessionSelectionStore((state) => state.setWorkspaceArrivalEvent);
@@ -150,6 +157,42 @@ export function useChatPromptActions(options?: { forceNewSession?: boolean }) {
       || sendBlockedReason
     ) {
       return false;
+    }
+
+    if (native.mode !== "legacy") {
+      if (nativeSubmitting.current || native.mode !== "native" || !pi || !selectedWorkspaceId) return false;
+      const workspace = workspaceCollections?.localWorkspaces.find(w=>w.id===selectedWorkspaceId);
+      if (!workspace) return false;
+      const selection = useSessionSelectionStore.getState();
+      const nonce = selection.workspaceSelectionNonce;
+      const version = selection.activeSessionVersion;
+      const isCurrent = () => {
+        const now=useSessionSelectionStore.getState();
+        return now.selectedWorkspaceId===workspace.id && now.workspaceSelectionNonce===nonce && now.activeSessionVersion===version;
+      };
+      nativeSubmitting.current=true;
+      try {
+        await submitPiWorkspacePrompt({
+          bridge:pi,workspace,selection:native.selection,
+          activeSessionId:!forceNewSession && hasSlot ? activeSessionId : null,
+          text,blocks,attachmentSnapshots,promptId:createPromptId(),isCurrent,
+        },{
+          activate:sessionId=>{
+            activateSession(sessionId);
+            writeChatShellIntentForSession({workspaceId:workspace.id,sessionId});
+          },
+          enqueue: async (sessionId,promptId)=>promptSession({sessionId,workspaceId:workspace.id,text,blocks,
+            attachmentSnapshots,optimisticContentParts:input?.optimisticContentParts,promptId,
+            measurementOperationId:input?.measurementOperationId}),
+        });
+        if (draftKey && !preserveDraft &&
+          (useChatInputStore.getState().draftByWorkspaceId[draftKey] ?? EMPTY_CHAT_DRAFT)===currentDraft) clearDraft(draftKey);
+        input?.onSubmitted?.();
+        return true;
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : "Native Pi could not start. Your draft is preserved.");
+        return false;
+      } finally {nativeSubmitting.current=false;}
     }
 
     const launchSelection = newSessionLaunchSelection;
@@ -344,6 +387,11 @@ export function useChatPromptActions(options?: { forceNewSession?: boolean }) {
     }
   }, [
     activeSessionId,
+    activateSession,
+    native.mode,
+    native.selection,
+    pi,
+    workspaceCollections,
     clearDraft,
     createSessionWithResolvedConfig,
     findOrCreateSession,

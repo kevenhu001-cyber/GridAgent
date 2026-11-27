@@ -1,3 +1,4 @@
+import { closePiProductSession, ownsPiSession } from "#product/lib/access/pi/product-session";
 import { useCallback } from "react";
 import { AnyHarnessError } from "@anyharness/sdk";
 import { useProductHost } from "@proliferate/product-client/host/ProductHostProvider";
@@ -36,6 +37,20 @@ export function useSessionDismissActions() {
     const closingSlot = getSessionRecord(sessionId);
     const workspaceId = closingSlot?.workspaceId ?? state.selectedWorkspaceId;
 
+    if (closingSlot?.agentKind==="pi") {
+      try {
+        if (ownsPiSession(sessionId)) await closePiProductSession(sessionId);
+      } catch {
+        showToast("Native Pi is still running or its outcome is uncertain. Cancel or inspect the current work first.");
+        return false;
+      }
+      cleanupDismissedSession(sessionId,workspaceId,options);
+      return true;
+    }
+    if (host.desktop?.pi) {
+      try {if (await host.desktop.pi.mode()) {showToast("External Agent dismissal is disabled in native Pi mode.");return false;}}
+      catch {return false;}
+    }
     const blockedReason = getWorkspaceRuntimeBlockReason(workspaceId);
     if (blockedReason) {
       showToast(blockedReason);
@@ -67,6 +82,7 @@ export function useSessionDismissActions() {
     getWorkspaceRuntimeBlockReason,
     showToast,
     cloudClient,
+    host.desktop?.pi,
   ]);
 
   return { dismissSession };
