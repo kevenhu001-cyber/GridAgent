@@ -24,9 +24,9 @@
       </Grid>
       <Grid Grid.Row="1" Margin="0,8">
        <ListView x:Name="Messages" Loaded="ConversationLoaded" SelectionMode="None" IsItemClickEnabled="False" IsTabStop="False" HorizontalContentAlignment="Stretch" AutomationProperties.Name="Conversation"
-          ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollMode="Disabled">
+          ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollMode="Disabled" ItemContainerStyle="{StaticResource ConversationItemStyle}">
         <ListView.ItemsPanel><ItemsPanelTemplate><ItemsStackPanel ItemsUpdatingScrollMode="KeepItemsInView"/></ItemsPanelTemplate></ListView.ItemsPanel>
-        <ListView.ItemContainerStyle><Style TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Padding" Value="0"/><Setter Property="MinHeight" Value="0"/></Style></ListView.ItemContainerStyle>
+        
         <ListView.ItemTemplate><DataTemplate><local:ConversationMessageView/></DataTemplate></ListView.ItemTemplate>
        </ListView>
        <Button x:Name="JumpToLatest" Visibility="Collapsed" Content="Jump to latest" Click="JumpToLatestClick" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,8" AutomationProperties.Name="Jump to latest message"/>
@@ -42,7 +42,7 @@
        <StackPanel Spacing="8">
         <TextBox x:Name="Prompt" Background="Transparent" BorderThickness="0" PlaceholderText="Ask anything about your engineering problem…" MinHeight="48" MaxHeight="160" AcceptsReturn="True" TextWrapping="Wrap" AutomationProperties.Name="Research question" KeyDown="PromptKeyDown" TextChanged="PromptChanged"/>
         <Grid ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-         <ComboBox x:Name="Mode" SelectedIndex="0" AutomationProperties.Name="Execution mode" HorizontalAlignment="Left" Background="Transparent" BorderThickness="0" FontSize="13"><ComboBoxItem Content="Assistant"/><ComboBoxItem Content="Verified research"/><ComboBoxItem Content="Multi-agent research"/></ComboBox>
+         <ComboBox x:Name="Mode" SelectedIndex="0" AutomationProperties.Name="Execution mode" MaxWidth="220" HorizontalAlignment="Left" Background="Transparent" BorderThickness="0" FontSize="13"><ComboBoxItem Content="Assistant"/><ComboBoxItem Content="Verified research"/><ComboBoxItem Content="Multi-agent research"/></ComboBox>
          <Button x:Name="SendButton" Grid.Column="1" IsEnabled="False" Click="Send" Style="{StaticResource ConversationSendStyle}" AutomationProperties.Name="Send message" ToolTipService.ToolTip="Send (Ctrl+Enter)"><FontIcon Glyph="&#xE74A;" FontSize="16"/></Button>
         </Grid>
        </StackPanel>
