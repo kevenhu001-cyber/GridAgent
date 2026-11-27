@@ -25,7 +25,7 @@ This is a local-first research application, not a certified engineering system, 
 - **Professional libraries:** ANDES, pandapower, NumPy/SciPy, SymPy, HiGHS and Python Control as core capabilities; on-demand PyPSA, OpenDSS, PyBaMM, CVXPY, Pyomo, CasADi and other supported plugins. Expand access to native APIs, not only narrow wrappers.
 - **Knowledge:** version-specific official API documentation, signatures, examples, units and methods, available to the LLM on demand.
 - **Evidence:** independent mathematical/physical checks when supported, numerical provenance, logs and reusable artifacts. Solver success does not establish full physical validity.
-- **Presentation:** Proliferate Tauri/React and shared Python scientific core via MCP, with charts, topology, equations, code and artifact views. Legacy WinUI remains a rollback client. UI must not own scientific decisions.
+- **Presentation:** Proliferate Tauri/React and shared Python scientific core via MCP, with charts, topology, equations, code and artifact views. UI must not own scientific decisions.
 - **Optional research tools:** typed IR, fixed workflow benchmarks, optimization, diagnostic rules, retrieval-based policies and lightweight learned rankers. LLM may invoke useful subroutines; none controls the default research path.
 
 ## 3. Implementation priorities and acceptance gates
@@ -51,7 +51,7 @@ The normal workflow is a single LLM deciding what to do next after actual tool f
 
 ## 5. Transition from existing code
 
-- Retain plugin management, numerical backends, model revisions, journals, independent verification and artifacts. Retain LangGraph and WinUI for existing clients during the migration; the Proliferate-based client uses its external harness as the sole LLM loop.
+- Retain plugin management, numerical backends, model revisions, journals, independent verification and artifacts. Retain LangGraph for TUI and CLI; the Proliferate-based client uses its external harness as the sole LLM loop. Remove the retired WinUI and WPF clients and their build infrastructure.
 - Generalize existing sandbox code beyond the special AC reference workflow; use secure implementation and fail closed on unsupported platforms. Do not equate dependency/process isolation with OS-level isolation.
 - Review existing specialist policies as optional tools, isolate benchmarks from the primary chat flow, and avoid adding new mandatory controllers. Do not delete verified implementation before migration and tests.
 - Re-review open PRs #6–#8 under the new direction. Keep generic workbench, reference solvers and useful research artifacts; do not merge expert-system behavior as default. These are review instructions, not assertions that PRs have merged.
