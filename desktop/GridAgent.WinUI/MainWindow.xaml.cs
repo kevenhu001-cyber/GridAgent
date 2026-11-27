@@ -30,7 +30,8 @@ public partial class MainWindow : Window
     private bool _cancellingResearch;
     private JsonElement _pluginCatalog;
     private JsonElement _topology;
-    private sealed record Entry(string Id, string Label, string? Info = null);
+    private JsonElement _knowledgePage;
+    private sealed record Entry(string Id, string Label, string? Info = null, string? Summary = null);
 
     private bool _layoutReady;
     private bool _launchInitialized;
@@ -94,6 +95,7 @@ public partial class MainWindow : Window
             page.Visibility = tag == key ? Visibility.Visible : Visibility.Collapsed;
         if (!_initialized) return;
         if (tag == "plugins" && _pluginCatalog.ValueKind != JsonValueKind.Array && !_busy) PluginCenter(this, new RoutedEventArgs());
+        else if (tag == "knowledge" && !_busy) await Execute(new { action = "knowledge-packs" });
         else await EnsureWorkspaceIndex();
     }
     private async void NavigationInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)
@@ -234,6 +236,9 @@ public partial class MainWindow : Window
                 _workspaceIndexLoaded = false;
                 _pluginCatalog = default;
                 PluginRows.Children.Clear();
+                KnowledgePacks.ItemsSource = null;
+                KnowledgeEmpty.Visibility = Visibility.Visible;
+                _knowledgePage = default;
                 _boundWorkspace = root;
                 _session = null;
                 SetSessions(new List<Entry>());
@@ -462,7 +467,8 @@ public partial class MainWindow : Window
     }
     private void ModelRevisionDiff(object sender, RoutedEventArgs e)
     {
-        if (!WorkspaceChanged() && ModelRevisions.SelectedItem is Entry row && row.Info != null) { ShowChat(); Append(row.Info); }
+        if (!WorkspaceChanged() && ModelRevisions.SelectedItem is Entry row && row.Info != null)
+            _ = new ContentDialog { XamlRoot = Root.XamlRoot, Title = row.Label, Content = Text(row.Info), CloseButtonText = "Close" }.ShowAsync();
     }
     private async void RunModelRevision(object sender, RoutedEventArgs e)
     {
@@ -552,9 +558,46 @@ public partial class MainWindow : Window
     {
         if (_busy) return;
         var picker = await PickFile(".json");
-        if (picker != null) await Local("import-knowledge", picker);
+        if (picker != null)
+        {
+            await Execute(new { action = "local", command = "import-knowledge", args = new[] { picker } });
+            if (!_operationError) await Execute(new { action = "knowledge-packs" });
+        }
     }
-    private async void Knowledge(object sender, RoutedEventArgs e) => await Local("knowledge");
+    private async void Knowledge(object sender, RoutedEventArgs e) => await Execute(new { action = "knowledge-packs" });
+    private async void OpenKnowledgePack(object sender, RoutedEventArgs e)
+    {
+        if (_busy || WorkspaceChanged() || KnowledgePacks.SelectedItem is not Entry pack) return;
+        var workspace = _boundWorkspace;
+        var offset = 0;
+        while (!_busy && !WorkspaceChanged() && workspace == _boundWorkspace)
+        {
+            _knowledgePage = default;
+            await Execute(new { action = "knowledge-pack", id = pack.Id, offset });
+            if (_knowledgePage.ValueKind != JsonValueKind.Object) return;
+            var page = _knowledgePage;
+            var content = new StackPanel { Spacing = 16 };
+            int total = page.GetProperty("total").GetInt32();
+            content.Children.Add(ConversationMessageView.Metadata($"References {offset+1}–{Math.Min(offset+10,total)} of {total} · imported, not independently verified"));
+            foreach (var reference in page.GetProperty("entries").EnumerateArray())
+            {
+                var section = new StackPanel { Spacing = 4 };
+                var name = Text(reference.GetProperty("function").GetString()!, 15);
+                name.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+                section.Children.Add(name);
+                section.Children.Add(Text(reference.GetProperty("description").GetString()!, 14));
+                section.Children.Add(ConversationMessageView.Metadata(reference.GetProperty("source").GetString() + " · " + reference.GetProperty("version").GetString()));
+                content.Children.Add(section);
+            }
+            var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = pack.Label, CloseButtonText = "Close",
+                Content = new ScrollViewer { Content = content, MaxHeight = 440, VerticalScrollBarVisibility = ScrollBarVisibility.Auto },
+                PrimaryButtonText = offset + 10 < total ? "Next" : "", SecondaryButtonText = offset > 0 ? "Previous" : "" };
+            var choice = await dialog.ShowAsync();
+            if (choice == ContentDialogResult.Primary) offset += 10;
+            else if (choice == ContentDialogResult.Secondary) offset = Math.Max(0, offset-10);
+            else return;
+        }
+    }
     private async void PaperMitigation(object sender, RoutedEventArgs e)
     {
         if (_busy) return;
