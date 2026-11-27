@@ -60,9 +60,9 @@ public sealed class ConversationMessageView : UserControl
             var panel = new StackPanel { Spacing = 8 };
             panel.Children.Add(new TextBlock { Text = chart.Title, FontSize = 18,
                 FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
-            panel.Children.Add(Plain($"{chart.XLabel} · {chart.YLabel} · {chart.SeriesCount} series · {chart.Points} samples", 13));
+            panel.Children.Add(Plain(chart.ViewKind == "chart" ? $"{chart.XLabel} · {chart.YLabel} · {chart.SeriesCount} series · {chart.Points} samples" : $"{chart.ViewKind} · {chart.Summary}", 13));
             panel.Children.Add(Plain("Unverified script output · Run " + chart.RunId[..8], 12));
-            var open = new Button { Content = "Open interactive chart", HorizontalAlignment = HorizontalAlignment.Left };
+            var open = new Button { Content = "Open scientific view", HorizontalAlignment = HorizontalAlignment.Left };
             open.Click += (_, _) => message.OpenScientificChart?.Invoke(chart);
             panel.Children.Add(open);
             layout.Children.Add(new Border { Style = (Style)Application.Current.Resources["EngineeringCardStyle"],
