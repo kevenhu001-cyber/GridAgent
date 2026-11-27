@@ -129,7 +129,7 @@ def dispatch(root: Path, method: str, params: dict, *, allow_tasks=False):
     if method == "scientific.runs":
         return ws.list_scientific_runs(root, **args)
     if method == "scientific.artifact":
-        return ws.read_artifact(root, **args)
+        return ws.read_artifact(root, args.pop('run_id'), **args)
     if method == "solver.table":
         from .native_results import read_table
 
