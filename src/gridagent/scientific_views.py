@@ -2,6 +2,7 @@
 import json
 import math
 import re
+from itertools import pairwise
 
 from . import scientific_workspace as ws
 from .scientific_visualization import MAX_BYTES, _label, _number, _unique_object
@@ -21,7 +22,7 @@ def _axis(values, maximum):
     axis = [_number(item) for item in values]
     step = (axis[-1] - axis[0]) / (len(axis) - 1)
     if step <= 0 or any(b <= a or not math.isclose(b-a, step, rel_tol=1e-6)
-                        for a, b in zip(axis, axis[1:])):
+                        for a, b in pairwise(axis)):
         raise ValueError("Grid axes must be strictly increasing and evenly spaced")
     return axis
 
