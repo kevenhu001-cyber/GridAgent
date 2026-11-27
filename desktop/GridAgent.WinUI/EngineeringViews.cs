@@ -50,7 +50,7 @@ public partial class MainWindow
         PluginRows.Children.Clear();
         if (_pluginCatalog.ValueKind != JsonValueKind.Array)
         {
-            PluginRows.Children.Add(ConversationMessageView.Metadata("Loading local plugin catalog…"));
+            PluginRows.Children.Add(ConversationMessageView.Metadata(_operationError ? "Could not load plugins. Use Refresh catalog to try again." : "Loading local plugin catalog…"));
             return;
         }
         var filter = PluginSearch?.Text.Trim() ?? "";
