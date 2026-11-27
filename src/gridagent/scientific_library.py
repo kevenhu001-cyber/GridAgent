@@ -28,7 +28,7 @@ def selected_plugins(plugin=None, plugin_ids=None):
         raise ValueError("Select at most four managed plugins")
     for item in ids:
         if not isinstance(item, str):
-            raise ValueError("Plugin IDs must be strings")
+            raise ValueError("Plugin IDs must be strings")  # noqa: TRY004 - public invalid-operation contract
         plugins.spec(item)
     if len(ids) != len(set(ids)):
         raise ValueError("Duplicate managed plugin ID")
