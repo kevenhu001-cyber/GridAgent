@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class Reference(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["function", "option", "concept", "troubleshooting"]
+    backend: str | None = Field(default=None, min_length=1, max_length=120, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
     function: str = Field(min_length=1, max_length=100)
     option: str | None = Field(default=None, max_length=100)
     description: str = Field(min_length=1, max_length=1800)
@@ -38,7 +39,12 @@ def import_pack(root, path):
     if path.suffix.lower() != ".json" or path.stat().st_size > 4*1024*1024:
         raise ValueError("Select a reference pack JSON of at most 4 MiB")
     data = ReferencePack.model_validate_json(path.read_bytes())
-    payload = json.dumps(data.model_dump(), ensure_ascii=False, sort_keys=True)
+    serialized = data.model_dump()
+    # Preserve content IDs of existing reference packs without native backend tags.
+    for entry in serialized["entries"]:
+        if entry["backend"] is None:
+            entry.pop("backend")
+    payload = json.dumps(serialized, ensure_ascii=False, sort_keys=True)
     identifier = hashlib.sha256(payload.encode()).hexdigest()
     with closing(connect(root)) as db, db:
         db.execute("INSERT OR IGNORE INTO packs VALUES (?, ?, ?)", (identifier, data.title, payload))
