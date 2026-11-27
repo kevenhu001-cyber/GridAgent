@@ -62,3 +62,13 @@ test("foreign event fails closed", async () => {
   await assert.rejects(() => controller.drainTurn());
   assert.equal(controller.getSnapshot().status, "failed");
 });
+
+test("explicit provider and model are forwarded to the trusted native host", async () => {
+  const {controller,bridge}=fixture();
+  const selection={provider:"openai",modelId:"selected-model"};
+  let args;
+  bridge.open=async (...received)=>{args=received;return "session";};
+  await controller.open("/project",selection);
+  assert.deepEqual(args,["/project",selection]);
+  await controller.close();
+});

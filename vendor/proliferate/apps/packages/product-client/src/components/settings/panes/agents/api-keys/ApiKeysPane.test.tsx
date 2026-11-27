@@ -2,6 +2,7 @@
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ProliferateClientError } from "@proliferate/cloud-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiKeysPane } from "#product/components/settings/panes/agents/api-keys/ApiKeysPane";
@@ -409,7 +410,8 @@ describe("ApiKeysPane native credential adapter", () => {
       save: vi.fn(async () => {}),
       remove: vi.fn(async () => {}),
     };
-    render(<ApiKeysPane local={bridge} />);
+    const client = new QueryClient({defaultOptions:{queries:{retry:false}}});
+    render(<QueryClientProvider client={client}><ApiKeysPane local={bridge} /></QueryClientProvider>);
     await screen.findByText("OpenAI");
     expect(keysEnabled).not.toHaveBeenCalled();
     const user = userEvent.setup();
@@ -417,7 +419,7 @@ describe("ApiKeysPane native credential adapter", () => {
     await user.click(screen.getByRole("button",{name:"creator-submit"}));
     await waitFor(()=>expect(bridge.save).toHaveBeenCalledWith("openai","sk-ant-123"));
     expect(createMutate).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button",{name:"Remove"}));
+    await user.click(await screen.findByRole("button",{name:"Remove"}));
     await user.click(screen.getByRole("button",{name:"Remove key"}));
     await waitFor(()=>expect(bridge.remove).toHaveBeenCalledWith("openai"));
     expect(revokeMutate).not.toHaveBeenCalled();
