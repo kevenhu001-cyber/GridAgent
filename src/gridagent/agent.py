@@ -28,10 +28,10 @@ from .advanced_programs import (
     TrackingQP,
     TransmissionLine,
 )
+from .context_projection import project_context
 from .domain import CASES, CaseName, DeviceEdit, FaultRequest, GovernorEigenRequest, ScenarioRequest
 from .extension_program import Battery, ControlResponse, Feeder, Solar
 from .extra_programs import Commitment, EconomicDispatch, EquivalentCell, Wind
-from .context_projection import project_context
 from .knowledge import QueryPlan, contracts, workspace_knowledge
 from .model_runtime import ModelScheduler, ScheduledModel
 from .native_program import DispatchProgram, PPProgram
