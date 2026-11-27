@@ -53,8 +53,7 @@ No external executable extension discovery is enabled.
 The pinned SDK model registry supplies OpenAI, Anthropic and Google chat
 catalog metadata; `pi_list_models` runs a bounded credential-free discovery
 process. The existing model picker contract is projected by
-`buildPiModelSelector`; the production session/model selection flow is not yet
-wired. The original API Keys settings pane, modal, rows and confirmation UI
+`buildPiModelSelector`; the original workspace composer model-selector facade now consumes this data in opt-in native mode, using the existing user-preference store and a reserved nonsecret map entry. Add provider / Settings route to the existing API Keys page. Explicit native session open accepts the selected provider/model and requires its stored credential. The production session dispatcher and Home catalog are not wired; workspace composer send and Home launch refuse in native/unknown mode rather than route through old Agent paths. The original API Keys settings pane, modal, rows and confirmation UI
 are shared with an opt-in local credential data source in Pi development mode.
 This source stores one key per supported provider using the existing serialized
 keyring worker with Windows/macOS native features. The renderer can only list

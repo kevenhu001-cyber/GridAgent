@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { PI_CREDENTIAL_STATUS_QUERY_KEY } from "#product/hooks/chat/derived/use-pi-model-selector";
 import type { DesktopPiCredentialBridge, PiCredentialStatus, PiProvider } from "@proliferate/product-client/host/desktop-bridge";
 import { ProliferateClientError } from "@proliferate/cloud-sdk";
 import {
@@ -86,6 +88,7 @@ function providerForEnv(name: string): PiProvider | undefined {
 }
 
 function NativeApiKeysPane({bridge}: {bridge: DesktopPiCredentialBridge}) {
+  const queryClient = useQueryClient();
   const showToast = useToastStore(state => state.show);
   const [records, setRecords] = useState<PiCredentialStatus[]>([]);
   const [loading, setLoading] = useState(true);
@@ -120,6 +123,7 @@ function NativeApiKeysPane({bridge}: {bridge: DesktopPiCredentialBridge}) {
     setPending(kind);
     try {
       await operation();
+      void queryClient.invalidateQueries({queryKey:PI_CREDENTIAL_STATUS_QUERY_KEY});
       done();
       showToast(kind === "save" ? "API key saved locally." : "Local API key removed.", "info");
       await refresh();

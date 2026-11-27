@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { usePiMode } from "#product/hooks/chat/derived/use-pi-model-selector";
 import { selectPrimaryPendingInteraction } from "@anyharness/sdk";
 import { useWorkspaces } from "#product/hooks/workspaces/cache/use-workspaces";
 import { useSelectedCloudRuntimeState } from "#product/hooks/workspaces/facade/use-selected-cloud-runtime-state";
@@ -33,6 +34,7 @@ export function useChatAvailabilityState(options?: {
     disabledReason: string | null;
   };
 }): ChatAvailabilityState {
+  const {mode: piMode} = usePiMode();
   const selectedWorkspaceId = useSessionSelectionStore((state) => state.selectedWorkspaceId);
   const pendingWorkspaceEntry = useAttendedPendingWorkspaceEntry();
   const connectionState = useHarnessConnectionStore((state) => state.connectionState);
@@ -104,5 +106,9 @@ export function useChatAvailabilityState(options?: {
     workspaceSessionRecovery?.sessionId,
     workspaceSessionRecovery?.reason,
   ]);
+  // Do not route a Pi selection into an old AnyHarness prompt or session.
+  // Keep the draft editable and the original model picker available.
+  if (piMode !== "legacy") return {...availability, isDisabled:false, disabledReason:null,
+    sendBlockedReason:"Native Pi session dispatch is not connected yet.", areRuntimeControlsDisabled: piMode !== "native"};
   return availability;
 }

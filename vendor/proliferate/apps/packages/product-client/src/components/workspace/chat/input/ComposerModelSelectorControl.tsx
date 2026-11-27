@@ -37,6 +37,7 @@ export function ComposerModelSelectorControl({
   const location = useLocation();
   const {
     connectionState,
+    nativePi = false,
     currentModel,
     groups,
     hasAgents,
@@ -113,15 +114,15 @@ export function ComposerModelSelectorControl({
 
   // UX_SPEC S5: adding a harness routes to Settings -> per-harness agent pages.
   const handleAddProvider = useCallback(() => {
-    navigate(buildSettingsHref({ section: "agent-claude" }));
-  }, [navigate]);
+    navigate(buildSettingsHref({ section: nativePi ? "agent-api-keys" : "agent-claude" }));
+  }, [navigate, nativePi]);
 
   const handleSettings = useCallback(() => {
     const section = currentModel
       ? getSettingsSectionForHarnessKind(currentModel.kind)
       : null;
-    navigate(buildSettingsHref({ section: section ?? "agent-claude" }));
-  }, [navigate, currentModel]);
+    navigate(buildSettingsHref({ section: nativePi ? "agent-api-keys" : section ?? "agent-claude" }));
+  }, [navigate, currentModel, nativePi]);
 
   if (!selectorEnabled) {
     return (
@@ -228,7 +229,7 @@ function resolveTriggerLabel(modelSelectorProps: ModelSelectorProps): string {
   // "Loading agents..." belongs to a genuine catalog HTTP read and nothing
   // else. An install in flight is not the catalog loading.
   if (isLoading && !currentModel) {
-    return "Loading agents...";
+    return modelSelectorProps.nativePi ? "Loading models..." : "Loading agents...";
   }
   if (currentModel?.displayName) {
     // Show only the leaf name on the pill — the provider icon already carries harness identity.

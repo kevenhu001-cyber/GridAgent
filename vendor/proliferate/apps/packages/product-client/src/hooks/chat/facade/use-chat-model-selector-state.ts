@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from "react";
+import { usePiModelSelector } from "#product/hooks/chat/derived/use-pi-model-selector";
 import { CHAT_MODEL_SELECTOR_LABELS } from "#product/copy/chat/chat-copy";
 import { getProviderDisplayName } from "#product/lib/domain/agents/provider-display";
 import { useAgentCatalog } from "#product/hooks/agents/derived/use-agent-catalog";
@@ -29,6 +30,7 @@ export function useChatModelSelectorState(options?: {
   suppressActiveSessionState?: boolean;
   replacementSessionId?: string | null;
 }) {
+  const native = usePiModelSelector();
   const suppressActiveSessionState = options?.suppressActiveSessionState ?? false;
   const connectionState = useHarnessConnectionStore((state) => state.connectionState);
   const selectedCloudRuntime = useSelectedCloudRuntimeState();
@@ -223,6 +225,12 @@ export function useChatModelSelectorState(options?: {
     selectorHasAgents,
     selectorIsLoading,
   ]);
+
+  if (native.mode !== "legacy") return {
+    ...native.props,
+    launchControls: [],
+    launchAgentKind: null,
+  };
 
   return {
     connectionState: resolvedConnectionState,

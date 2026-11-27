@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { usePiMode } from "#product/hooks/chat/derived/use-pi-model-selector";
 import type { PromptAttachmentSnapshot } from "#product/domain/chats/composer/prompt-attachment-snapshot";
 import { useHomeNextLaunchPromptActions } from "#product/hooks/home/workflows/use-home-next-launch-prompt-actions";
 import { useWorkspaceEntryActions } from "#product/hooks/workspaces/workflows/use-workspace-entry-actions";
@@ -43,6 +44,7 @@ interface HomeNextLaunchInput {
 // Owns the Home Next submit action. Does not own read-only selection state or deferred launch replay.
 export function useHomeNextLaunch() {
   const navigate = useNavigate();
+  const {mode: piMode} = usePiMode();
   // A count, not a flag: with several launches in flight the first one to
   // settle used to clear the send spinner and re-enable Escape-to-clear while
   // the others were still running (PRO-230 review nit).
@@ -79,6 +81,10 @@ export function useHomeNextLaunch() {
     launchControlValues,
     target,
   }: HomeNextLaunchInput): Promise<HomeNextLaunchOutcome> => {
+    if (piMode !== "legacy") {
+      showToast("Native Pi session dispatch is not connected yet. Your draft is preserved.");
+      return "not-started";
+    }
     const prompt = text.trim();
     const submit = launchSubmitFingerprint(prompt, target, Date.now());
     const refusal = resolveHomeNextLaunchRefusal({
@@ -346,6 +352,7 @@ export function useHomeNextLaunch() {
       setLaunchingCount((count) => count - 1);
     }
   }, [
+    piMode,
     beginLaunchIntent,
     clearLaunchIntent,
     promptProjectedOrCreateFreshSession,
