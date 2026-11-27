@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 
+import type { Workspace } from "@anyharness/sdk";
+import type { DesktopPiBridge, PiEvent } from "@proliferate/product-client/host/desktop-bridge";
+import { closePiProductSession, ownsPiSession } from "#product/lib/access/pi/product-session";
 import type { ReactNode } from "react";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -54,12 +57,22 @@ const mocks = vi.hoisted(() => {
     createWorktreeAndEnterWithResult: vi.fn(),
     navigate: vi.fn(),
     productHost: { desktop: {} as object | null },
+    pi: undefined as DesktopPiBridge | undefined,
+    localWorkspaces: [] as Workspace[],
     selectWorkspace: vi.fn(),
     showToast: vi.fn(),
     showErrorToast: vi.fn(),
     useCoworkThreadWorkflow: vi.fn(() => ({ createThreadFromSelection })),
   };
 });
+
+vi.mock("#product/hooks/chat/derived/use-pi-model-selector", () => ({
+  usePiMode: () => ({mode:mocks.pi?"native":"legacy",pi:mocks.pi}),
+  usePiModelSelector: () => ({mode:mocks.pi?"native":"legacy",
+    selection:mocks.pi?{kind:"openai",modelId:"model"}:null,props:{
+      connectionState:"healthy",currentModel:null,groups:[],hasAgents:false,isLoading:false,onSelect:()=>{},
+    }}),
+}));
 
 vi.mock("react-router-dom", async (importOriginal) => ({
   ...await importOriginal<typeof import("react-router-dom")>(),
@@ -94,7 +107,7 @@ vi.mock("#product/hooks/workspaces/workflows/selection/use-workspace-selection",
 }));
 
 vi.mock("#product/hooks/workspaces/cache/use-workspaces", () => ({
-  useWorkspaces: () => ({ data: { workspaces: [] } }),
+  useWorkspaces: () => ({ data: { workspaces: mocks.localWorkspaces,localWorkspaces:mocks.localWorkspaces } }),
 }));
 
 vi.mock("#product/hooks/sessions/workflows/use-session-creation-actions", () => ({
@@ -128,6 +141,8 @@ describe("useHomeNextLaunch", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.productHost.desktop = {};
+    mocks.pi=undefined;
+    mocks.localWorkspaces=[];
     useSessionDirectoryStore.getState().clearEntries();
     useSessionTranscriptStore.getState().clearEntries();
     useSessionIntentStore.getState().clear();
@@ -137,6 +152,41 @@ describe("useHomeNextLaunch", () => {
   });
 
   afterEach(cleanup);
+
+  it("launches native Home into the retained workspace and prompt outbox without external Agent creation",async()=>{
+    const id="e".repeat(32);
+    const events:PiEvent[]=[{kind:"ready",version:1}];
+    const bridge:DesktopPiBridge={
+      mode:vi.fn(async()=>true),matchesWorkspace:vi.fn(async()=>true),open:vi.fn(async()=>id),
+      prompt:vi.fn(async()=>"f".repeat(32)),abort:vi.fn(async()=>{}),poll:vi.fn(async()=>events.splice(0)),
+      close:vi.fn(async()=>{}),
+    };
+    mocks.pi=bridge;
+    mocks.localWorkspaces=[{id:"native-workspace",kind:"worktree",repoRootId:"repo",path:"/project",
+      surface:"standard",originalBranch:"main",currentBranch:"main",availability:"available",
+      lifecycleState:"active",createdAt:"2026-11-28T00:00:00Z",updatedAt:"2026-11-28T00:00:00Z"}];
+    mocks.selectWorkspace.mockImplementation(async()=>useSessionSelectionStore.getState().activateWorkspace({
+      logicalWorkspaceId:"native-workspace",workspaceId:"native-workspace",initialActiveSessionId:null,
+    }));
+    const {result}=renderHomeNextLaunch();
+    try {
+      let outcome:HomeNextLaunchOutcome="refused";
+      await act(async()=>{outcome=await result.current.launch({text:"calculate",modelSelection:{kind:"openai",modelId:"model"},
+        target:{kind:"local",sourceRoot:"/project",existingWorkspaceId:"native-workspace"}});});
+      expect(outcome).toBe("launched");
+      expect(getSessionRecord(id)?.agentKind).toBe("pi");
+      expect(useSessionSelectionStore.getState().activeSessionId).toBe(id);
+      expect(getPromptOutboxEntriesForSession(id)).toHaveLength(1);
+      expect(mocks.navigate).toHaveBeenCalledWith("/");
+      expect(bridge.prompt).not.toHaveBeenCalled();
+      expect(mocks.createSessionWithResolvedConfig).not.toHaveBeenCalled();
+      expect(mocks.createLocalWorkspaceAndEnterWithResult).not.toHaveBeenCalled();
+      expect(mocks.createThreadFromSelection).not.toHaveBeenCalled();
+    } finally {
+      useSessionIntentStore.getState().clear();
+      if(ownsPiSession(id)) await closePiProductSession(id);
+    }
+  });
 
   it("projects one destination prompt for a Home worktree launch", async () => {
     const sessionId = "client-session:codex:home-worktree";

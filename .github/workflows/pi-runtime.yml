@@ -9,6 +9,8 @@ on:
       - 'vendor/proliferate/apps/packages/product-client/src/hooks/sessions/**'
       - 'vendor/proliferate/apps/packages/product-client/src/stores/sessions/**'
       - 'vendor/proliferate/apps/packages/product-client/src/hooks/home/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/hooks/workspaces/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/components/home/**'
       - 'vendor/proliferate/apps/packages/product-client/src/components/settings/**'
       - 'vendor/proliferate/apps/packages/product-client/src/components/workspace/chat/input/**'
       - 'vendor/proliferate/apps/packages/product-client/src/lib/domain/chat/models/**'
@@ -29,6 +31,8 @@ on:
       - 'vendor/proliferate/apps/packages/product-client/src/hooks/sessions/**'
       - 'vendor/proliferate/apps/packages/product-client/src/stores/sessions/**'
       - 'vendor/proliferate/apps/packages/product-client/src/hooks/home/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/hooks/workspaces/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/components/home/**'
       - 'vendor/proliferate/apps/packages/product-client/src/components/settings/**'
       - 'vendor/proliferate/apps/packages/product-client/src/components/workspace/chat/input/**'
       - 'vendor/proliferate/apps/packages/product-client/src/lib/domain/chat/models/**'
@@ -86,3 +90,7 @@ jobs:
           src/components/settings/screen/render-settings-section.test.tsx
           src/lib/access/pi
           src/hooks/chat/derived/use-pi-model-selector.test.tsx
+          src/hooks/home/workflows/use-home-next-launch.test.tsx
+          src/hooks/home/workflows/use-home-next-launch.concurrency.test.tsx
+          src/components/home/screen/HomeNextScreen.test.tsx
+          src/components/home/screen/HomeNextScreen.model-gate.test.tsx
