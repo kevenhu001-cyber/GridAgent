@@ -23,15 +23,15 @@ internal sealed class ScientificDataView : Grid
     {
         _data = data;
         _kind = data.GetProperty("kind").GetString()!;
-        Padding = new Thickness(20);
+        Padding = new Thickness(24);
         RowSpacing = 12;
         RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         var header = new StackPanel { Spacing = 6 };
         header.Children.Add(new TextBlock { Text = data.GetProperty("title").GetString(),
-            FontSize = 22, TextWrapping = TextWrapping.Wrap });
-        header.Children.Add(ConversationMessageView.Plain("Unverified script output · Run " +
-            data.GetProperty("run_id").GetString()![..8], 13));
+            FontSize = 20, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+        header.Children.Add(ConversationMessageView.Metadata("Unverified script output · Run " +
+            data.GetProperty("run_id").GetString()![..8]));
         if (_kind is "heatmap" or "surface")
         {
             var x = Axis("x"); var y = Axis("y"); var z = Matrix();
