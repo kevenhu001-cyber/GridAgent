@@ -22,6 +22,13 @@ internal sealed class ConversationMessage(string role, string body) : INotifyPro
     private readonly List<string> _activity = new();
     public IReadOnlyList<string> Activity => _activity;
     public int ActivityCount { get; private set; }
+    public bool ActivityExpanded { get; private set; }
+    public void SetActivityExpanded(bool expanded)
+    {
+        if (ActivityExpanded == expanded) return;
+        ActivityExpanded = expanded;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ActivityExpanded)));
+    }
     public string Latest { get; private set; } = "";
     public Action<string>? OpenRun { get; init; }
     public Action<string>? RequestPreview { get; init; }
