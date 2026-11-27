@@ -48,9 +48,8 @@ internal static class RunArtifactView
         var open = new Button { Content = "Open simulation result" };
         open.Click += (_, _) => message.OpenRun?.Invoke(artifact.Id);
         actions.Children.Add(open); panel.Children.Add(actions);
-        panel.Children.Add(ConversationMessageView.Plain("Run " + artifact.Id[..8], 12));
-        return new Border { Style = (Style)Application.Current.Resources["EngineeringCardStyle"], Padding = new Thickness(16),
-            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12), Child = panel };
+        panel.Children.Add(ConversationMessageView.Metadata("Run " + artifact.Id[..8]));
+        return new Border { Style = (Style)Application.Current.Resources["EngineeringCardStyle"], Child = panel };
     }
 
     private static UIElement Preview(RunPreview data)
