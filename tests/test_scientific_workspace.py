@@ -168,3 +168,27 @@ def test_inventory_reads_runtime_not_host(tmp_path):
     metadata.mkdir(parents=True)
     (metadata / "METADATA").write_text("Name: test-lib\nVersion: 2.0\n")
     assert inventory(tmp_path) == [{"distribution": "test-lib", "version": "2.0", "scope": "core"}]
+
+
+
+def test_launch_journals_before_start_and_preserves_failed_stop(tmp_path, monkeypatch):
+    import subprocess
+
+    ws.set_enabled(tmp_path, True)
+    folder = ws.directory(tmp_path, "scientific-runs") / ("d" * 32)
+    (folder / "output").mkdir(parents=True)
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        if args[1] == "start":
+            assert runtime.active_session(tmp_path)["run_id"] == folder.name
+            (folder / "output/exit-code.txt").write_text("0")
+        elif args[1] == "stop":
+            raise subprocess.CalledProcessError(1, args)
+
+    monkeypatch.setattr(runtime.subprocess, "run", fake_run)
+    status, _ = runtime._launch(tmp_path, folder, "fake-wsb", "test configuration")
+    assert status == "cleanup_unconfirmed"
+    assert runtime.active_session(tmp_path)["run_id"] == folder.name
+    assert [args[1] for args in calls] == ["start", "stop"]

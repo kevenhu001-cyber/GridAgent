@@ -217,6 +217,8 @@ def report(root, identifier):
 
 def artifact_bytes(root, identifier, path):
     info = report(root, identifier)
+    if (job_directory(root, identifier) / "recovery.json").exists():
+        raise ValueError("Recovered incomplete outputs cannot be consumed")
     if info.get("status") == "cleanup_unconfirmed":
         raise ValueError("Sandbox shutdown is unconfirmed; outputs cannot be consumed")
     row = next((row for row in info.get("artifacts", []) if row["path"] == path), None)
@@ -235,16 +237,19 @@ def read_artifact(root, identifier, path, offset=0, limit=12000):
     data = artifact_bytes(root, identifier, path)
     text = data.decode("utf-8")
     return {"status": "ok", "run_id": identifier, "path": path, "text": text[offset:offset+limit],
-            "next_offset": offset+limit if offset+limit < len(text) else None, "sha256": row["sha256"]}
+            "next_offset": offset+limit if offset+limit < len(text) else None, "sha256": sha(data)}
 
 
 def cancel(root, identifier):
     folder = job_directory(root, identifier)
+    if (folder / "recovery.json").exists():
+        return "Scientific run has been recovered; partial outputs were discarded"
     if (folder / "report.json").exists():
+        if run_status(root, identifier)["status"] == "cleanup_unconfirmed":
+            return "Sandbox stop is unconfirmed; request explicit scientific recovery"
         return "Scientific run has already ended"
     atomic_bytes(folder / "cancel-requested", b"1")
     return "Cancellation requested; sandbox shutdown has not yet been confirmed"
-
 
 
 def promote_artifact(root, identifier, path, destination, expected_sha256=None):
