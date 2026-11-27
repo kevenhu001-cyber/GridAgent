@@ -16,8 +16,7 @@ Review combined distribution and network-source obligations before release.
 
 ## Architecture
 
-Proliferate's Tauri/React desktop and AnyHarness own the conversation,
-provider selection and general Agent lifecycle. GridAgent supplies Python scientific capability; the original workspace-scoped MCP server remains available as optional external interoperability, not another LLM Agent.
+The target desktop embeds Pi as the first-party Agent engine with direct scientific tool registration. Proliferate's Tauri/React desktop and AnyHarness provide the existing UI/session integration and optional external Agent compatibility. Pi integration remains pending; the initial historical MCP instructions below apply only to external interoperability. GridAgent supplies Python scientific capability; the original workspace-scoped MCP server remains available as optional external interoperability, not another LLM Agent.
 The owner requested removal of WinUI and WPF; historical code remains in Git history.
 
 ## Developer connection (manual first)
