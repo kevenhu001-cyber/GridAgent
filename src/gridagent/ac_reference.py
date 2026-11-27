@@ -132,10 +132,10 @@ def compare_solution(reference, observed, bus_mapping):
 
 
 def compare_public_run(workspace, network, scale, run_id):
-    import pandas as pd
     import pandapower as pp
+    import pandas as pd
     from pandapower import networks
-    from pandapower.converter import to_ppc
+    from pandapower.converter.pypower.to_ppc import to_ppc
 
     from .native_program import PPProgram
     from .workspace import artifact_folder, load_object
