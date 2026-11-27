@@ -169,3 +169,69 @@ def test_llm_can_author_execute_debug_and_revise_project(tmp_path, monkeypatch):
         {"messages": [HumanMessage(content="Build a new model")], "used": 0, "calls": 0, "rounds": 0})
     assert launches == ["print(x)", "x = 2\nprint(x)"]
     assert result["used"] == 2 and result["calls"] == 4 and not sim.requests
+
+
+def test_scientific_tool_feedback_supports_llm_revision_recovery(tmp_path):
+    from gridagent import scientific_workspace as ws
+
+    ws.set_enabled(tmp_path, True)
+    original = ws.write_project(tmp_path, "model.py", "print(1)")
+    ws.write_bytes(tmp_path, "model.bin", b"\x00\xff")
+
+    class Model:
+        def __init__(self):
+            self.turn = 0
+
+        def bind_tools(self, tools):
+            assert "inspect_project_file" in {tool.name for tool in tools}
+            return self
+
+        def invoke(self, messages):
+            self.turn += 1
+            if self.turn == 1:
+                name = "write_project_file"
+                args = {"path": "model.py", "text": "print(2)", "expected_sha256": "stale"}
+            elif self.turn == 2:
+                feedback = json.loads(messages[-2].content)
+                assert feedback["error_code"] == "revision_conflict"
+                assert "SHA-256" in feedback["reason"]
+                assert "repair_knowledge" not in feedback
+                name, args = "inspect_project_file", {"path": "model.py"}
+            elif self.turn == 3:
+                info = json.loads(messages[-2].content)
+                assert info["sha256"] == original["sha256"]
+                name = "write_project_file"
+                args = {"path": "model.py", "text": "print(2)", "expected_sha256": info["sha256"]}
+            elif self.turn == 4:
+                assert json.loads(messages[-2].content)["status"] == "ok"
+                name, args = "read_project_file", {"path": "model.bin"}
+            elif self.turn == 5:
+                assert json.loads(messages[-2].content)["error_code"] == "binary_data"
+                name, args = "inspect_project_file", {"path": "model.bin"}
+            elif self.turn == 6:
+                info = json.loads(messages[-2].content)
+                assert info["text_readable"] is False and info["size_bytes"] == 2
+                name, args = "read_project_file", {"path": "missing.py"}
+            else:
+                feedback = json.loads(messages[-2].content)
+                assert feedback["error_code"] == "not_found"
+                assert str(tmp_path) not in json.dumps(feedback)
+                return AIMessage(content="Recovered without running a solver.")
+            return AIMessage(content="", tool_calls=[{"name": name, "args": args, "id": str(self.turn)}])
+
+    result = build_agent(Model(), FakeSimulator(), budget=0, workspace=tmp_path).invoke(
+        {"messages": [HumanMessage(content="Revise a project")], "used": 0, "calls": 0, "rounds": 0})
+    assert result["used"] == 0 and result["calls"] == 6
+    assert ws.read_project(tmp_path, "model.py")["text"] == "print(2)"
+
+
+def test_scientific_failure_does_not_expose_os_paths():
+    from gridagent.scientific_tools import scientific_failure
+
+    error = FileNotFoundError(2, "No such file", "/private/host/path")
+    feedback = scientific_failure(error)
+    assert feedback["error_code"] == "not_found"
+    assert "/private/host/path" not in json.dumps(feedback)
+    assert scientific_failure(ValueError("General scientific execution is disabled"))[
+        "error_code"] == "authorization_required"
+    assert scientific_failure(ValueError("Unresolved sandbox session"))["error_code"] == "recovery_required"
