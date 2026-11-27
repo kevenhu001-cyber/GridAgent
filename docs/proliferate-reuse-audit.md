@@ -27,11 +27,7 @@ unless otherwise stated.
 
 ## Implementation order
 
-1. Trace existing model-selector facade and API-key settings route, then replace only their data/mutation dependencies. Use existing UI controls. Prove credential protection on target OS.
-2. Define native Pi event/session adapter to original product contracts; retain the existing session lifecycle and transcript UI. Port provider errors, cancellation and tool events; unsupported capabilities must be truthful. The temporary preview UI and duplicate state were removed before cutover; do not reintroduce them.
-3. Reuse workspace inventory, durable storage and session history machinery where compatible. Audit actual ownership and on-disk contracts before adding a new store. Preserve read-only legacy history; verify restoration, tab switching and workspace isolation.
-4. Remove external Agent launch paths end-to-end. Audit direct, deep-link, restored-session, home, cowork, settings and background routes; no silent fallback.
-5. Run shared frontend typecheck/tests, Windows Tauri compile, real GUI/provider/sandbox smoke tests and package validation. Add only missing scientific-specific UI atop existing surfaces.
+The model-picker/provider UI and original Home/workspace session admission, outbox, transcript and tab adapters were merged in #11. They remain opt-in development-mode integrations, not a verified production desktop. The temporary preview UI and duplicate state were removed; do not reintroduce them. Follow the ordered [active roadmap](../ROADMAP.md#3a-desktop-baseline-and-active-execution-order-2026-11-28): stabilize main/Windows compile, isolate multiple native sessions, reuse durable history/context storage, detach workspace/file services from Agent lifecycle, retire remaining external Agent paths, and qualify real Windows packaging. Add only missing scientific-specific UI atop existing surfaces. Prove credential protection, workspace isolation and true model context recovery, not just UI rendering.
 
 ## Review checklist
 

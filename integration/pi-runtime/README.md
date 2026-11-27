@@ -46,14 +46,14 @@ No external executable extension discovery is enabled.
 
 ## Shared session controller
 
-`ProductClient` now receives the typed native Pi capability via `DesktopBridge.pi`. The shared `PiSessionController` owns the host session ID, prompt ID, readiness, cancellation, event batches and settlement; it does not import Tauri or start any external Agent. `drainTurn` drives a future session transport consumer. The `PiEventAdapter` translates admitted prompts and public Pi events into existing SDK SessionEventEnvelope objects; it holds only active transport identity and sequence, not transcript history. Existing SDK reducers and stores remain the presentation authority. Node contract tests and a shared reducer test are provided. Full session lifecycle dispatch and live GUI integration are still pending.
+`ProductClient` now receives the typed native Pi capability via `DesktopBridge.pi`. The shared `PiSessionController` owns the host session ID, prompt ID, readiness, cancellation, event batches and settlement; it does not import Tauri or start any external Agent. `drainTurn` feeds the retained product session transport. The `PiEventAdapter` translates admitted prompts and public Pi events into existing SDK SessionEventEnvelope objects; it holds only active transport identity and sequence, not transcript history. Existing SDK reducers and stores remain the presentation authority. Node contract tests and a shared reducer test are provided. The existing workspace and Home launch entry points and prompt/cancel dispatcher are adapted in development mode. Real GUI/provider verification, multiple live sessions and durable restoration remain pending.
 
 ## Model and credential data adapters
 
 The pinned SDK model registry supplies OpenAI, Anthropic and Google chat
 catalog metadata; `pi_list_models` runs a bounded credential-free discovery
 process. The existing model picker contract is projected by
-`buildPiModelSelector`; the original workspace composer model-selector facade now consumes this data in opt-in native mode, using the existing user-preference store and a reserved nonsecret map entry. Add provider / Settings route to the existing API Keys page. Explicit native session open accepts the selected provider/model and requires its stored credential. The original workspace composer now uses the native session dispatcher in opt-in mode; Home catalog and launch remain gated. Unknown mode refuses rather than launching an old Agent. The original API Keys settings pane, modal, rows and confirmation UI
+`buildPiModelSelector`; the original workspace composer model-selector facade now consumes this data in opt-in native mode, using the existing user-preference store and a reserved nonsecret map entry. Add provider / Settings route to the existing API Keys page. Explicit native session open accepts the selected provider/model and requires its stored credential. The original workspace and Home composers use the same native model selection and session admission in opt-in mode, limited to existing authorized local workspaces. Unknown mode refuses rather than launching an old Agent. The original API Keys settings pane, modal, rows and confirmation UI
 are shared with an opt-in local credential data source in Pi development mode.
 This source stores one key per supported provider using the existing serialized
 keyring worker with Windows/macOS native features. The renderer can only list
@@ -74,20 +74,13 @@ The existing dispatcher and Cancel workflow recognize Pi session records;
 legacy SSE/summary refresh does not attach to them. Only one live native
 session is supported. Unsupported attachments/config interactions fail
 explicitly. Disconnection/uncertain submission is not replayed. There is no
-second conversation store. The existing workspace composer calls this materialization seam, enqueues into the original outbox and activates the original chat tab. Admission checks the host-authorized path and selection generation, retains drafts on pre-enqueue failure, and pins the running worker model. Native session dismissal closes an idle worker; pending sends prevent closure. This remains opt-in development mode, one worker, existing local workspace inventory, text-only prompts. No implicit recovery of a restored Pi session; durable history, Home launch, independent workspace inventory and production desktop validation remain open.
+second conversation store. The existing workspace composer calls this materialization seam, enqueues into the original outbox and activates the original chat tab. Admission checks the host-authorized path and selection generation, retains drafts on pre-enqueue failure, and pins the running worker model. Native session dismissal closes an idle worker; pending sends prevent closure. This remains opt-in development mode, one worker, existing local workspace inventory, text-only prompts. No implicit recovery of a restored Pi session; durable history, multiple sessions, independent workspace inventory and production desktop validation remain open.
 
 ## Remaining integration
 
 Follow the [reuse-first inventory](../../docs/proliferate-reuse-audit.md).
 NativePiChat, NativePiChatGate and PiConversation were removed; do not reintroduce a parallel product UI or transcript store.
-Adapt the existing session directory, prompt outbox, transcript ingest,
-ChatView/ChatInput/SessionTranscriptPane, session persistence and model picker
-contracts to Pi. Reuse the existing API-key settings and modal; adapt the
-cloud-backed mutation layer to a Windows-safe local credential service.
-Complete all launch-entry cutover,
-remove the external Agent catalog, discovery, installer, launch and
-authentication paths from the product, and verify real desktop and sandbox
-execution. Current tests exercise SDK factories, dispatch, event projection
+The original session directory, outbox, transcript, model picker and API-key UI are already adapted in opt-in mode. Follow the current [roadmap](../../ROADMAP.md): stabilize main, enable isolated multi-session lifecycle, persist history and full model context, detach workspace/file services from Agent lifecycle, remove remaining external Agent launch/discovery/install/auth paths, then validate real Windows desktop and sandbox execution. Current tests exercise SDK factories, dispatch, event projection
 and mocked shell job responses; they are not real model or sandbox tests.
 
 ### Home and workspace selection
