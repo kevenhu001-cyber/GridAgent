@@ -88,6 +88,14 @@ public sealed class ConversationMessageView : UserControl
             message.PropertyChanged += MessageChanged;
             RefreshArtifact();
         }
+        else if (message.Role == "Error")
+        {
+            var panel = new StackPanel { Spacing = 4 };
+            var heading = new TextBlock { Text = "Could not complete the operation", FontWeight = FontWeights.SemiBold, FontSize = 15 };
+            panel.Children.Add(heading);
+            panel.Children.Add(Plain(message.Body));
+            layout.Children.Add(panel);
+        }
         else if (message.Role == "Streaming")
         {
             // During streaming use inexpensive text; render Markdown once on finalization.
