@@ -21,6 +21,7 @@ struct PiProcess {
     events: mpsc::Receiver<Value>,
     reader: JoinHandle<()>,
     ready: bool,
+    session_id: String,
     active: Option<String>,
 }
 
@@ -119,7 +120,7 @@ impl PiProcess {
                 if send.send(event).await.is_err() { break; }
             }
         });
-        Ok(Self { _child: child, input, events, reader, ready: false, active: None })
+        Ok(Self { _child: child, input, events, reader, ready: false, session_id: uuid::Uuid::new_v4().simple().to_string(), active: None })
     }
 
     async fn send(&mut self, frame: Value) -> Result<(), String> {
@@ -135,19 +136,24 @@ impl PiProcess {
 }
 
 #[tauri::command]
-pub async fn pi_open(state: State<'_, PiState>) -> Result<(), String> {
+pub async fn pi_open(state: State<'_, PiState>) -> Result<String, String> {
     let mut guard = state.0.lock().await;
     if guard.is_some() { return Err("Pi session already open".into()); }
-    *guard = Some(PiProcess::start()?);
-    Ok(())
+    let process = PiProcess::start()?;
+    let id = process.session_id.clone();
+    *guard = Some(process);
+    Ok(id)
 }
 
 #[tauri::command]
-pub async fn pi_prompt(state: State<'_, PiState>, text: String) -> Result<String, String> {
+pub async fn pi_prompt(state: State<'_, PiState>, session_id: String, text: String) -> Result<String, String> {
     if text.trim().is_empty() || text.len() > MAX_FRAME / 8 {
         return Err("Pi prompt is empty or exceeds limit".into());
     }
     let mut guard = state.0.lock().await;
+    if guard.as_ref().map(|p| p.session_id.as_str()) != Some(session_id.as_str()) {
+        return Err("No matching Pi session".into());
+    }
     let mut process = guard.take().ok_or("No open Pi session")?;
     if !process.ready || process.active.is_some() {
         *guard = Some(process);
@@ -162,8 +168,11 @@ pub async fn pi_prompt(state: State<'_, PiState>, text: String) -> Result<String
 }
 
 #[tauri::command]
-pub async fn pi_abort(state: State<'_, PiState>, id: String) -> Result<(), String> {
+pub async fn pi_abort(state: State<'_, PiState>, session_id: String, id: String) -> Result<(), String> {
     let mut guard = state.0.lock().await;
+    if guard.as_ref().map(|p| p.session_id.as_str()) != Some(session_id.as_str()) {
+        return Err("No matching Pi session".into());
+    }
     let mut process = guard.take().ok_or("No open Pi session")?;
     if process.active.as_deref() != Some(id.as_str()) {
         *guard = Some(process);
@@ -175,8 +184,11 @@ pub async fn pi_abort(state: State<'_, PiState>, id: String) -> Result<(), Strin
 }
 
 #[tauri::command]
-pub async fn pi_poll(state: State<'_, PiState>) -> Result<Vec<Value>, String> {
+pub async fn pi_poll(state: State<'_, PiState>, session_id: String) -> Result<Vec<Value>, String> {
     let mut guard = state.0.lock().await;
+    if guard.as_ref().map(|p| p.session_id.as_str()) != Some(session_id.as_str()) {
+        return Err("No matching Pi session".into());
+    }
     let mut process = guard.take().ok_or("No open Pi session")?;
     let mut batch = Vec::new();
     // Polling is nonblocking so it cannot hold the lock while waiting for abort.
@@ -208,8 +220,11 @@ pub async fn pi_poll(state: State<'_, PiState>) -> Result<Vec<Value>, String> {
 }
 
 #[tauri::command]
-pub async fn pi_close(state: State<'_, PiState>) -> Result<(), String> {
+pub async fn pi_close(state: State<'_, PiState>, session_id: String) -> Result<(), String> {
     let mut guard = state.0.lock().await;
+    if guard.as_ref().map(|p| p.session_id.as_str()) != Some(session_id.as_str()) {
+        return Err("No matching Pi session".into());
+    }
     if guard.as_ref().is_some_and(|p| p.active.is_some()) {
         return Err("Abort the active Pi prompt and wait for settlement before closing".into());
     }
