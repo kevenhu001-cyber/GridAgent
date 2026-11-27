@@ -48,7 +48,11 @@ public partial class MainWindow
     {
         if (PluginRows == null) return;
         PluginRows.Children.Clear();
-        if (_pluginCatalog.ValueKind != JsonValueKind.Array) return;
+        if (_pluginCatalog.ValueKind != JsonValueKind.Array)
+        {
+            PluginRows.Children.Add(ConversationMessageView.Metadata("Loading local plugin catalog…"));
+            return;
+        }
         var filter = PluginSearch?.Text.Trim() ?? "";
         foreach (var item in _pluginCatalog.EnumerateArray())
         {
@@ -56,47 +60,86 @@ public partial class MainWindow
             var title = item.GetProperty("title").GetString()!;
             var installed = item.GetProperty("installed").GetBoolean();
             var managed = item.GetProperty("managed").GetBoolean();
-            var requirements = string.Join(", ", item.GetProperty("requirements").EnumerateArray().Select(x => x.GetString()));
             var tools = string.Join(", ", item.GetProperty("tools").EnumerateArray().Select(x => x.GetString()));
-            var versions = string.Join(", ", item.GetProperty("versions").EnumerateObject().Select(x => x.Name + " " + x.Value.GetString()));
             if (!(title + " " + id + " " + tools).Contains(filter, StringComparison.OrdinalIgnoreCase)) continue;
-            var details = new StackPanel { Spacing = 8 };
-            var name = Text(title, 18); name.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
-            details.Children.Add(name);
-            details.Children.Add(Text(installed ? "Available locally" : "Not installed"));
-            details.Children.Add(Text("Capabilities: " + tools));
-            var expander = new Expander { Header = "Dependencies and versions", HorizontalAlignment = HorizontalAlignment.Stretch, Content = Text(requirements + (versions.Length > 0 ? "\n" + versions : "")) };
-            details.Children.Add(expander);
-            var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            void Add(string label, string command, bool enabled, string? question)
-            {
-                var button = ActionButton(label, async (_, _) =>
-                {
-                    if (_busy) { Notify("Another operation is running.", InfoBarSeverity.Warning); return; }
-                    if (question != null && !await Confirm(label + " " + title, question)) return;
-                    await Local(command, id);
-                    var failed = _operationError;
-                    await Execute(new { action = "plugins" });
-                    if (failed) Notify("Plugin operation failed. See the assistant for details.", InfoBarSeverity.Error);
-                    else if (!_operationError) Notify("Plugin operation completed. Review the refreshed catalog and conversation for results.");
-                });
-                button.IsEnabled = enabled;
-                actions.Children.Add(button);
-            }
-            Add(managed ? "Uninstall" : installed ? "Available" : "Install",
-                managed ? "plugin-remove" : "plugin-install", managed || !installed,
-                managed ? "Remove the managed packages? Existing results are retained." :
-                    "Download packages from PyPI? They execute under your local account. " + requirements);
-            if (managed && installed)
-            {
-                Add("Check update", "plugin-check", true, null);
-                Add("Update", "plugin-update", true, "Download and probe updated packages from PyPI?");
-                Add("Rollback", "plugin-rollback", item.GetProperty("rollback_available").GetBoolean(), "Restore the previous plugin generation?");
-            }
-            details.Children.Add(actions);
-            PluginRows.Children.Add(new Border { Padding = new Thickness(16), CornerRadius = new CornerRadius(8), BorderThickness = new Thickness(1), Style = (Style)Application.Current.Resources["EngineeringCardStyle"], Child = details });
+            var snapshot = item.Clone();
+            var row = new Grid { ColumnSpacing = 12, Padding = new Thickness(4, 10, 4, 10) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var icon = new SymbolIcon(Symbol.Library) { VerticalAlignment = VerticalAlignment.Center };
+            row.Children.Add(icon);
+            var text = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
+            var name = Text(title, 16); name.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+            name.IsTextSelectionEnabled = false;
+            text.Children.Add(name);
+            text.Children.Add(ConversationMessageView.Metadata(installed ? (managed ? "Installed · managed" : "Available locally") :
+                managed ? "Installation needs attention" : "Not installed"));
+            Grid.SetColumn(text, 1); row.Children.Add(text);
+            var open = ActionButton("Details", async (_, _) => await ShowPluginDetails(snapshot));
+            open.Style = (Style)Application.Current.Resources["SubtleButtonStyle"];
+            AutomationProperties.SetName(open, "Details for " + title);
+            Grid.SetColumn(open, 2); row.Children.Add(open);
+            PluginRows.Children.Add(new Border { Style = (Style)Application.Current.Resources["WorkbenchRowStyle"], Child = row });
         }
-        if (PluginRows.Children.Count == 0) PluginRows.Children.Add(Text("No matching plugins."));
+        if (PluginRows.Children.Count == 0) PluginRows.Children.Add(ConversationMessageView.Metadata("No matching plugins."));
+    }
+
+    private async Task ShowPluginDetails(JsonElement item)
+    {
+        if (_busy || WorkspaceChanged()) return;
+        var id = item.GetProperty("id").GetString()!;
+        var title = item.GetProperty("title").GetString()!;
+        var installed = item.GetProperty("installed").GetBoolean();
+        var managed = item.GetProperty("managed").GetBoolean();
+        var requirements = string.Join("\n", item.GetProperty("requirements").EnumerateArray().Select(x => x.GetString()));
+        var tools = string.Join("\n", item.GetProperty("tools").EnumerateArray().Select(x => x.GetString()));
+        var versions = string.Join("\n", item.GetProperty("versions").EnumerateObject().Select(x => x.Name + " " + x.Value.GetString()));
+        var content = new StackPanel { Spacing = 12 };
+        content.Children.Add(ConversationMessageView.Metadata(installed ? (managed ? "Installed · managed" : "Available locally") :
+            managed ? "Installation needs attention" : "Not installed"));
+        void Section(string label, string body)
+        {
+            var heading = Text(label, 15); heading.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+            content.Children.Add(heading);
+            content.Children.Add(Text(string.IsNullOrWhiteSpace(body) ? "Not recorded" : body, 13));
+        }
+        Section("Capabilities", tools);
+        Section("Package requirements", requirements);
+        Section("Installed versions", versions);
+        var commands = new List<(string Label, string Command, string? Confirmation)>();
+        if (managed)
+        {
+            if (installed)
+            {
+                commands.Add(("Check for updates", "plugin-check", "Check available packages on PyPI?"));
+                commands.Add(("Update", "plugin-update", "Download and probe updated packages from PyPI?"));
+                if (item.GetProperty("rollback_available").GetBoolean())
+                    commands.Add(("Restore previous version", "plugin-rollback", "Restore the previous plugin generation?"));
+            }
+            commands.Add(("Uninstall", "plugin-remove", "Remove the managed packages? Existing results are retained."));
+        }
+        else if (!installed)
+            commands.Add(("Install", "plugin-install", "Download packages from PyPI? They execute under your local account.\n" + requirements));
+        var actions = new ComboBox { Header = "Manage plugin", ItemsSource = commands.Select(c => c.Label).ToArray(),
+            SelectedIndex = -1, PlaceholderText = "Choose an action", HorizontalAlignment = HorizontalAlignment.Stretch };
+        var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = title, CloseButtonText = "Close",
+            Content = new ScrollViewer { Content = content, MaxHeight = 440, VerticalScrollBarVisibility = ScrollBarVisibility.Auto } };
+        if (commands.Count > 0)
+        {
+            content.Children.Add(actions);
+            dialog.PrimaryButtonText = "Continue";
+            dialog.IsPrimaryButtonEnabled = false;
+            actions.SelectionChanged += (_, _) => dialog.IsPrimaryButtonEnabled = actions.SelectedIndex >= 0;
+        }
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary || actions.SelectedIndex < 0 || _busy || WorkspaceChanged()) return;
+        var action = commands[actions.SelectedIndex];
+        if (action.Confirmation != null && !await Confirm(action.Label + " " + title, action.Confirmation)) return;
+        if (_busy || WorkspaceChanged()) return;
+        await Execute(new { action = "local", command = action.Command, args = new[] { id } });
+        var failed = _operationError;
+        await Execute(new { action = "plugins" });
+        if (failed) Notify("Plugin operation failed. Review the local plugin log or try again.", InfoBarSeverity.Error);
     }
 
     private void ShowWaveforms(IReadOnlyList<WaveformSeries> channels)
