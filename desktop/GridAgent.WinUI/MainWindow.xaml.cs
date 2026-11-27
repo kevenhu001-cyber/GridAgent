@@ -328,6 +328,16 @@ public partial class MainWindow : Window
         if (picker != null) await Research("research-manifest", picker);
     }
 
+    private async void ScientificExecutionSettings(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        var result = await new ContentDialog { XamlRoot = Root.XamlRoot, Title = "Scientific execution (preview)",
+            Content = "Authorize the assistant to create and edit project files and execute Python in Windows Sandbox. Network is disabled; each run has an isolated input snapshot and output folder. This preview does not enforce a hard CPU, process or disk quota. Only enable for a trusted research workspace.",
+            PrimaryButtonText = "Enable", SecondaryButtonText = "Disable", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close }.ShowAsync();
+        if (result != ContentDialogResult.None)
+            await Local("scientific-execution", result == ContentDialogResult.Primary ? "enable" : "disable");
+    }
+
     private async void PythonSettings(object sender, RoutedEventArgs e)
     {
         if (_busy) return;

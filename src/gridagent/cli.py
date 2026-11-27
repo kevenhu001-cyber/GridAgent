@@ -49,6 +49,9 @@ def main():
                           help="List public AC benchmarks or run TASK [reference|single|multi]")
     research.add_argument("--research-python", metavar="MANIFEST", help="Run verified sandbox Python research")
     research.add_argument("--research-sandbox", choices=("enable", "disable", "status"))
+    research.add_argument("--scientific-execution", choices=("enable", "disable", "status"),
+                          help="Authorize general project writes and isolated model-authored Python")
+    research.add_argument("--scientific-cancel", metavar="RUN_ID")
     research.add_argument("--research-compare", nargs="+", metavar="ARG",
                           help="TASK REPEATS MODEL MODEL [MODEL ...] [memory TRAINING_JSON]")
     research.add_argument("--research-experience", nargs="?", const="", metavar="NEW_JSON",
@@ -142,6 +145,8 @@ def main():
         ("research-benchmark", args.research_benchmark),
         ("research-python", [args.research_python] if args.research_python else None),
         ("research-sandbox", [args.research_sandbox] if args.research_sandbox else None),
+        ("scientific-execution", [args.scientific_execution] if args.scientific_execution else None),
+        ("scientific-cancel", [args.scientific_cancel] if args.scientific_cancel else None),
         ("research-compare", args.research_compare),
         ("research-experience", [args.research_experience] if args.research_experience else
          [] if args.research_experience is not None else None),
