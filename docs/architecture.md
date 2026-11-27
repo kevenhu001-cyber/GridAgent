@@ -6,13 +6,15 @@
 
 GridAgent is a local, simulation-grounded power-system research workbench. Its long-term value is the LLM's ability to independently solve unfamiliar engineering problems using a reusable scientific execution environment, with reproducible evidence. A conclusion must be traceable to an input specification, model revision, solver run and evaluation evidence where applicable.
 
+**Desktop target (ADR 0003):** Pi is the sole Agent engine; Proliferate is the presentation baseline. External Agent hosting, executable discovery, installation and launch are excluded. Reuse non-Agent AnyHarness infrastructure selectively. Model providers remain configurable.
+
 ## Current boundaries
 
 | Layer | Responsibility | Existing implementation |
 | --- | --- | --- |
 | Presentation | Accessible conversation, workspaces, result inspection | Proliferate Tauri/React; scientific viewers pending migration |
 | Application state | Transient message, task and artifact projection | Proliferate client state; typed scientific artifact contracts |
-| Local transport | Request correlation, lifecycle, error boundary | Local MCP stdio; existing Python projection helpers |
+| Local transport | Request correlation, lifecycle, error boundary | First-party native IPC; optional standalone MCP interoperability |
 | Application workflows | Planning, research execution, approval, repair | Agent, ResearchTasks, recorded_task |
 | Engineering domain | Typed programs, validation, solver-independent evidence | native_program, research_spec, model_quality, model_revisions |
 | Compute adapters | Translate bounded requests to solver-specific operations | pandapower, ANDES, optional plugins, external licensed adapters |
