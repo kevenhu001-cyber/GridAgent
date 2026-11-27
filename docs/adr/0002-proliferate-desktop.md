@@ -4,7 +4,7 @@ Status: Accepted direction, 2026-11-28; implementation and acceptance pending.
 Supersedes only desktop-specific decisions in prior documentation; ADR 0001
 remains normative for LLM-first scientific modeling and execution.
 
-**Amended by [ADR 0003](0003-native-scientific-runtime.md):** the core transport below describes the initial historical integration; first-party native IPC is the target and MCP is optional external compatibility.
+**Amended by [ADR 0003](0003-native-scientific-runtime.md):** the core transport below describes the initial historical integration; first-party native IPC and Pi as the sole desktop Agent are the target. External Agent hosting is retired; MCP is optional tool interoperability only.
 
 ## Decision
 
