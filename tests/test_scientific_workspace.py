@@ -129,3 +129,42 @@ def test_unresolved_session_blocks_execution_and_recovery(tmp_path, monkeypatch)
     assert runtime.active_session(tmp_path) is None
     assert ws.run_status(tmp_path, identifier)["status"] == "recovered_incomplete"
     assert runtime.recover(tmp_path)["status"] == "ok"
+
+
+
+def test_native_library_probe_only_runs_in_sandbox(tmp_path, monkeypatch):
+    from gridagent.scientific_library import probe_source
+
+    ws.set_enabled(tmp_path, True)
+    ws.write_project(tmp_path, "main.py", "print(1)")
+    with pytest.raises(ValueError, match="dotted"):
+        probe_source("numpy; print(1)")
+    with pytest.raises(ValueError, match="dotted"):
+        probe_source("numpy", "array()")
+    compile(probe_source("scipy.integrate", "solve_ivp"), "probe.py", "exec")
+    monkeypatch.setattr(runtime, "require_runtime", lambda: ("fake-wsb", Path("runtime")))
+
+    def launch(root, folder, executable, config):
+        manifest = json.loads((folder / "manifest.json").read_text())
+        assert manifest["api_probe"] == {"module": "scipy.integrate", "symbol": "solve_ivp"}
+        source = (folder / "input/project" / manifest["entry"]).read_text()
+        assert "importlib.import_module('scipy.integrate')" in source
+        (folder / "output/exit-code.txt").write_text("0")
+        (folder / "output/api.json").write_text('{"test_double":true}')
+        return "finished", None
+
+    monkeypatch.setattr(runtime, "_launch", launch)
+    result = runtime.execute(tmp_path, "api.py", probe={"module": "scipy.integrate", "symbol": "solve_ivp"})
+    assert result["status"] == "ok"
+    assert ws.list_project(tmp_path)["files"] == [{"path": "main.py", "size_bytes": 8}]
+    assert ws.read_artifact(tmp_path, result["run_id"], "api.json")["text"] == '{"test_double":true}'
+
+
+def test_inventory_reads_runtime_not_host(tmp_path):
+    from gridagent.scientific_library import inventory
+
+    packages = tmp_path / "Lib/site-packages"
+    metadata = packages / "test_lib-2.0.dist-info"
+    metadata.mkdir(parents=True)
+    (metadata / "METADATA").write_text("Name: test-lib\nVersion: 2.0\n")
+    assert inventory(tmp_path) == [{"distribution": "test-lib", "version": "2.0", "scope": "core"}]

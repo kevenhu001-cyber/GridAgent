@@ -173,7 +173,7 @@ def _launch(root, folder, executable, config):
     return state, reason
 
 
-def execute(root, entry, plugin=None, arguments=None):
+def execute(root, entry, plugin=None, arguments=None, *, probe=None):
     ws.require_grant(root)
     ws.safe_parts(entry)
     if not entry.endswith(".py"):
@@ -200,6 +200,16 @@ def execute(root, entry, plugin=None, arguments=None):
         folder.mkdir()
         inputs = folder / "input"
         snapshot = ws.snapshot(root, inputs / "project")
+        if probe is not None:
+            from .scientific_library import probe_source
+
+            source = probe_source(probe["module"], probe.get("symbol")).encode("utf-8")
+            entry = "gridagent_api_" + identifier + ".py"
+            path = ws.scoped(inputs / "project", entry)
+            if path.exists():
+                raise ValueError("Internal probe filename collision")
+            path.write_bytes(source)
+            snapshot.append({"path": entry, "size_bytes": len(source), "sha256": ws.sha(source)})
         if entry not in {row["path"] for row in snapshot}:
             raise ValueError("Entry not found in project snapshot")
         compile(ws.bounded_bytes(ws.scoped(inputs / "project", entry), ws.MAX_FILE),
@@ -217,7 +227,7 @@ def execute(root, entry, plugin=None, arguments=None):
             "move /y C:\\GridAgentOutput\\exit.tmp C:\\GridAgentOutput\\exit-code.txt > NUL\r\n",
             encoding="ascii")
         plan = {"protocol": PROTOCOL, "run_id": identifier, "entry": entry, "inputs": snapshot,
-                "arguments": arguments, "plugin": plugin, "plugin_versions": plugins.installed_metadata(plugin).get("versions", {})
+                "arguments": arguments, "api_probe": probe, "plugin": plugin, "plugin_versions": plugins.installed_metadata(plugin).get("versions", {})
                 if plugin else {}, "timeout_seconds": TIMEOUT}
         ws.atomic_bytes(folder / "manifest.json", json.dumps(plan, allow_nan=False).encode())
         config = configuration(runtime, inputs, output, target)
