@@ -48,7 +48,15 @@ public partial class MainWindow
                     Navigation.MenuItems.OfType<NavigationViewItem>().First(i => (string?)i.Tag == key);
                 await Task.Delay(220);
                 Root.UpdateLayout();
-                if (Root.ActualWidth <= 0 || Root.ActualHeight <= 0) throw new InvalidOperationException("Invalid root layout");
+                var page = key switch
+                {
+                    "chat" => (FrameworkElement)ChatPage, "tasks" => TasksPage, "models" => ModelsPage,
+                    "runs" => RunsPage, "studies" => StudiesPage, "tools" => ToolsPage, "plugins" => PluginsPage,
+                    "knowledge" => KnowledgePage, "settings" => SettingsPage,
+                    _ => throw new InvalidOperationException("Unknown smoke page")
+                };
+                if (page.Visibility != Visibility.Visible || page.ActualWidth <= 0 || page.ActualHeight <= 0)
+                    throw new InvalidOperationException("Invalid layout for " + key);
                 StartupDiagnostics.Record("ui.page." + key);
             }
             async Task Snapshot(string name)
@@ -108,6 +116,7 @@ public partial class MainWindow
             await Task.Delay(350);
             if (plot.ActualWidth <= 0) throw new InvalidOperationException("Chart did not lay out");
             plotWindow.Close();
+            StartupDiagnostics.Record("ui.viewer.chart");
             foreach (var raw in new[] {
                 """{"kind":"heatmap","title":"Example field","run_id":"0000000000000000","x_label":"x","y_label":"y","value_label":"z","x":[0,1],"y":[0,1],"z":[[1,2],[3,4]]}""",
                 """{"kind":"surface","title":"Example surface","run_id":"0000000000000000","x_label":"x","y_label":"y","value_label":"z","x":[0,1],"y":[0,1],"z":[[1,2],[3,4]]}""",
