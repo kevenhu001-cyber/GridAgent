@@ -4,6 +4,7 @@ on:
     paths:
       - 'src/gridagent/**'
       - 'tests/test_native_service.py'
+      - 'tests/test_native_jobs.py'
       - 'vendor/proliferate/apps/desktop/src-tauri/src/scientific.rs'
       - '.github/workflows/native-scientific.yml'
   push:
@@ -11,6 +12,7 @@ on:
     paths:
       - 'src/gridagent/**'
       - 'tests/test_native_service.py'
+      - 'tests/test_native_jobs.py'
       - '.github/workflows/native-scientific.yml'
 permissions:
   contents: read
@@ -27,5 +29,5 @@ jobs:
         with:
           python-version: '3.11'
       - run: python -m pip install -e '.[dev]'
-      - run: ruff check src/gridagent/native_service.py tests/test_native_service.py
-      - run: python -m pytest -q tests/test_native_service.py
+      - run: ruff check src/gridagent/native_service.py src/gridagent/native_jobs.py tests/test_native_service.py tests/test_native_jobs.py
+      - run: python -m pytest -q tests/test_native_service.py tests/test_native_jobs.py tests/test_scientific_workspace.py
