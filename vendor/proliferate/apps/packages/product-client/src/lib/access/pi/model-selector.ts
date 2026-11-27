@@ -40,12 +40,12 @@ export function readPiModelPreference(defaults: Record<string,string>): PiModelS
   const delimiter = raw.indexOf(":");
   const provider = raw.slice(0, delimiter);
   const modelId = raw.slice(delimiter + 1);
-  if (delimiter < 1 || !Object.hasOwn(labels, provider) || !modelId || modelId.length > 512 || modelId.trim() !== modelId || /[\x00-\x1f\x7f]/.test(modelId)) return null;
+  if (delimiter < 1 || !Object.prototype.hasOwnProperty.call(labels, provider) || !modelId || modelId.length > 512 || modelId.trim() !== modelId || /[\x00-\x1f\x7f]/.test(modelId)) return null;
   return {provider: provider as PiProvider, modelId};
 }
 
 export function updatePiModelPreference(defaults: Record<string,string>, selection: ModelSelectorSelection): Record<string,string> {
-  if (!Object.hasOwn(labels,selection.kind) || !selection.modelId || selection.modelId.length>512 || selection.modelId.trim()!==selection.modelId || /[\x00-\x1f\x7f]/.test(selection.modelId)) throw new Error("Invalid native Pi model selection");
+  if (!Object.prototype.hasOwnProperty.call(labels,selection.kind) || !selection.modelId || selection.modelId.length>512 || selection.modelId.trim()!==selection.modelId || /[\x00-\x1f\x7f]/.test(selection.modelId)) throw new Error("Invalid native Pi model selection");
   return {...defaults,[PI_MODEL_PREFERENCE_KEY]:selection.kind+":"+selection.modelId};
 }
 

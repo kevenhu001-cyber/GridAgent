@@ -145,7 +145,7 @@ function NativeApiKeysPane({bridge}: {bridge: DesktopPiCredentialBridge}) {
       void write("save", () => bridge.save(provider,input.value), done);
     },
     revoke: (id,done) => {
-      if (!Object.hasOwn(providers,id)) return;
+      if (!Object.prototype.hasOwnProperty.call(providers,id)) return;
       void write("remove", () => bridge.remove(id as PiProvider), done);
     },
   }} />;
