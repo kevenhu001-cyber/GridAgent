@@ -28,8 +28,7 @@ internal sealed class ScientificDataView : Grid
         RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         var header = new StackPanel { Spacing = 6 };
-        header.Children.Add(new TextBlock { Text = data.GetProperty("title").GetString(),
-            FontSize = 20, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+        header.Children.Add(ScientificVisualStyle.Title(data.GetProperty("title").GetString()!));
         header.Children.Add(ConversationMessageView.Metadata("Unverified script output · Run " +
             data.GetProperty("run_id").GetString()![..8]));
         if (_kind is "heatmap" or "surface")
@@ -52,9 +51,14 @@ internal sealed class ScientificDataView : Grid
             angle.ValueChanged += (_, args) => { _angle = args.NewValue; _canvas?.Invalidate(); };
             header.Children.Add(angle);
         }
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        header.Children.Add(actions);
         Children.Add(header);
         if (_kind == "table")
         {
+            var copy = ScientificVisualStyle.Action("Copy table as tab-separated text", "\uE8C8");
+            copy.Click += (_, _) => CopyTable();
+            actions.Children.Add(copy);
             var scroller = Table();
             SetRow(scroller, 1); Children.Add(scroller);
             return;
@@ -62,6 +66,9 @@ internal sealed class ScientificDataView : Grid
 
         _canvas = new CanvasControl { MinWidth = 320, MinHeight = 240 };
         _canvas.Draw += Draw;
+        var reset = ScientificVisualStyle.Action("Reset zoom", "\uE72C");
+        reset.Click += (_, _) => _scroll?.ChangeView(0, 0, 1);
+        actions.Children.Add(reset);
         AutomationProperties.SetName(_canvas, Label("title") + " " + _kind + "; values and ranges described above");
         _scroll = new ScrollViewer { Content = _canvas, ZoomMode = ZoomMode.Enabled,
             MinZoomFactor = 1, MaxZoomFactor = 5,
@@ -90,9 +97,25 @@ internal sealed class ScientificDataView : Grid
         return Color.FromArgb(255, (byte)(30 + 220*t), (byte)(65 + 125*t), (byte)(165 - 130*t));
     }
 
+    private void CopyTable()
+    {
+        var columns = _data.GetProperty("columns").EnumerateArray().Select(v => v.GetString()!);
+        // Treat string cells as literal text when pasted into a spreadsheet; preserve numeric cells.
+        static string Safe(string value) => value.Length > 0 && "=+-@\t\r".Contains(value[0]) ? "'" + value : value;
+        var lines = new List<string> { string.Join("\t", columns.Select(Safe)) };
+        foreach (var row in _data.GetProperty("rows").EnumerateArray())
+            lines.Add(string.Join("\t", row.EnumerateArray().Select(v => v.ValueKind switch
+            {
+                JsonValueKind.String => Safe(v.GetString()!),
+                JsonValueKind.Null => "",
+                _ => v.GetRawText()
+            })));
+        ConversationMessageView.Copy(string.Join("\n", lines));
+    }
+
     private ScrollViewer Table()
     {
-        var grid = new Grid { RowSpacing = 6, ColumnSpacing = 16, Padding = new Thickness(8) };
+        var grid = new Grid { RowSpacing = 8, ColumnSpacing = 24, Padding = new Thickness(8) };
         var columns = _data.GetProperty("columns").EnumerateArray().Select(v => v.GetString()!).ToArray();
         foreach (var _ in columns) grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         void AddRow(string[] values, bool heading)
@@ -104,6 +127,7 @@ internal sealed class ScientificDataView : Grid
                 var text = ConversationMessageView.Plain(values[i], 13);
                 text.MinWidth = 80; text.MaxWidth = 240;
                 if (heading) text.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+                else if (double.TryParse(values[i], NumberStyles.Float, CultureInfo.InvariantCulture, out _)) text.TextAlignment = TextAlignment.Right;
                 SetRow(text, row); SetColumn(text, i); grid.Children.Add(text);
             }
         }
@@ -124,7 +148,7 @@ internal sealed class ScientificDataView : Grid
         var ds = args.DrawingSession;
         float width = (float)sender.ActualWidth, height = (float)sender.ActualHeight;
         if (width < 100 || height < 100) return;
-        var ink = ActualTheme == ElementTheme.Dark ? Microsoft.UI.Colors.White : Microsoft.UI.Colors.Black;
+        var ink = ScientificVisualStyle.Ink(ActualTheme);
         if (_kind == "topology")
         {
             var positions = new Dictionary<string, Vector2>();
@@ -139,7 +163,7 @@ internal sealed class ScientificDataView : Grid
             foreach (var node in nodes.EnumerateArray())
             {
                 var point = positions[node.GetProperty("id").GetString()!];
-                ds.FillCircle(point, 4, Microsoft.UI.Colors.DodgerBlue);
+                ds.FillCircle(point, 4, ScientificVisualStyle.Series(ActualTheme, 0));
                 ds.DrawText(node.GetProperty("label").GetString()!, point.X + 6, point.Y - 17, ink);
             }
             return;
