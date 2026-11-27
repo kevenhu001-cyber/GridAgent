@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline";
 import { createGridAgent, projectEvent } from "./agent.mjs";
 import { openNativeClient } from "./native-client.mjs";
+import { isolatedShell } from "./isolated-shell.mjs";
 
 // Development worker. The trusted host supplies configuration; never accept
 // executable paths, model URLs, or credentials from model-generated tool args.
@@ -9,7 +10,7 @@ const client = openNativeClient({python: process.env.GRIDAGENT_NATIVE_PYTHON,
   workspace: process.env.GRIDAGENT_NATIVE_WORKSPACE, allowTasks});
 const agent = createGridAgent({client, provider: process.env.GRIDAGENT_PI_PROVIDER,
   modelId: process.env.GRIDAGENT_PI_MODEL, apiKey: process.env.GRIDAGENT_PI_API_KEY,
-  workspace: process.env.GRIDAGENT_NATIVE_WORKSPACE, allowTasks});
+  workspace: process.env.GRIDAGENT_NATIVE_WORKSPACE, allowTasks, runShell: isolatedShell(client)});
 const emit = (event) => process.stdout.write(JSON.stringify(event) + "\n");
 let active = null;
 let stopping = false;
