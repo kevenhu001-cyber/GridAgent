@@ -45,6 +45,11 @@ def workspace_command(root, command, args, *, model_factory=None):
         except Timeout as exc:
             raise ValueError("Dispatch task is already running") from exc
         yield json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False)
+    elif command in {"ac-collection-plan", "ac-collection-resume", "ac-train",
+                     "ac-train-collection", "ac-standard-screening"}:
+        from .research_workbench import workbench_command
+
+        yield from workbench_command(root, command, args)
     elif command == "plugins" and not args:
         from .plugins import status
 

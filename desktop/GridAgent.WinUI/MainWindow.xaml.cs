@@ -527,6 +527,61 @@ public partial class MainWindow : Window
         if (await Confirm("Authorize benchmark repair", "Run the fixed evaluator and allow up to five repairs of the manifest's explicit editable parameters? This uses your model API."))
             await Local("model-repair", picker);
     }
+    private async Task<int> ChooseV2Operation(string title, string[] labels)
+    {
+        var choices = new ComboBox { ItemsSource = labels, SelectedIndex = 0, Header = "Operation", HorizontalAlignment = HorizontalAlignment.Stretch };
+        var answer = await new ContentDialog { XamlRoot = Root.XamlRoot, Title = title, Content = choices,
+            PrimaryButtonText = "Continue", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close }.ShowAsync();
+        return answer == ContentDialogResult.Primary ? choices.SelectedIndex : -1;
+    }
+
+    private async void NewV2Study(object sender, RoutedEventArgs e)
+    {
+        if (_busy || WorkspaceChanged()) return;
+        string[] labels = { "AC engineering IR", "Storage dispatch IR", "AC optimization", "Math program / unit commitment",
+            "DC to AC cross-check", "DC diagnostic experiment", "AC diagnostic experiment", "Adaptive AC experiment",
+            "Evidence-gated AC repair", "Freeze native collection plan (no solver)", "Train from reviewed split file" };
+        string[] commands = { "research-ir", "dispatch-ir", "optimize-ir", "math-program", "ac-check",
+            "diagnostic-experiment", "ac-diagnostic-experiment", "adaptive-ac-experiment", "ac-evidence-repair",
+            "ac-collection-plan", "ac-train" };
+        var index = await ChooseV2Operation("New engineering study", labels);
+        if (index < 0) return;
+        var path = await PickFile(".json");
+        if (path == null || _busy || WorkspaceChanged()) return;
+        if (!await Confirm(labels[index], "Use the selected JSON as the explicit input for this operation? Review its parameters and budgets before continuing.")) return;
+        if (index == 0) await Research(commands[index], path);
+        else await Local(commands[index], path);
+    }
+
+    private async void RecoverV2Study(object sender, RoutedEventArgs e)
+    {
+        if (_busy || WorkspaceChanged()) return;
+        string[] labels = { "Resume dispatch task", "Inspect dispatch task", "Cancel dispatch task", "Resume AC optimization",
+            "Resume math program", "Resume AC cross-check", "Resume DC diagnosis", "Resume AC diagnosis",
+            "Resume adaptive AC", "Resume evidence repair", "Diagnose study evidence", "Index verified repair",
+            "Search AC repair experience", "Run or recover frozen collection", "Train from completed collection" };
+        string[] commands = { "dispatch-resume", "dispatch-status", "dispatch-cancel", "optimize-resume",
+            "math-resume", "ac-check-resume", "diagnostic-experiment-resume", "ac-diagnostic-experiment-resume",
+            "adaptive-ac-experiment-resume", "ac-evidence-repair-resume", "diagnose-study", "remember-ac-repair",
+            "search-ac-experience", "ac-collection-resume", "ac-train-collection" };
+        var index = await ChooseV2Operation("Recover or inspect engineering study", labels);
+        if (index < 0) return;
+        var identifier = new TextBox { Header = "Full task or study ID", Text = (StudyList.SelectedItem as Entry)?.Id ?? "", MaxLength = 64 };
+        if (await new ContentDialog { XamlRoot = Root.XamlRoot, Title = labels[index], Content = identifier,
+            PrimaryButtonText = "Continue", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close }.ShowAsync()
+            != ContentDialogResult.Primary || string.IsNullOrWhiteSpace(identifier.Text)) return;
+        if (_busy || WorkspaceChanged()) return;
+        if (!await Confirm(labels[index], "Run the selected operation on the identified study using its existing authorization?")) return;
+        await Local(commands[index], identifier.Text.Trim());
+    }
+
+    private async void StandardAcScreening(object sender, RoutedEventArgs e)
+    {
+        if (_busy || WorkspaceChanged()) return;
+        if (await Confirm("Public AC screening", "Run base and 110% load cases on case14, case39 and case118 (six AC scenarios). This is screening, not reference-solution certification."))
+            await Local("ac-standard-screening");
+    }
+
     private async void NativeProgram(object sender, RoutedEventArgs e)
     {
         if (_busy) return;

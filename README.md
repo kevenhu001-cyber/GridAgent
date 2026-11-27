@@ -92,14 +92,13 @@ contract, references, sandbox, external runtimes and public benchmarks.
 
 ## Native Windows desktop
 
-GridAgent also has a native WPF/.NET 10 client (no Web UI, Electron or browser
-server). The portable Windows build bundles CPython and numerical dependencies;
+GridAgent uses a native WinUI 3 / Windows App SDK desktop client (no Web UI, Electron or browser server). The WPF source is retained temporarily for regression comparison. The portable Windows build bundles CPython and numerical dependencies;
 no user Python setup is intended. See [Windows setup and build](docs/windows.md). TUI and Windows use
 the same Python engine and can share a local workspace.
 
 ## Architecture
 
-Native Windows WPF / Textual TUI / CLI → LangGraph decision loop → validated tools and budget guard → isolated ANDES solver → waveform CSV and deterministic voltage metrics.
+Native Windows WinUI 3 / Textual TUI / CLI → shared Agent runtime and typed engineering contracts → deterministic execution and isolated professional solvers → independent numerical and physical evidence. See [the v2 roadmap](ROADMAP.md).
 
 - Only packaged Kundur research system and bounded fault parameters are allowed.
 - Solver runs in a separate process with a timeout and per-run working directory.
@@ -165,3 +164,7 @@ bound on the next chat turn, without restarting the application. See [plugin des
 ### Architecture
 
 See [GridAgent architectural direction](docs/architecture.md) for the native workbench, execution boundaries, evidence-backed presentation contracts, and long-term acceptance gates.
+
+## V2 verified engineering workbench
+
+Use Engineering tools → Verified research (v2) to open authorized IR/optimization/diagnostic inputs, recover studies, freeze a native collection plan, train from completed evidence or run public AC screening. Research remains bounded by each input contract. Optional backends must be installed as required. See [native collection](docs/ac-native-collection.md), [decision model](docs/ac-decision-model.md) and [WinUI release gates](docs/winui-workbench.md). These workflows are research prototypes, not certified operations.
