@@ -68,6 +68,21 @@
     <Setter Property="Padding" Value="4,6"/>
     <Setter Property="CornerRadius" Value="8"/>
    </Style>
+   <Style x:Key="WorkbenchRowStyle" TargetType="Border">
+    <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}"/>
+    <Setter Property="BorderThickness" Value="0,0,0,1"/>
+   </Style>
+   <Style x:Key="WorkbenchListItemStyle" TargetType="ListViewItem">
+    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+    <Setter Property="Padding" Value="8,10"/>
+    <Setter Property="MinHeight" Value="52"/>
+   </Style>
+   <DataTemplate x:Key="WorkbenchEntryTemplate">
+    <StackPanel Spacing="4">
+     <TextBlock Text="{Binding Label}" FontSize="15" FontWeight="SemiBold" TextWrapping="WrapWholeWords" MaxLines="2" TextTrimming="CharacterEllipsis"/>
+     <TextBlock Text="{Binding Summary}" FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
+    </StackPanel>
+   </DataTemplate>
    <Style x:Key="WorkbenchPageTitleStyle" TargetType="TextBlock">
     <Setter Property="FontSize" Value="24"/>
     <Setter Property="FontWeight" Value="SemiBold"/>
