@@ -4,7 +4,7 @@ using System.Text;
 namespace GridAgent.Windows;
 
 internal sealed record ScientificChartArtifact(string RunId, string Path, string Sha256, string Title,
-    string XLabel, string YLabel, int SeriesCount, int Points);
+    string XLabel, string YLabel, int SeriesCount, int Points, string ViewKind = "chart", string Summary = "");
 
 internal sealed record ResearchSnapshot(string Id, string Stage, string Summary, int RunsUsed, int MaxRuns);
 
