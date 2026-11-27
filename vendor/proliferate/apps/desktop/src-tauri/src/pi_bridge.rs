@@ -148,7 +148,7 @@ pub async fn pi_list_models() -> Result<Vec<Value>, String> {
 }
 
 impl PiProcess {
-    fn start() -> Result<Self, String> {
+    fn start(provider: &str, stored_key: Option<String>) -> Result<Self, String> {
         if !pi_enabled() {
             return Err("Embedded Pi bridge requires explicit development opt-in".into());
         }
@@ -166,9 +166,8 @@ impl PiProcess {
         }
         // Native credential lookup is host-only; no secret is returned to UI.
         // Explicit developer environment remains supported if no stored key exists.
-        let provider = std::env::var("GRIDAGENT_PI_PROVIDER").map_err(|_| "Pi provider is not configured")?;
-        crate::pi_credentials::validate_provider(&provider)?;
-        if let Some(key) = crate::pi_credentials::read_provider_key(&provider)? {
+        command.env("GRIDAGENT_PI_PROVIDER", provider);
+        if let Some(key) = stored_key {
             command.env("GRIDAGENT_PI_API_KEY", key);
         }
         let mut child = command.spawn().map_err(|_| "Cannot start embedded Pi worker")?;
@@ -211,7 +210,12 @@ pub async fn pi_open(state: State<'_, PiState>, workspace_path: String) -> Resul
     }
     let mut guard = state.0.lock().await;
     if guard.is_some() { return Err("Pi session already open".into()); }
-    let process = PiProcess::start()?;
+    let provider = std::env::var("GRIDAGENT_PI_PROVIDER").map_err(|_| "Pi provider is not configured")?;
+    crate::pi_credentials::validate_provider(&provider)?;
+    let lookup_provider = provider.clone();
+    let stored_key = tauri::async_runtime::spawn_blocking(move || crate::pi_credentials::read_provider_key(&lookup_provider))
+        .await.map_err(|_| "Credential worker unavailable")??;
+    let process = PiProcess::start(&provider, stored_key)?;
     let id = process.session_id.clone();
     *guard = Some(process);
     Ok(id)

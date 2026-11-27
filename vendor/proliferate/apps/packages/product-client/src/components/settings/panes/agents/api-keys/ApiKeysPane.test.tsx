@@ -77,9 +77,11 @@ vi.mock("#product/components/settings/panes/agent-auth/ApiKeyCreatorModal", () =
     heading,
     onSubmit,
     onClose,
+    envVarField,
   }: {
     open: boolean;
     heading: string;
+    envVarField?: {placeholder?: string};
     onSubmit: (input: { title: string; value: string; envVarName: string }) => void;
     onClose: () => void;
   }) =>
@@ -88,7 +90,7 @@ vi.mock("#product/components/settings/panes/agent-auth/ApiKeyCreatorModal", () =
         <div>{heading}</div>
         <button
           type="button"
-          onClick={() => onSubmit({ title: "Personal key", value: "sk-ant-123", envVarName: "" })}
+          onClick={() => onSubmit({ title: "Personal key", value: "sk-ant-123", envVarName: envVarField?.placeholder ?? "" })}
         >
           creator-submit
         </button>
@@ -395,5 +397,29 @@ describe("ApiKeysPane", () => {
     expect(showToast).toHaveBeenCalledWith(
       AGENT_API_KEYS_COPY.revokeReferencedError(["claude", "opencode"]),
     );
+  });
+});
+
+describe("ApiKeysPane native credential adapter", () => {
+  it("reuses the existing pane and modal without querying the cloud vault", async () => {
+    state.authStatus = "anonymous";
+    state.controlPlaneReachable = false;
+    const bridge = {
+      list: vi.fn(async () => [{provider:"openai" as const, configured:true}]),
+      save: vi.fn(async () => {}),
+      remove: vi.fn(async () => {}),
+    };
+    render(<ApiKeysPane local={bridge} />);
+    await screen.findByText("OpenAI");
+    expect(keysEnabled).not.toHaveBeenCalled();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button",{name:AGENT_API_KEYS_COPY.addAction}));
+    await user.click(screen.getByRole("button",{name:"creator-submit"}));
+    await waitFor(()=>expect(bridge.save).toHaveBeenCalledWith("openai","sk-ant-123"));
+    expect(createMutate).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button",{name:"Remove"}));
+    await user.click(screen.getByRole("button",{name:"Remove key"}));
+    await waitFor(()=>expect(bridge.remove).toHaveBeenCalledWith("openai"));
+    expect(revokeMutate).not.toHaveBeenCalled();
   });
 });
