@@ -5,7 +5,7 @@
 **Effective:** 2026-11-27  
 **Status:** Owner-approved product direction; implementation and validation remain pending unless separately demonstrated.
 
-**Desktop migration (2026-11-28):** Use the preserved Proliferate 0.4.27 source as the new desktop baseline rather than building another UI from scratch. [ADR 0002](docs/adr/0002-proliferate-desktop.md) records the transition. The first integration lives in [integration/proliferate](integration/proliferate/README.md). Owner-approved [ADR 0003](docs/adr/0003-native-scientific-runtime.md) supersedes mandatory core MCP: migrate first-party scientific tools into the runtime, retain MCP only for external compatibility.
+**Desktop migration (2026-11-28):** Use the preserved Proliferate 0.4.27 source as the new desktop baseline rather than building another UI from scratch. [ADR 0002](docs/adr/0002-proliferate-desktop.md) records the transition. The first integration lives in [integration/proliferate](integration/proliferate/README.md). Owner-approved [ADR 0003](docs/adr/0003-native-scientific-runtime.md) supersedes mandatory core MCP: migrate first-party scientific tools into the runtime, retain MCP only for external compatibility. Pi is the owner-approved native Agent engine; pin and validate its SDK before implementation.
 
 [AGENTS.md](AGENTS.md) is the repository-wide development contract. [ADR 0001](docs/adr/0001-llm-first.md) records the architectural decision. The [previous PGHA roadmap](docs/history/roadmap-pgha-2026-11-26.md) is archived for reference only and is no longer normative.
 
@@ -19,7 +19,7 @@ This is a local-first research application, not a certified engineering system, 
 
 ## 2. Architecture and boundaries
 
-- **Agent:** Native scientific tool registration in the AnyHarness-based agent is a target; the initial IPC lane is read-only. LLM-led planning, code generation, tool calls, model debugging, experimental decisions and synthesis. Shared state and model context across clients.
+- **Agent:** Pi is the selected first-party Agent engine; embed its SDK in a local worker and adapt its event stream to Proliferate/AnyHarness. Native scientific custom-tool registration is pending; the IPC lane supports read operations and opt-in developer tasks. LLM-led planning, code generation, tool calls, model debugging, experimental decisions and synthesis. Shared state and model context across clients.
 - **Scientific workspace:** persistent scoped code, model files, inputs, logs, data and results; source snapshots and versioned artifacts.
 - **Execution runtime:** OS-isolated authorized Python/command execution, bounded resource use, cancellation, dependency requests, provenance and actionable feedback. Never fall back to unsafe host execution.
 - **Professional libraries:** ANDES, pandapower, NumPy/SciPy, SymPy, HiGHS and Python Control as core capabilities; on-demand PyPSA, OpenDSS, PyBaMM, CVXPY, Pyomo, CasADi and other supported plugins. Expand access to native APIs, not only narrow wrappers.
