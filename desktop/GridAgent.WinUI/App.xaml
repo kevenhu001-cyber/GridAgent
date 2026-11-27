@@ -10,18 +10,21 @@
      <SolidColorBrush x:Key="GridAgentSendBrush" Color="#171717"/>
      <SolidColorBrush x:Key="GridAgentSendInkBrush" Color="#FFFFFF"/>
      <SolidColorBrush x:Key="GridAgentBubbleBrush" Color="#F3F3F3"/>
+     <SolidColorBrush x:Key="GridAgentSidebarBrush" Color="#F8F8F8"/>
     </ResourceDictionary>
     <ResourceDictionary x:Key="Dark">
      <SolidColorBrush x:Key="GridAgentConversationBrush" Color="#212121"/>
      <SolidColorBrush x:Key="GridAgentSendBrush" Color="#FFFFFF"/>
      <SolidColorBrush x:Key="GridAgentSendInkBrush" Color="#171717"/>
      <SolidColorBrush x:Key="GridAgentBubbleBrush" Color="#303030"/>
+     <SolidColorBrush x:Key="GridAgentSidebarBrush" Color="#181818"/>
     </ResourceDictionary>
     <ResourceDictionary x:Key="HighContrast">
      <SolidColorBrush x:Key="GridAgentConversationBrush" Color="{ThemeResource SystemColorWindowColor}"/>
      <SolidColorBrush x:Key="GridAgentSendBrush" Color="{ThemeResource SystemColorHighlightColor}"/>
      <SolidColorBrush x:Key="GridAgentSendInkBrush" Color="{ThemeResource SystemColorHighlightTextColor}"/>
      <SolidColorBrush x:Key="GridAgentBubbleBrush" Color="{ThemeResource SystemColorWindowColor}"/>
+     <SolidColorBrush x:Key="GridAgentSidebarBrush" Color="{ThemeResource SystemColorWindowColor}"/>
     </ResourceDictionary>
    </ResourceDictionary.ThemeDictionaries>
    <Style x:Key="EngineeringCardStyle" TargetType="Border">
@@ -52,6 +55,23 @@
     <Setter Property="Width" Value="38"/>
     <Setter Property="Height" Value="38"/>
     <Setter Property="Padding" Value="0"/>
+   </Style>
+   <Style x:Key="ConversationIconButtonStyle" TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
+    <Setter Property="Width" Value="36"/>
+    <Setter Property="Height" Value="36"/>
+    <Setter Property="Padding" Value="0"/>
+    <Setter Property="CornerRadius" Value="8"/>
+   </Style>
+   <Style x:Key="ConversationActivityButtonStyle" TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
+    <Setter Property="HorizontalAlignment" Value="Stretch"/>
+    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+    <Setter Property="Padding" Value="4,6"/>
+    <Setter Property="CornerRadius" Value="8"/>
+   </Style>
+   <Style x:Key="WorkbenchPageTitleStyle" TargetType="TextBlock">
+    <Setter Property="FontSize" Value="24"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="TextWrapping" Value="Wrap"/>
    </Style>
    <Style x:Key="ConversationMetadataStyle" TargetType="TextBlock">
     <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}"/>
