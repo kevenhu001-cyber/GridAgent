@@ -26,3 +26,11 @@ Shared artifact card and composer styles live in App.xaml; reuse these instead o
 - Activity: a lightweight native disclosure button replaces the large Expander card. The latest action is shown on one trimmed line, and explicit expansion persists across tool updates and item recycling. The durable audit record is unchanged.
 - Subpages: shared page heading typography; model-provider settings separated from execution permission settings. Markdown table content is flat rather than nested in an ornamental card.
 - Tests cover the state of activity disclosure and local conversation list title/ordering. Windows screenshots, theme/focus/DPI and real native compilation remain required for acceptance.
+
+
+## Workbench catalog and detail pass
+
+- Plugins are a flat catalog with one Details action per entry. Package requirements, capabilities, versions and management operations are disclosed in a native details dialog. Download, update, rollback and uninstall retain explicit confirmation and the existing managed installation boundaries. Plugin operation summaries appear in the workbench notification rather than injecting into conversation history.
+- Knowledge is a native local pack list. Exact content ID selects a bounded ten-reference page, with source and version shown and explicit imported/unverified labeling. Import and refresh stay on the page; no model request is needed.
+- Tasks, model revisions, simulation results and studies use a shared two-line list template with clear title and secondary metadata. Model revision diff opens a native detail dialog without switching the active chat. Existing command handlers and simulation semantics remain unchanged.
+- Regression checks cover local reference catalog, pagination and invalid offsets/IDs. Real Windows layout, keyboard navigation, high contrast and screenshots are still pending.
