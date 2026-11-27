@@ -22,6 +22,8 @@ export class PiSessionController {
   };
   private listeners = new Set<Listener>();
   private polling = false;
+  private draining = false;
+  private closing = false;
   private failedTurn = false;
 
   private readonly bridge: DesktopPiBridge;
@@ -66,7 +68,7 @@ export class PiSessionController {
 
   async prompt(text: string) {
     const {status, sessionId} = this.snapshot;
-    if (status !== "ready" || !sessionId || this.polling) throw new Error("Pi session is not ready");
+    if (status !== "ready" || !sessionId || this.polling || this.draining || this.closing) throw new Error("Pi session is not ready");
     if (!text.trim()) throw new Error("Prompt is empty");
     this.failedTurn = false;
     this.publish({status: "sending", failure: null});
@@ -130,23 +132,31 @@ export class PiSessionController {
    * state; cancelling continues to poll until the worker confirms settlement.
    * Call once after prompt; do not use polling as a retry of submission.
    */
-  async drainTurn() {
+  async drainTurn(consume?: (events: readonly PiEvent[]) => void) {
     if (!["running", "cancelling"].includes(this.snapshot.status)) {
       throw new Error("No active Pi turn to drain");
     }
-    while (["running", "cancelling"].includes(this.getSnapshot().status)) {
-      await this.poll();
-      if (["running", "cancelling"].includes(this.getSnapshot().status)) await delay(50);
-    }
-    return this.getSnapshot();
+    if (this.draining) throw new Error("Pi turn already draining");
+    this.draining = true;
+    try {
+      while (["running", "cancelling"].includes(this.getSnapshot().status)) {
+        const events = await this.poll();
+        if (events.length) consume?.(events);
+        if (["running", "cancelling"].includes(this.getSnapshot().status)) await delay(50);
+      }
+      return this.getSnapshot();
+    } finally { this.draining = false; }
   }
 
   async close() {
     const {sessionId, status, requestId} = this.snapshot;
-    if (this.polling || requestId || ["opening", "sending", "running", "cancelling"].includes(status)) {
+    if (this.closing || this.draining || this.polling || requestId || ["opening", "sending", "running", "cancelling"].includes(status)) {
       throw new Error("Wait for Pi settlement before closing");
     }
-    if (sessionId) await this.bridge.close(sessionId);
-    this.publish({status: "closed", sessionId: null, requestId: null, failure: null});
+    this.closing = true;
+    try {
+      if (sessionId) await this.bridge.close(sessionId);
+      this.publish({status: "closed", sessionId: null, requestId: null, failure: null});
+    } finally { this.closing = false; }
   }
 }

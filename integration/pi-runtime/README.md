@@ -64,6 +64,21 @@ key takes precedence for the configured provider at worker startup. Removing
 a local credential does not remotely revoke it or change an already-open
 worker's credential. Linux secure-vault UI is unavailable, not a plaintext fallback.
 
+## Native product session transport
+
+`product-session.ts` binds an explicitly admitted native worker to the retained
+session directory, transcript, ingest and prompt outbox stores. It consumes
+the original prompt ID, reuses the existing stream reducer and stream patch
+builder, and reconciles the outbox using the authoritative user-message echo.
+The existing dispatcher and Cancel workflow recognize Pi session records;
+legacy SSE/summary refresh does not attach to them. Only one live native
+session is supported. Unsupported attachments/config interactions fail
+explicitly. Disconnection/uncertain submission is not replayed. There is no
+second conversation store. This is a qualified transport/materialization seam,
+not yet the production workspace session creation entry point. The composer
+launch gate remains closed until the workspace/session materializer and history
+ownership are connected; no implicit recovery of a restored Pi session.
+
 ## Remaining integration
 
 Follow the [reuse-first inventory](../../docs/proliferate-reuse-audit.md).

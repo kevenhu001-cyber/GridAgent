@@ -1,4 +1,5 @@
 import { useCallback } from "react";
+import { isPiProductSession } from "#product/lib/access/pi/product-session";
 import { useProductHost } from "@proliferate/product-client/host/ProductHostProvider";
 import { openSessionStreamConnection } from "#product/hooks/sessions/lifecycle/session-stream-connection-open";
 import { prepareSessionStreamConnection } from "#product/hooks/sessions/lifecycle/session-stream-connection-prepare";
@@ -23,6 +24,8 @@ export function useSessionStreamConnectionActions({
     sessionId: string,
     options?: SessionStreamConnectOptions,
   ): Promise<void> => {
+    // Native transport owns its reader; never attach AnyHarness SSE to a Pi session.
+    if (isPiProductSession(sessionId)) return;
     const shouldOpenStream = await prepareSessionStreamConnection(sessionId, options, {
       refreshSessionSlotMeta,
       rehydrateSessionSlotFromHistory,

@@ -3,6 +3,7 @@ import {
   type Session,
 } from "@anyharness/sdk";
 import { useCallback } from "react";
+import { isPiProductSession } from "#product/lib/access/pi/product-session";
 import { useProductHost } from "@proliferate/product-client/host/ProductHostProvider";
 import {
   fetchSessionSummary,
@@ -81,6 +82,7 @@ export function useSessionRuntimeActions() {
       isCurrent?: () => boolean;
     },
   ): Promise<void> => {
+    if (isPiProductSession(sessionId)) return;
     try {
       if (options?.isCurrent && !options.isCurrent()) {
         return;
