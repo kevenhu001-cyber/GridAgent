@@ -88,7 +88,7 @@ public partial class MainWindow
     private async void OpenScientificChart(ScientificChartArtifact chart)
     {
         if (_busy || WorkspaceChanged()) { Notify("Wait for the current operation before opening a chart.", InfoBarSeverity.Warning); return; }
-        await Execute(new { action = "scientific-chart-open", run = chart.RunId, path = chart.Path, sha256 = chart.Sha256 });
+        await Execute(new { action = chart.ViewKind == "chart" ? "scientific-chart-open" : "scientific-view-open", run = chart.RunId, path = chart.Path, sha256 = chart.Sha256 });
     }
     private void AddTool(string label) { _conversation.Activity(label); UpdateConversationViewport(); }
 }
