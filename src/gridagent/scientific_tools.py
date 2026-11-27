@@ -91,6 +91,20 @@ def scientific_tools(root):
         return runtime.execute(root, entry, plugin, arguments, plugin_ids=plugin_ids)
 
     @tool
+    def present_scientific_view(run_id: str, path: str) -> dict:
+        """Present a committed .view.json output using schema='gridagent.view.v1', title and kind.
+        heatmap/surface: x_label,y_label,value_label,x,y (evenly spaced ascending), z[y][x].
+        topology: nodes=[{id,label,x,y}] (positions 0..1), edges=[{source,target}] (undirected).
+        table: columns=[str], rows=[[number|string|bool|null]]. Use actual calculated data.
+        Limits: heatmap 64x64, surface 32x32, topology 100 nodes/200 links, table 100x12.
+        Format validation is not independent physical validation; no solver attempt is spent.
+        """
+        from .scientific_views import view_artifact
+
+        descriptor, _ = view_artifact(root, run_id, path)
+        return descriptor
+
+    @tool
     def present_scientific_chart(run_id: str, path: str) -> dict:
         """Present a committed .chart.json output from a successful scientific run in native chat.
         Format: schema='gridagent.chart.v1', title, x_label, y_label, scatter (bool),
@@ -188,6 +202,6 @@ def scientific_tools(root):
         return workspace.promote_artifact(root, run_id, path, destination, expected_sha256)
 
     return [scientific_environment, list_project_files, read_project_file, inspect_project_file, write_project_file,
-            execute_python, read_scientific_artifact, present_scientific_chart, edit_project_file, list_scientific_runs,
+            execute_python, read_scientific_artifact, present_scientific_chart, present_scientific_view, edit_project_file, list_scientific_runs,
             inspect_scientific_run, promote_scientific_artifact, list_scientific_libraries, inspect_native_api,
             search_native_documentation, inspect_installed_api_source]
