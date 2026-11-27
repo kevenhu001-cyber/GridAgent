@@ -13,7 +13,7 @@ Review combined distribution and network-source obligations before release.
 Proliferate's Tauri/React desktop and AnyHarness own the conversation,
 provider selection and general Agent lifecycle. GridAgent supplies the Python
 scientific runtime as a workspace-scoped MCP server, not another LLM Agent.
-Keep the original desktop implementations available for rollback until parity.
+The owner requested removal of WinUI and WPF; historical code remains in Git history.
 
 ## Developer connection (manual first)
 
@@ -53,6 +53,6 @@ unrestricted host execution of generated scientific code.
   assets from the distributable application; retain original attribution.
 - Integrate charts, tables, topology and scientific artifacts into the existing
   design system. Do not create a second unrelated desktop shell.
-- Verify Windows packaging and real native solver runs before replacing WinUI.
+- Verify Windows packaging and real native solver runs before distributing the new desktop.
 
 No desktop end-to-end test or sandbox implementation is claimed by this phase.
