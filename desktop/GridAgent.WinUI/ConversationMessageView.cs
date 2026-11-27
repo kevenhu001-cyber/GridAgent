@@ -61,7 +61,7 @@ public sealed class ConversationMessageView : UserControl
             panel.Children.Add(new TextBlock { Text = chart.Title, FontSize = 18,
                 FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
             panel.Children.Add(Plain(chart.ViewKind == "chart" ? $"{chart.XLabel} · {chart.YLabel} · {chart.SeriesCount} series · {chart.Points} samples" : $"{chart.ViewKind} · {chart.Summary}", 13));
-            panel.Children.Add(Plain("Unverified script output · Run " + chart.RunId[..8], 12));
+            panel.Children.Add(Metadata("Unverified script output · Run " + chart.RunId[..8]));
             var open = new Button { Content = "Open scientific view", HorizontalAlignment = HorizontalAlignment.Left };
             open.Click += (_, _) => message.OpenScientificChart?.Invoke(chart);
             panel.Children.Add(open);
@@ -98,7 +98,7 @@ public sealed class ConversationMessageView : UserControl
             open.Click += (_, _) => { if (message.Research is ResearchSnapshot task) message.OpenTask?.Invoke(task.Id); };
             taskPanel.Children.Add(open);
             layout.Children.Add(new Border { Style = (Style)Application.Current.Resources["EngineeringCardStyle"], Padding = new Thickness(16),
-                BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12), Child = taskPanel });
+                BorderThickness = new Thickness(1), Child = taskPanel });
             message.PropertyChanged += MessageChanged;
             UpdateResearch();
         }
@@ -160,6 +160,12 @@ public sealed class ConversationMessageView : UserControl
         if (_message.ActivityCount > _message.Activity.Count)
             _details.Children.Add(Plain("Showing the most recent 100 summaries."));
         foreach (var line in _message.Activity) _details.Children.Add(Plain(line, 13));
+    }
+    internal static TextBlock Metadata(string text)
+    {
+        var block = Plain(text, 13);
+        block.Style = (Style)Application.Current.Resources["ConversationMetadataStyle"];
+        return block;
     }
     internal static TextBlock Plain(string text, double size = 15) => new()
     { Text = text, FontSize = size, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, LineHeight = size * 1.45 };
