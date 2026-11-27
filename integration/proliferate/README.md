@@ -16,7 +16,7 @@ Review combined distribution and network-source obligations before release.
 
 ## Architecture
 
-The target desktop embeds Pi as the first-party Agent engine with direct scientific tool registration. Proliferate's Tauri/React desktop and AnyHarness provide the existing UI/session integration and optional external Agent compatibility. Pi integration remains pending; the initial historical MCP instructions below apply only to external interoperability. GridAgent supplies Python scientific capability; the original workspace-scoped MCP server remains available as optional external interoperability, not another LLM Agent.
+The target desktop embeds Pi as its sole Agent engine with direct scientific tool registration. Reuse Proliferate UI and only useful non-Agent/session infrastructure from AnyHarness. External Agent hosting, installation, discovery, authentication, selection and packaging must be removed. Pi integration and the external-Agent code removal remain pending. The historical MCP instructions below describe standalone interoperability outside the desktop, not a supported desktop Agent connection. GridAgent supplies Python scientific capability; the original workspace-scoped MCP server remains available as optional external interoperability, not another LLM Agent.
 The owner requested removal of WinUI and WPF; historical code remains in Git history.
 
 ## Developer connection (manual first)
@@ -29,8 +29,7 @@ python -m gridagent.mcp_server --workspace /absolute/path/to/existing/workspace
 ```
 
 The process speaks MCP over stdin/stdout; do not launch it as a web server.
-In Proliferate's MCP integration settings (or the selected harness's local MCP
-settings), register the absolute Python executable and arguments from
+In an independent MCP client outside GridAgent, register the absolute Python executable and arguments from
 `mcp.example.json`. Replace both placeholder paths before use.
 This is a conventional stdio MCP configuration example, not a verified
 Proliferate configuration-file schema. Actual UI registration and transport
@@ -44,14 +43,13 @@ uses only GridAgent's existing isolated runtime, with no host fallback.
 
 Use `agent-instructions.md` as the domain instruction text for the selected
 harness or project. Do not inject provider credentials into MCP arguments.
-A terminal-capable external harness must also be configured to disallow
-unrestricted host execution of generated scientific code.
+This standalone interface does not authorize GridAgent to launch or manage external Agent processes.
 
 ## Acceptance gates
 
 - Import and verify the source tree and license.
 - Run the real stdio protocol and permission regression tests.
-- Build the desktop locally and register native scientific tools in a verified harness; test MCP separately for compatibility.
+- Build the desktop locally and register native scientific tools in the embedded Pi SDK; test MCP separately for compatibility.
 - Validate workspace selection, cancellation, permission prompts and data boundaries.
 - Remove upstream cloud endpoints, update channels, telemetry and trademark
   assets from the distributable application; retain original attribution.
