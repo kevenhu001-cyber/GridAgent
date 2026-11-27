@@ -5,7 +5,7 @@
 **Effective:** 2026-11-27  
 **Status:** Owner-approved product direction; implementation and validation remain pending unless separately demonstrated.
 
-**Desktop migration (2026-11-28):** Use the preserved Proliferate 0.4.27 source as the new desktop baseline rather than building another UI from scratch. [ADR 0002](docs/adr/0002-proliferate-desktop.md) records the transition. The first integration lives in [integration/proliferate](integration/proliferate/README.md). Owner-approved [ADR 0003](docs/adr/0003-native-scientific-runtime.md) supersedes mandatory core MCP: migrate first-party scientific tools into the runtime, retain MCP only for external compatibility. Pi is the owner-approved native Agent engine; pin and validate its SDK before implementation.
+**Desktop migration (2026-11-28):** Use the preserved Proliferate 0.4.27 source as the new desktop baseline rather than building another UI from scratch. [ADR 0002](docs/adr/0002-proliferate-desktop.md) records the transition. The first integration lives in [integration/proliferate](integration/proliferate/README.md). Owner-approved [ADR 0003](docs/adr/0003-native-scientific-runtime.md) supersedes mandatory core MCP: migrate first-party scientific tools into the runtime, retain MCP only for external compatibility. Pi is the owner-approved sole desktop Agent engine; pin and validate its SDK. External Agent hosting is out of scope, not a fallback.
 
 [AGENTS.md](AGENTS.md) is the repository-wide development contract. [ADR 0001](docs/adr/0001-llm-first.md) records the architectural decision. The [previous PGHA roadmap](docs/history/roadmap-pgha-2026-11-26.md) is archived for reference only and is no longer normative.
 
@@ -19,7 +19,7 @@ This is a local-first research application, not a certified engineering system, 
 
 ## 2. Architecture and boundaries
 
-- **Agent:** Pi is the selected first-party Agent engine; embed its SDK in a local worker and adapt its event stream to Proliferate/AnyHarness. Native scientific custom-tool registration is pending; the IPC lane supports read operations and opt-in developer tasks. LLM-led planning, code generation, tool calls, model debugging, experimental decisions and synthesis. Shared state and model context across clients.
+- **Agent:** Pi is the sole supported desktop Agent engine; embed its SDK in a local worker and adapt its event stream to the retained Proliferate UI/session contracts. Remove external Agent catalogs, launchers, installers, provider-specific Agent login screens and binary seeds. Retain model selection, not Agent selection. Native scientific custom-tool registration is pending; the IPC lane supports read operations and opt-in developer tasks. LLM-led planning, code generation, tool calls, model debugging, experimental decisions and synthesis. Shared state and model context across clients.
 - **Scientific workspace:** persistent scoped code, model files, inputs, logs, data and results; source snapshots and versioned artifacts.
 - **Execution runtime:** OS-isolated authorized Python/command execution, bounded resource use, cancellation, dependency requests, provenance and actionable feedback. Never fall back to unsafe host execution.
 - **Professional libraries:** ANDES, pandapower, NumPy/SciPy, SymPy, HiGHS and Python Control as core capabilities; on-demand PyPSA, OpenDSS, PyBaMM, CVXPY, Pyomo, CasADi and other supported plugins. Expand access to native APIs, not only narrow wrappers.
@@ -51,7 +51,7 @@ The normal workflow is a single LLM deciding what to do next after actual tool f
 
 ## 5. Transition from existing code
 
-- Retain plugin management, numerical backends, model revisions, journals, independent verification and artifacts. Retain LangGraph for TUI and CLI; the Proliferate-based client uses its external harness as the sole LLM loop. Remove the retired WinUI and WPF clients and their build infrastructure.
+- Retain plugin management, numerical backends, model revisions, journals, independent verification and artifacts. Retain LangGraph for TUI and CLI; the Proliferate-based desktop uses Pi as its sole LLM loop. The existing Python CLI/TUI are first-party development surfaces, not external Agents; their eventual Pi convergence is separate work. Remove the retired WinUI and WPF clients and their build infrastructure.
 - Generalize existing sandbox code beyond the special AC reference workflow; use secure implementation and fail closed on unsupported platforms. Do not equate dependency/process isolation with OS-level isolation.
 - Review existing specialist policies as optional tools, isolate benchmarks from the primary chat flow, and avoid adding new mandatory controllers. Do not delete verified implementation before migration and tests.
 - Re-review open PRs #6–#8 under the new direction. Keep generic workbench, reference solvers and useful research artifacts; do not merge expert-system behavior as default. These are review instructions, not assertions that PRs have merged.
