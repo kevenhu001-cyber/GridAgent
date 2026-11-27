@@ -98,8 +98,14 @@ public partial class MainWindow : Window
     }
     private async void NavigationInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)
     {
-        if (args.InvokedItemContainer is NavigationViewItem item && item.Tag is Entry session)
-            await OpenSessionById(session.Id);
+        if (args.InvokedItemContainer is not NavigationViewItem item) return;
+        if (item.Tag is Entry session) await OpenSessionById(session.Id);
+        else if (item.Tag as string == "new-chat") NewSession(sender, new RoutedEventArgs());
+        else if (item.Tag as string == "search-chat")
+        {
+            Navigation.SelectedItem = Navigation.MenuItems.OfType<NavigationViewItem>().First(i => (string?)i.Tag == "studies");
+            SessionSearch.Focus(FocusState.Programmatic);
+        }
     }
     private void SearchSessions(object sender, TextChangedEventArgs args)
     {
@@ -120,7 +126,7 @@ public partial class MainWindow : Window
         RecentConversations.MenuItems.Clear();
         foreach (var session in sessions.Take(12))
         {
-            var item = new NavigationViewItem { Content = session.Label, Tag = session, SelectsOnInvoked = false };
+            var item = new NavigationViewItem { Content = new TextBlock { Text = session.Label, TextTrimming = TextTrimming.CharacterEllipsis, MaxLines = 1 }, Tag = session, SelectsOnInvoked = false };
             ToolTipService.SetToolTip(item, session.Label);
             RecentConversations.MenuItems.Add(item);
         }
@@ -288,7 +294,10 @@ public partial class MainWindow : Window
     {
         if (_busy) return;
         ClearMessages(); ShowChat();
+        Mode.SelectedIndex = 0;
+        Prompt.Text = "";
         await Execute(new { action = "new", lightweight = true });
+        Prompt.Focus(FocusState.Programmatic);
     }
 
     private async void OpenSession(object sender, RoutedEventArgs e)
