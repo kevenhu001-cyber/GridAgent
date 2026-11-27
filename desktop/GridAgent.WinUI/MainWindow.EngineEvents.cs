@@ -13,6 +13,14 @@ public partial class MainWindow
         switch (kind)
         {
             case "plugins": _pluginCatalog = data.Clone(); RenderPlugins(); break;
+            case "knowledge_packs":
+                var packs = data.EnumerateArray().Select(x => new Entry(x.GetProperty("id").GetString()!,
+                    x.GetProperty("title").GetString()!, Summary: x.GetProperty("entries").GetInt32() + " references")).ToList();
+                KnowledgePacks.ItemsSource = packs;
+                KnowledgeEmpty.Visibility = packs.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+                break;
+            case "knowledge_pack": _knowledgePage = data.Clone(); break;
+            case "workbench_result": Notify(data.GetString() ?? "Operation completed."); break;
             case "model_settings":
                 ModelName.Text = data.GetProperty("model").GetString() ?? "";
                 BaseUrl.Text = data.GetProperty("base_url").GetString() ?? "";
@@ -28,20 +36,20 @@ public partial class MainWindow
                 StudyList.ItemsSource = data.EnumerateArray().Select(x =>
                 {
                     var id = x.GetProperty("id").GetString()!;
-                    return new Entry(id, id[..Math.Min(12, id.Length)] + " · " + x.GetProperty("status").GetString());
+                    return new Entry(id, "Study " + id[..Math.Min(12, id.Length)], Summary: x.GetProperty("status").GetString());
                 }).ToList();
                 break;
             case "runs":
                 RunList.ItemsSource = data.EnumerateArray().Select(x =>
                 {
                     var id = x.GetProperty("id").GetString()!;
-                    return new Entry(id, $"{x.GetProperty("operation")} · {x.GetProperty("case")} · {x.GetProperty("status")} · {id[..Math.Min(8, id.Length)]}");
+                    return new Entry(id, x.GetProperty("operation").GetString()!.Replace('_', ' '), Summary: $"{x.GetProperty("case")} · {x.GetProperty("status")} · {id[..Math.Min(8, id.Length)]}");
                 }).ToList();
                 break;
             case "research_tasks":
                 var selected = (ResearchList.SelectedItem as Entry)?.Id ?? _activeResearch;
                 var tasks = data.EnumerateArray().Select(x => new Entry(x.GetProperty("id").GetString()!,
-                    x.GetProperty("stage").GetString() + " · " + x.GetProperty("prompt").GetString())).ToList();
+                    x.GetProperty("prompt").GetString() ?? "Research task", Summary: x.GetProperty("stage").GetString()?.Replace('_', ' '))).ToList();
                 ResearchList.ItemsSource = tasks;
                 ResearchList.SelectedItem = tasks.FirstOrDefault(x => x.Id == selected);
                 break;
@@ -63,7 +71,7 @@ public partial class MainWindow
                     return new Entry(x.GetProperty("id").GetString()!, x.GetProperty("name").GetString()!,
                         $"{diff.GetProperty("element")} {diff.GetProperty("index")} · {diff.GetProperty("field")} · " +
                         $"{diff.GetProperty("before")} → {diff.GetProperty("value")}\nParent run {x.GetProperty("parent_run")}\n" +
-                        $"SHA-256 {x.GetProperty("sha256")}");
+                        $"SHA-256 {x.GetProperty("sha256")}", Summary: $"{diff.GetProperty("element")} · {diff.GetProperty("field")}");
                 }).ToList();
                 break;
             case "scientific_view":
