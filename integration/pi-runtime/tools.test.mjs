@@ -25,7 +25,7 @@ test("Pi native function dispatch maps to bounded IPC without MCP", async () => 
 test("public projection drops thought and raw tool payloads", () => {
   assert.equal(projectEvent({type: "message_update", assistantMessageEvent: {type: "thinking_delta", delta: "private"}}), null);
   assert.deepEqual(projectEvent({type: "tool_execution_start", toolCallId: "1", toolName: "read", args: {secret: "x"}}),
-    {kind: "tool_started", id: "1", name: "read"});
+    {kind: "tool_started", tool_id: "1", name: "read"});
 });
 
 import { defaultTools } from "./default-tools.mjs";

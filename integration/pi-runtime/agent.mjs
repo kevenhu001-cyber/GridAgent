@@ -43,9 +43,9 @@ export function projectEvent(event) {
         return {kind: "text", delta: event.assistantMessageEvent.delta};
       return null;
     case "tool_execution_start":
-      return {kind: "tool_started", id: event.toolCallId, name: event.toolName};
+      return {kind: "tool_started", tool_id: event.toolCallId, name: event.toolName};
     case "tool_execution_end":
-      return {kind: "tool_finished", id: event.toolCallId, name: event.toolName, error: event.isError};
+      return {kind: "tool_finished", tool_id: event.toolCallId, name: event.toolName, error: event.isError};
     default: return null;
   }
 }
