@@ -222,9 +222,8 @@ def test_multiple_managed_plugins_are_read_only_and_recorded(tmp_path, monkeypat
         from filelock import FileLock, Timeout
 
         for key in targets:
-            with pytest.raises(Timeout):
-                with FileLock(str(plugins.plugin_root() / (key + ".lock")), timeout=0):
-                    pytest.fail("Plugin lock released too soon")
+            with pytest.raises(Timeout), FileLock(str(plugins.plugin_root() / (key + ".lock")), timeout=0):
+                pytest.fail("Plugin lock released too soon")
         rows = ET.fromstring(config).findall("MappedFolders/MappedFolder")
         assert [row.findtext("ReadOnly") for row in rows] == ["true", "true", "false", "true", "true"]
         assert [row.findtext("SandboxFolder") for row in rows[-2:]] == [
