@@ -17,3 +17,12 @@ Owner direction: ChatGPT-inspired, quiet, content-first interaction. Applies to 
 For every UI change check light/dark/high contrast, 100/150/200% DPI, narrow/wide window, empty/loading/error/streaming/completed states, keyboard navigation, screen reader labels, scroll position, long labels and units. Keep tool and visualization results usable at narrow widths. Include actual before/after Windows screenshots and visual smoke evidence when available; otherwise explicitly mark the visual acceptance pending. Automated tests or compilation alone do not prove visual fidelity. Do not claim pixel-identical ChatGPT UI or internal design compliance.
 
 Shared artifact card and composer styles live in App.xaml; reuse these instead of repeating local values. Subsequent workbench changes must follow this contract.
+
+
+## Shell and conversation implementation pass
+
+- Sidebar: native new-conversation and search actions, recent conversations ordered by activity and displayed with bounded first-question titles for unnamed sessions. Explicit titles remain unchanged. New conversation resets to the primary assistant mode.
+- Chat: one compact model label; icon actions share sizing; composer and reading column share width, with numerical verification notice outside the composer. Optional verified/multi-agent modes remain explicitly selectable.
+- Activity: a lightweight native disclosure button replaces the large Expander card. The latest action is shown on one trimmed line, and explicit expansion persists across tool updates and item recycling. The durable audit record is unchanged.
+- Subpages: shared page heading typography; model-provider settings separated from execution permission settings. Markdown table content is flat rather than nested in an ornamental card.
+- Tests cover the state of activity disclosure and local conversation list title/ordering. Windows screenshots, theme/focus/DPI and real native compilation remain required for acceptance.
