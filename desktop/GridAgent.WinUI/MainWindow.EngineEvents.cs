@@ -65,6 +65,15 @@ public partial class MainWindow
                         $"SHA-256 {x.GetProperty("sha256")}");
                 }).ToList();
                 break;
+            case "scientific_chart":
+                var scientificChart = new ScientificChartArtifact(data.GetProperty("run_id").GetString()!,
+                    data.GetProperty("path").GetString()!, data.GetProperty("sha256").GetString()!,
+                    data.GetProperty("title").GetString()!, data.GetProperty("x_label").GetString()!,
+                    data.GetProperty("y_label").GetString()!, data.GetProperty("series_count").GetInt32(),
+                    data.GetProperty("points").GetInt32());
+                _conversation.ScientificChart(scientificChart, OpenScientificChart);
+                UpdateConversationViewport();
+                break;
             case "analysis_charts":
                 var charts = data.EnumerateArray().Select(chart => new ChartData(chart.GetProperty("title").GetString()!,
                     chart.GetProperty("x_label").GetString()!, chart.GetProperty("y_label").GetString()!,
