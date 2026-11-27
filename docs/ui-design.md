@@ -34,3 +34,8 @@ Shared artifact card and composer styles live in App.xaml; reuse these instead o
 - Knowledge is a native local pack list. Exact content ID selects a bounded ten-reference page, with source and version shown and explicit imported/unverified labeling. Import and refresh stay on the page; no model request is needed.
 - Tasks, model revisions, simulation results and studies use a shared two-line list template with clear title and secondary metadata. Model revision diff opens a native detail dialog without switching the active chat. Existing command handlers and simulation semantics remain unchanged.
 - Regression checks cover local reference catalog, pagination and invalid offsets/IDs. Real Windows layout, keyboard navigation, high contrast and screenshots are still pending.
+
+
+## Scientific viewer consistency pass
+
+Use ScientificVisualStyle for native viewer title, icon actions, series palette and gridlines. Series labels use normal theme foreground with separate color swatches rather than colored text; swatches update when the theme changes. Reset zoom and copy actions use accessible names and tooltips. Structured tables offer tab-separated clipboard export with formula-like string cells treated as text, and numeric-looking cells aligned right. Preserve source data, units, unverified labels, native drawing and existing interaction boundaries. High-contrast palette rendering and actual Windows visual acceptance are not established by this source-only pass.
