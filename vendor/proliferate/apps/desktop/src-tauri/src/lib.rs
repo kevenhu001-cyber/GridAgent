@@ -273,6 +273,7 @@ pub fn run() {
         .manage(window_chrome::WindowChromeZoom::default())
         .invoke_handler(tauri::generate_handler![
             scientific::scientific_read,
+            scientific::scientific_task,
             anonymous_telemetry::load_anonymous_telemetry_bootstrap,
             anonymous_telemetry::save_anonymous_telemetry_state,
             config::get_app_config,
