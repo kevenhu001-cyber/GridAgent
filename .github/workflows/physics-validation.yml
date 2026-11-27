@@ -1,0 +1,28 @@
+name: Independent Physics Validation
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/gridagent/ac_reference.py'
+      - 'src/gridagent/dynamic_control_benchmark.py'
+      - 'scripts/run_physics_validation.py'
+      - '.github/workflows/physics-validation.yml'
+permissions:
+  contents: read
+jobs:
+  physics-reference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -e '.[dev,engineering]'
+      - run: python scripts/run_physics_validation.py physics-workspace physics-reports
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: independent-physics-reports
+          path: physics-reports/
+          if-no-files-found: warn

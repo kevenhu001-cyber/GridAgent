@@ -35,7 +35,19 @@ def solve_reference(case):
         raise ValueError("Reference supports a single slack and active PQ/PV buses")
     nonref = np.flatnonzero(kind != 3)
     y = np.diag((bus[:, 4] + 1j * bus[:, 5]) / base)
-    for row in branch:
+    # pandapower exports extended charging/admittance columns separately.
+    def extension(name):
+        value = np.asarray(case.get(name, np.zeros(len(branch))))
+        if value.shape != (len(branch),) or not np.isfinite(value).all():
+            raise ValueError("Invalid branch extension: " + name)
+        if np.iscomplexobj(value) and np.any(value.imag):
+            raise ValueError("Unsupported complex branch extension")
+        return value.real
+
+    g = extension("branch_g")
+    r_asym, x_asym = extension("branch_r_asym"), extension("branch_x_asym")
+    g_asym, b_asym = extension("branch_g_asym"), extension("branch_b_asym")
+    for k, row in enumerate(branch):
         if row[10] <= 0:
             continue
         if not np.isfinite(row[[0, 1, 2, 3, 4, 8, 9, 10]]).all():
@@ -44,13 +56,17 @@ def solve_reference(case):
         z = complex(row[2], row[3])
         if f == t or abs(z) < 1e-12:
             raise ValueError("Unsupported zero impedance or self-loop")
-        series = 1 / z
-        shunt = 0.5j * row[4]
+        z_reverse = z + complex(r_asym[k], x_asym[k])
+        if abs(z_reverse) < 1e-12:
+            raise ValueError("Unsupported reverse zero impedance")
+        series, reverse = 1 / z, 1 / z_reverse
+        shunt = complex(g[k], row[4]) / 2
+        reverse_shunt = shunt + complex(g_asym[k], b_asym[k]) / 2
         tap = (row[8] or 1.0) * np.exp(1j * np.deg2rad(row[9]))
         y[f, f] += (series + shunt) / abs(tap)**2
         y[f, t] -= series / np.conj(tap)
-        y[t, f] -= series / tap
-        y[t, t] += series + shunt
+        y[t, f] -= reverse / tap
+        y[t, t] += reverse + reverse_shunt
     specified = -(bus[:, 2] + 1j * bus[:, 3]) / base
     vm = np.ones(n)
     va = np.zeros(n)
@@ -137,6 +153,9 @@ def compare_public_run(workspace, network, scale, run_id):
     # Rebuild from the named factory, not from result files.
     net = getattr(networks, network)()
     net.load["scaling"] *= scale
+    for column in ("const_z_p_percent", "const_i_p_percent", "const_z_q_percent", "const_i_q_percent"):
+        if column in net.load and np.any(net.load[column].fillna(0).to_numpy() != 0):
+            raise ValueError("Reference only supports constant-power loads")
     converted = to_ppc(net, calculate_voltage_angles=True, trafo_model="t",
                        check_connectivity=True, init="flat", mode="pf")
     reference = solve_reference(converted)
