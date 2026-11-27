@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "gridagent": {
+      "command": "/absolute/path/to/gridagent/venv/python",
+      "args": [
+        "-m",
+        "gridagent.mcp_server",
+        "--workspace",
+        "/absolute/path/to/research-workspace"
+      ]
+    }
+  }
+}
