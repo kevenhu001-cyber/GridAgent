@@ -304,7 +304,7 @@ def list_scientific_runs(root, limit=20):
     for _, identifier in sorted(rows, reverse=True)[:limit]:
         try:
             item = run_status(root, identifier)
-            result.append({key: item.get(key) for key in ("run_id", "status", "entry", "plugin",
+            result.append({key: item.get(key) for key in ("run_id", "status", "entry", "plugin", "plugin_ids",
                                                           "reason", "cancellation_requested")})
         except (OSError, ValueError):
             result.append({"run_id": identifier, "status": "invalid_record"})
