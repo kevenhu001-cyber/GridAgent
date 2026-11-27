@@ -23,13 +23,12 @@ must be explicit, not the default core dependency.
 A desktop-owned, workspace-bound native read lane with strict request IDs,
 bounded frames, no shell, no automatic retry, and no credentials passed from
 model or renderer. The development host selects Python and workspace through
-environment variables. Python service has no execution or mutation endpoint.
+environment variables. The default Python lane has no execution or mutation endpoint. A separately opted-in debug lane exposes hash-guarded writes and durable asynchronous jobs, still requiring the existing workspace grant.
 Desktop TypeScript client calls Tauri directly.
 
 ## Next gates
 1. Integrate workspace selection and packaged runtime discovery in the host.
-2. Provide a separate, authorized task/write lane with run cancellation,
-   events, durable job IDs and recovery. Preserve sandbox fail-closed behavior.
+2. Developer task/write lane with durable job IDs and cooperative cancellation is implemented; complete event delivery and explicit interrupted-job recovery, then enable only through authorized production host controls. Preserve sandbox fail-closed behavior.
 3. Inspect AnyHarness adapter/session tool registration, implement native
    scientific tool routing for a verified adapter, and test with actual LLM
    calls. External CLI providers may require compatibility adapters.
@@ -38,5 +37,5 @@ Desktop TypeScript client calls Tauri directly.
 5. Remove upstream cloud/telemetry/update dependencies and verify Windows build,
    sandbox isolation, user permissions and end-to-end modeling.
 
-No performance improvement, agent-native tool invocation, or Windows runtime
+No measured performance improvement, agent-native tool invocation, or Windows runtime
 acceptance is established by the initial IPC implementation.
