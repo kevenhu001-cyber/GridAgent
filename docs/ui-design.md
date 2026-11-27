@@ -39,3 +39,8 @@ Shared artifact card and composer styles live in App.xaml; reuse these instead o
 ## Scientific viewer consistency pass
 
 Use ScientificVisualStyle for native viewer title, icon actions, series palette and gridlines. Series labels use normal theme foreground with separate color swatches rather than colored text; swatches update when the theme changes. Reset zoom and copy actions use accessible names and tooltips. Structured tables offer tab-separated clipboard export with formula-like string cells treated as text, and numeric-looking cells aligned right. Preserve source data, units, unverified labels, native drawing and existing interaction boundaries. High-contrast palette rendering and actual Windows visual acceptance are not established by this source-only pass.
+
+
+## Global feedback and empty-state pass
+
+Use the native search FontIcon, preserve the explicit icon contract check, disable sending empty prompts, hide the idle operation footer and expose accurate loading labels for active commands. Workbench lists distinguish not-yet-loaded and confirmed empty; session search distinguishes no matches. Errors from conversational operations remain inline; other operation failures use the existing InfoBar, without injecting a second error into chat or displaying raw provider diagnostics. No speculative progress percentages or custom animation loops. Existing native transitions and focus behaviors remain. Windows high-contrast, narrow-window and visual acceptance are pending.
