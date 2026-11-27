@@ -66,7 +66,7 @@ public sealed class ConversationMessageView : UserControl
             open.Click += (_, _) => message.OpenScientificChart?.Invoke(chart);
             panel.Children.Add(open);
             layout.Children.Add(new Border { Style = (Style)Application.Current.Resources["EngineeringCardStyle"],
-                Padding = new Thickness(16), CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1), Child = panel });
+                Child = panel });
         }
         else if (message.Artifact != null)
         {
@@ -241,7 +241,7 @@ internal static class NativeMarkdown
                 var quoted = new StackPanel { Spacing = 6 };
                 foreach (var child in quote) AddBlock(quoted, child, source, depth + 1);
                 panel.Children.Add(Card(quoted)); break;
-            case ThematicBreakBlock: panel.Children.Add(new Border { Height = 1, Style = (Style)Application.Current.Resources["EngineeringCardStyle"], BorderThickness = new Thickness(0, 0, 0, 1) }); break;
+            case ThematicBreakBlock: panel.Children.Add(new Border { Height = 1, Padding = new Thickness(0), Style = (Style)Application.Current.Resources["EngineeringCardStyle"], BorderThickness = new Thickness(0, 0, 0, 1) }); break;
             default: panel.Children.Add(ConversationMessageView.Plain(Raw(block, source))); break;
         }
     }
