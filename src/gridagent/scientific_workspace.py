@@ -139,9 +139,13 @@ def list_project(root):
     return {"status": "ok", "files": scan(project(root))}
 
 
-def read_project(root, path):
+def read_project(root, path, offset=0, limit=24000):
+    if not 0 <= offset <= MAX_FILE or not 1 <= limit <= 24000:
+        raise ValueError("Invalid project file pagination")
     data = bounded_bytes(scoped(project(root), path), MAX_FILE)
-    return {"status": "ok", "path": path, "sha256": sha(data), "text": data.decode("utf-8")}
+    text = data.decode("utf-8")
+    return {"status": "ok", "path": path, "sha256": sha(data), "text": text[offset:offset+limit],
+            "next_offset": offset+limit if offset+limit < len(text) else None}
 
 
 def write_project(root, path, text, expected_sha256=None):

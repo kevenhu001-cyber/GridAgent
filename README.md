@@ -6,7 +6,7 @@ Developed by **TopoDrive**. Lead developer: **Adex Hu**.
 
 An open-source **LLM-first scientific coding agent for power systems, electrical engineering and energy storage**. GridAgent provides the scientific workspace, professional solvers, documentation, execution and visualization; the LLM formulates models, writes code, designs experiments and interprets results.
 
-**Product direction:** not an expert system with an AI front end. General-purpose isolated scientific execution and native solver API access are the highest-priority development goals. Read [AGENTS.md](AGENTS.md), the [active roadmap](ROADMAP.md) and [ADR 0001](docs/adr/0001-llm-first.md) before contributing. Existing fixed workflows are optional research tools; the general sandbox is still being developed.
+**Product direction:** not an expert system with an AI front end. General-purpose isolated scientific execution and native solver API access are the highest-priority development goals. Read [AGENTS.md](AGENTS.md), the [active roadmap](ROADMAP.md) and [ADR 0001](docs/adr/0001-llm-first.md) before contributing. Existing fixed workflows are optional research tools. The [scientific workspace preview](docs/scientific-workspace.md) adds opt-in Python execution on Windows; real sandbox acceptance and stronger resource controls remain pending.
 
 **Status: early development.** Independent implementation; not an official reproduction or production grid-control system.
 

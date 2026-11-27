@@ -90,7 +90,11 @@ def _launch(root, folder, executable, config):
             if time.monotonic() >= deadline:
                 state, reason = "timeout", "Execution exceeded time budget"
                 break
-            ws.scan(output, limit=ws.MAX_OUTPUT, per_file=ws.MAX_OUTPUT)
+            try:
+                ws.scan(output, limit=ws.MAX_OUTPUT, per_file=ws.MAX_OUTPUT)
+            except FileNotFoundError:
+                # A guest may legitimately rename or remove an intermediate output.
+                continue
             if marker.exists():
                 state, reason = "finished", None
                 break
@@ -117,6 +121,7 @@ def execute(root, entry, plugin=None):
         plugins.spec(plugin)
         plugin_lock = FileLock(str(plugins.plugin_root() / (plugin + ".lock")), timeout=0)
     with FileLock(str(root / "scientific-execution.lock"), timeout=0), plugin_lock:
+        ws.require_grant(root)
         target = plugins.installed_target(plugin) if plugin is not None else None
         if plugin is not None and target is None:
             raise ValueError("Install this managed plugin before using its native API")

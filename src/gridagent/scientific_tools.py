@@ -1,6 +1,7 @@
 """Tool registration for the primary LLM; no engineering decision policy."""
 from typing import Annotated
 
+from filelock import Timeout
 from langchain_core.tools import tool
 from pydantic import Field
 
@@ -20,9 +21,10 @@ def scientific_tools(root):
         return workspace.list_project(root)
 
     @tool
-    def read_project_file(path: str) -> dict:
-        """Read UTF-8 project source or data with the content fingerprint."""
-        return workspace.read_project(root, path)
+    def read_project_file(path: str, offset: int = 0,
+                          limit: Annotated[int, Field(ge=1, le=24000)] = 12000) -> dict:
+        """Read a page of UTF-8 project source or data with the full content fingerprint."""
+        return workspace.read_project(root, path, offset, limit)
 
     @tool
     def write_project_file(path: str, text: Annotated[str, Field(max_length=1048576)],
@@ -40,7 +42,7 @@ def scientific_tools(root):
         """
         try:
             return runtime.execute(root, entry, plugin)
-        except (OSError, ValueError, SyntaxError) as exc:
+        except (OSError, ValueError, SyntaxError, Timeout) as exc:
             return {"status": "failed", "reason": str(exc)[:500]}
 
     @tool
