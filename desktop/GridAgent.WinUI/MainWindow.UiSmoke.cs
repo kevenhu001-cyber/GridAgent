@@ -42,6 +42,18 @@ public partial class MainWindow
             _workspaceIndexLoaded = true;
             RefreshEmptyStates();
 
+            // WinUI queues TextChanged and layout work on the UI dispatcher.
+            // Wait for the observable state, rather than checking before the event runs.
+            async Task RequireAsync(Func<bool> condition, string failure)
+            {
+                var deadline = Environment.TickCount64 + 3000;
+                while (!condition())
+                {
+                    if (Environment.TickCount64 >= deadline) throw new InvalidOperationException(failure);
+                    await Task.Delay(50);
+                }
+            }
+
             async Task SelectPage(string key)
             {
                 Navigation.SelectedItem = key == "settings" ? Navigation.SettingsItem :
@@ -55,8 +67,8 @@ public partial class MainWindow
                     "knowledge" => KnowledgePage, "settings" => SettingsPage,
                     _ => throw new InvalidOperationException("Unknown smoke page")
                 };
-                if (page.Visibility != Visibility.Visible || page.ActualWidth <= 0 || page.ActualHeight <= 0)
-                    throw new InvalidOperationException("Invalid layout for " + key);
+                await RequireAsync(() => page.Visibility == Visibility.Visible && page.ActualWidth > 0 && page.ActualHeight > 0,
+                    "Invalid layout for " + key);
                 StartupDiagnostics.Record("ui.page." + key);
             }
             async Task Snapshot(string name)
@@ -71,13 +83,17 @@ public partial class MainWindow
                     byte[] bytes = new byte[pixels.Length];
                     using (var reader = DataReader.FromBuffer(pixels)) reader.ReadBytes(bytes);
                     var path = Path.Combine(output, name + ".png");
-                    File.WriteAllBytes(path, Array.Empty<byte>());
-                    var file = await StorageFile.GetFileFromPathAsync(path);
-                    using var stream = await file.OpenAsync(FileAccessMode.ReadWrite);
-                    var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
-                    encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied,
-                        (uint)bitmap.PixelWidth, (uint)bitmap.PixelHeight, 96, 96, bytes);
-                    await encoder.FlushAsync();
+                    var temp = path + ".tmp";
+                    File.WriteAllBytes(temp, Array.Empty<byte>());
+                    var file = await StorageFile.GetFileFromPathAsync(temp);
+                    using (var stream = await file.OpenAsync(FileAccessMode.ReadWrite))
+                    {
+                        var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
+                        encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied,
+                            (uint)bitmap.PixelWidth, (uint)bitmap.PixelHeight, 96, 96, bytes);
+                        await encoder.FlushAsync();
+                    }
+                    File.Move(temp, path, overwrite: true);
                     StartupDiagnostics.Record("ui.snapshot." + name);
                 }
                 catch (Exception ex)
@@ -90,9 +106,14 @@ public partial class MainWindow
             Root.RequestedTheme = ElementTheme.Light;
             await SelectPage("chat");
             Prompt.Text = "";
-            if (SendButton.IsEnabled) throw new InvalidOperationException("Empty prompt enabled");
+            await RequireAsync(() => !SendButton.IsEnabled, "Empty prompt enabled");
             Prompt.Text = "Example follow-up";
-            if (!SendButton.IsEnabled) throw new InvalidOperationException("Nonempty prompt disabled");
+            await RequireAsync(() => SendButton.IsEnabled, "Nonempty prompt disabled");
+            Prompt.Text = "   ";
+            await RequireAsync(() => !SendButton.IsEnabled, "Whitespace-only prompt enabled");
+            Prompt.Text = "Example follow-up";
+            await RequireAsync(() => SendButton.IsEnabled, "Re-entered prompt disabled");
+            StartupDiagnostics.Record("ui.composer.complete");
             await Snapshot("chat-light");
             foreach (var page in new[] { "tasks", "models", "runs", "studies", "tools", "plugins", "knowledge", "settings" })
                 await SelectPage(page);
@@ -114,7 +135,7 @@ public partial class MainWindow
             var plot = new ScientificPlotView(new[] { chart });
             var plotWindow = OpenEngineeringWindow("UI smoke chart", plot, plot.Release);
             await Task.Delay(350);
-            if (plot.ActualWidth <= 0) throw new InvalidOperationException("Chart did not lay out");
+            await RequireAsync(() => plot.ActualWidth > 0 && plot.ActualHeight > 0, "Chart did not lay out");
             plotWindow.Close();
             StartupDiagnostics.Record("ui.viewer.chart");
             foreach (var raw in new[] {
@@ -127,7 +148,7 @@ public partial class MainWindow
                 var viewer = new ScientificDataView(json.RootElement.Clone());
                 var window = OpenEngineeringWindow("UI smoke view", viewer, viewer.Release);
                 await Task.Delay(300);
-                if (viewer.ActualWidth <= 0) throw new InvalidOperationException("Scientific view did not lay out");
+                await RequireAsync(() => viewer.ActualWidth > 0 && viewer.ActualHeight > 0, "Scientific view did not lay out");
                 window.Close();
                 StartupDiagnostics.Record("ui.viewer." + json.RootElement.GetProperty("kind").GetString());
             }
