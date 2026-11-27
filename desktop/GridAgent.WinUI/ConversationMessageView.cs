@@ -55,6 +55,19 @@ public sealed class ConversationMessageView : UserControl
             message.PropertyChanged += MessageChanged;
             UpdateActivity();
         }
+        else if (message.ScientificChart is ScientificChartArtifact chart)
+        {
+            var panel = new StackPanel { Spacing = 8 };
+            panel.Children.Add(new TextBlock { Text = chart.Title, FontSize = 18,
+                FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+            panel.Children.Add(Plain($"{chart.XLabel} · {chart.YLabel} · {chart.SeriesCount} series · {chart.Points} samples", 13));
+            panel.Children.Add(Plain("Unverified script output · Run " + chart.RunId[..8], 12));
+            var open = new Button { Content = "Open interactive chart", HorizontalAlignment = HorizontalAlignment.Left };
+            open.Click += (_, _) => message.OpenScientificChart?.Invoke(chart);
+            panel.Children.Add(open);
+            layout.Children.Add(new Border { Style = (Style)Application.Current.Resources["EngineeringCardStyle"],
+                Padding = new Thickness(16), CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1), Child = panel });
+        }
         else if (message.Artifact != null)
         {
             _artifactHost = new ContentControl { HorizontalContentAlignment = HorizontalAlignment.Stretch };
