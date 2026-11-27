@@ -130,7 +130,9 @@ def status(root):
             "scope": "compatible managed plugins only; no host fallback; no network"}
 
 
-def _launch(root, folder, executable, config):
+def _launch(root, folder, executable, config, *, cancelled=None):
+    if cancelled is not None and cancelled():
+        return "cancelled", "Cancellation requested before sandbox startup"
     session = str(uuid4())
     ws.atomic_bytes(folder / "session-id.txt", session.encode("ascii"))
     record = {"run_id": folder.name, "session_id": session}
@@ -148,7 +150,8 @@ def _launch(root, folder, executable, config):
                        timeout=60, check=True, **kwargs)
         deadline = time.monotonic() + TIMEOUT
         while True:
-            if not ws.enabled(root) or (folder / "cancel-requested").exists():
+            if (not ws.enabled(root) or (folder / "cancel-requested").exists()
+                    or (cancelled is not None and cancelled())):
                 state, reason = "cancelled", "Cancellation or authorization revoked"
                 break
             if time.monotonic() >= deadline:
@@ -175,7 +178,8 @@ def _launch(root, folder, executable, config):
     return state, reason
 
 
-def execute(root, entry, plugin=None, arguments=None, *, probe=None, plugin_ids=None):
+def execute(root, entry, plugin=None, arguments=None, *, probe=None, plugin_ids=None,
+            run_id=None, cancelled=None):
     ws.require_grant(root)
     ws.safe_parts(entry)
     if not entry.endswith(".py"):
@@ -192,7 +196,14 @@ def execute(root, entry, plugin=None, arguments=None, *, probe=None, plugin_ids=
         if active_session(root) is not None:
             raise ValueError("Unresolved sandbox session; ask the user to run scientific recovery")
         environment = preflight(runtime, targets)
-        identifier = uuid4().hex
+        identifier = uuid4().hex if run_id is None else run_id
+        from re import fullmatch
+
+        if not isinstance(identifier, str) or not fullmatch(r"[a-f0-9]{32}", identifier):
+            raise ValueError("Invalid scientific run ID")
+        if cancelled is not None and cancelled():
+            return {"run_id": identifier, "status": "cancelled", "artifacts": [],
+                    "reason": "Cancellation requested before preparation"}
         folder = ws.directory(root, "scientific-runs") / identifier
         folder.mkdir()
         inputs = folder / "input"
@@ -231,7 +242,10 @@ def execute(root, entry, plugin=None, arguments=None, *, probe=None, plugin_ids=
         ws.atomic_bytes(folder / "manifest.json", json.dumps(plan, allow_nan=False).encode())
         config = configuration(runtime, inputs, output, plugin_targets=targets.values())
         ws.atomic_bytes(folder / "sandbox.wsb", config.encode())
-        state, reason = _launch(root, folder, executable, config)
+        if cancelled is None:
+            state, reason = _launch(root, folder, executable, config)
+        else:
+            state, reason = _launch(root, folder, executable, config, cancelled=cancelled)
         result = {**plan, "status": state, "reason": reason, "artifacts": [], "exit_code": None,
                   "verification": "unverified_script_output"}
         if state != "cleanup_unconfirmed":
