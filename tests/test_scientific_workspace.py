@@ -192,3 +192,86 @@ def test_launch_journals_before_start_and_preserves_failed_stop(tmp_path, monkey
     assert status == "cleanup_unconfirmed"
     assert runtime.active_session(tmp_path)["run_id"] == folder.name
     assert [args[1] for args in calls] == ["start", "stop"]
+
+
+def _distribution(root, name, version):
+    folder = root / f"{name}-{version}.dist-info"
+    folder.mkdir(parents=True)
+    (folder / "METADATA").write_text(f"Name: {name}\nVersion: {version}\n",
+                                    encoding="utf-8")
+
+
+def test_multiple_managed_plugins_are_read_only_and_recorded(tmp_path, monkeypatch):
+    from gridagent import plugins
+    from gridagent.scientific_library import selected_plugins
+
+    ws.set_enabled(tmp_path, True)
+    ws.write_project(tmp_path, "main.py", "print(1)")
+    core = tmp_path / "runtime"
+    _distribution(core / "Lib/site-packages", "shared", "1.0")
+    targets = {key: tmp_path / key for key in ("cvxpy", "pypsa")}
+    for key, target in targets.items():
+        _distribution(target, key, "1.0")
+        _distribution(target, "shared", "1.0")
+    monkeypatch.setenv("GRIDAGENT_PLUGIN_ROOT", str(tmp_path / "plugin-locks"))
+    monkeypatch.setattr(plugins, "installed_target", targets.get)
+    monkeypatch.setattr(plugins, "installed_metadata", lambda key: {})
+    monkeypatch.setattr(runtime, "require_runtime", lambda: ("fake-wsb", core))
+
+    def launch(root, folder, executable, config):
+        from filelock import FileLock, Timeout
+
+        for key in targets:
+            with pytest.raises(Timeout):
+                with FileLock(str(plugins.plugin_root() / (key + ".lock")), timeout=0):
+                    pytest.fail("Plugin lock released too soon")
+        rows = ET.fromstring(config).findall("MappedFolders/MappedFolder")
+        assert [row.findtext("ReadOnly") for row in rows] == ["true", "true", "false", "true", "true"]
+        assert [row.findtext("SandboxFolder") for row in rows[-2:]] == [
+            r"C:\GridAgentPlugin0", r"C:\GridAgentPlugin1"]
+        assert [row.findtext("HostFolder") for row in rows[-2:]] == [
+            str(targets["pypsa"]), str(targets["cvxpy"])]
+        assert ET.fromstring(config).findtext("Networking") == "Disable"
+        (folder / "output/exit-code.txt").write_text("0")
+        return "finished", None
+
+    monkeypatch.setattr(runtime, "_launch", launch)
+    result = runtime.execute(tmp_path, "main.py", plugin_ids=["pypsa", "cvxpy"])
+    assert result["status"] == "ok"
+    assert result["plugin_ids"] == ["pypsa", "cvxpy"]
+    assert result["environment"]["import_precedence"] == ["project", "pypsa", "cvxpy", "core"]
+    assert not result["environment"]["conflicts"]
+    assert result["verification"] == "unverified_script_output"
+    assert selected_plugins("pypsa") == ("pypsa",)
+    with pytest.raises(ValueError, match="Duplicate"):
+        selected_plugins(plugin_ids=["pypsa", "pypsa"])
+    with pytest.raises(ValueError, match="either"):
+        selected_plugins("pypsa", ["cvxpy"])
+    with pytest.raises(ValueError, match="Unknown"):
+        selected_plugins(plugin_ids=["untrusted"])
+    with pytest.raises(ValueError, match="at most"):
+        selected_plugins(plugin_ids=["pypsa"] * 5)
+
+
+def test_dependency_conflict_rejected_before_sandbox_start(tmp_path, monkeypatch):
+    from gridagent import plugins
+    from gridagent.scientific_library import environment_inventory
+    from gridagent.scientific_tools import scientific_failure
+
+    ws.set_enabled(tmp_path, True)
+    ws.write_project(tmp_path, "main.py", "print(1)")
+    core = tmp_path / "runtime"
+    _distribution(core / "Lib/site-packages", "shared_lib", "1.0")
+    targets = {"cvxpy": tmp_path / "cvxpy", "pypsa": tmp_path / "pypsa"}
+    _distribution(targets["cvxpy"], "shared_lib", "1.0")
+    _distribution(targets["pypsa"], "shared-lib", "2.0")
+    monkeypatch.setenv("GRIDAGENT_PLUGIN_ROOT", str(tmp_path / "locks"))
+    monkeypatch.setattr(plugins, "installed_target", targets.get)
+    monkeypatch.setattr(runtime, "require_runtime", lambda: ("fake-wsb", core))
+    monkeypatch.setattr(runtime, "_launch", lambda *args: pytest.fail("Unexpected sandbox launch"))
+    info = environment_inventory(core, targets)
+    assert info["conflicts"][0]["distribution"] == "shared-lib"
+    with pytest.raises(ValueError, match="Scientific dependency conflict") as error:
+        runtime.execute(tmp_path, "main.py", plugin_ids=["cvxpy", "pypsa"])
+    assert scientific_failure(error.value)["error_code"] == "dependency_conflict"
+    assert not (tmp_path / "scientific-runs").exists()
