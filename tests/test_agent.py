@@ -279,3 +279,52 @@ def test_llm_can_select_multi_plugin_environment_and_recover_from_conflict(tmp_p
         {"messages": [HumanMessage(content="Combine numerical libraries")], "used": 0, "calls": 0, "rounds": 0})
     assert attempts == [["pypsa", "cvxpy"], ["pypsa"]]
     assert result["used"] == 2 and result["calls"] == 2
+
+
+def test_agent_recalls_interrupted_task_without_replaying_solver(tmp_path):
+    from langchain_core.messages import ToolMessage
+
+    from gridagent.store import ResearchStore, recorded_task
+
+    store = ResearchStore(tmp_path / "research.sqlite3")
+    session = store.create_session()
+    interrupted = store.start_task(session, "Earlier model study")
+    store.append(interrupted, "tools", {"messages": [
+        ToolMessage(content='{"status":"ok","run_id":"old-run"}', tool_call_id="prior")], "used": 1})
+    store.finish(interrupted, "interrupted")
+    event = store.session_evidence(session, interrupted)["events"][0]["id"]
+
+    class Model:
+        def __init__(self):
+            self.turn = 0
+
+        def bind_tools(self, tools):
+            assert "read_session_evidence" in {item.name for item in tools}
+            return self
+
+        def invoke(self, messages):
+            self.turn += 1
+            if self.turn == 1:
+                assert not any(isinstance(item, ToolMessage) for item in messages)
+                args = {"task_id": interrupted}
+            elif self.turn == 2:
+                info = json.loads(messages[-2].content)
+                assert info["task_status"] == "interrupted"
+                args = {"task_id": interrupted, "event_id": event}
+            else:
+                info = json.loads(messages[-2].content)
+                assert "old-run" in info["text"]
+                return AIMessage(content="Retrieved a historical result; the earlier task was interrupted.")
+            return AIMessage(content="", tool_calls=[{"name": "read_session_evidence",
+                "args": args, "id": str(self.turn)}])
+
+    sim = FakeSimulator()
+    graph = build_agent(Model(), sim, budget=0, workspace=tmp_path,
+                        session_store=store, session_id=session)
+    updates = list(recorded_task(graph, store, session, "Continue the investigation"))
+    assert not sim.requests
+    tool_updates = [item["tools"] for item in updates if "tools" in item]
+    assert tool_updates[-1]["used"] == 0 and tool_updates[-1]["calls"] == 2
+    latest = store.tasks(session)[-1]
+    assert latest["status"] == "completed"
+    assert any("context_metrics" in row["payload"] for row in store.events(latest["id"]))
