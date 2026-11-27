@@ -16,12 +16,12 @@ Reuse Proliferate's Tauri/React desktop, shared design system and AnyHarness
 where appropriate, not the previously proposed from-scratch Tauri shell.
 The external harness is the sole LLM loop in the new desktop.
 GridAgent provides local scientific tools and evidence through a bounded,
-workspace-scoped MCP service. Legacy WinUI/TUI/CLI can continue to use the
+workspace-scoped MCP service. TUI/CLI can continue to use the
 existing LangGraph loop without nesting it in the new harness.
 
 ## Transition and acceptance
 
-1. Preserve source and verify provenance; keep existing client operational.
+1. Preserve source and verify provenance; remove the retired WinUI and WPF clients per owner direction. Keep TUI and CLI operational.
 2. Test MCP transport, workspace grant and failure behavior.
 3. Register MCP in an actual desktop harness and prove an end-to-end
    scientific workflow with real artifacts.
@@ -29,7 +29,7 @@ existing LangGraph loop without nesting it in the new harness.
    assumptions, and integrate existing scientific artifacts into the
    Proliferate design system. Review license and third-party assets.
 5. Verify sandbox boundaries independently of harness terminal permissions,
-   Windows builds/installer, and real scientific execution before defaulting
-   to the new client. No release until acceptance.
+   Windows builds/installer, and real scientific execution before releasing
+   the new client. No release until acceptance.
 
 See [integration guide](../../integration/proliferate/README.md).
