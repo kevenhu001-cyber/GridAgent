@@ -72,10 +72,7 @@ See [workspace commands](docs/workspace.md) for TUI and offline result inspectio
 
 ## Verified research tasks
 
-In Windows, expand **Workspace and model settings** to save a model name and
-OpenAI-compatible base URL and test the connection. The key stays in the running
-application session. In the TUI, type `/model` or press `Ctrl+P`, including when
-starting offline.
+In the TUI, type `/model` or press `Ctrl+P`, including when starting offline.
 
 ```text
 gridagent --research "Check AC bus voltages for the IEEE14 base case and a 10% load increase"
@@ -85,10 +82,8 @@ gridagent --research-resume TASK_ID
 gridagent --research-report TASK_ID report.json
 ```
 
-The Windows **Run research task** button and TUI `/research` command use the same
-engine. Choose **Run with multiple agents**, `/research-multi`, or
-`--research-mode multi` for the specialist workflow. The Tasks view can resume,
-cancel, submit clarifications, approve proposed repair ranges and export JSON.
+The TUI `/research` command and CLI use the same engine. Choose **Run with multiple agents**, `/research-multi`, or
+`--research-mode multi` for the specialist workflow. The research engine supports resume, cancellation, clarifications, repair approval and JSON export.
 See [verified workflow and experiments](docs/research-tasks.md) for the model
 contract, references, sandbox, external runtimes and public benchmarks.
 
@@ -96,15 +91,15 @@ contract, references, sandbox, external runtimes and public benchmarks.
 
 The new desktop direction reuses the preserved Proliferate 0.4.27 Tauri/React workbench rather than starting another interface from scratch. GridAgent's scientific Python tools are exposed through an optional local MCP server; the external harness owns the LLM loop. See [integration setup and acceptance gates](integration/proliferate/README.md). This migration is not yet a validated desktop release.
 
-## Native Windows desktop (legacy during migration)
+## Desktop status
 
-GridAgent has a native WinUI 3 Windows client (no Web UI, Electron or browser server). The older WPF implementation remains temporarily for regression comparison. The portable Windows build bundles CPython and numerical dependencies;
-no user Python setup is intended. See [Windows setup and build](docs/windows.md). TUI and Windows use
-the same Python engine and can share a local workspace.
+The retired WinUI/WPF desktop is removed from this migration branch. The Proliferate-based desktop is the only supported development direction; Windows packaging and desktop end-to-end validation are pending. TUI and CLI remain available.
 
 ## Architecture
 
-Native WinUI / Textual TUI / CLI → LLM-led LangGraph tool loop → scoped scientific workspace and execution runtime → professional numerical libraries → artifacts, logs and independent verification → LLM.
+Proliferate desktop → AnyHarness → local GridAgent MCP scientific tools → shared Python execution and solvers (desktop integration pending acceptance).
+
+Textual TUI / CLI → LLM-led LangGraph tool loop → scoped scientific workspace and execution runtime → professional numerical libraries → artifacts, logs and independent verification → LLM.
 
 The current chat path supports typed native solver tools and script drafting. General autonomous Python execution is a target capability, not yet available through the normal chat loop. Numerical attempts are bounded and saved locally; solver non-convergence is not proof of physical instability.
 
@@ -129,7 +124,7 @@ PowerAgentBench source, case files and training memory (not test memory).
 `gridagent --paper-edit Kqp Kqi Kvp Kvi` creates an isolated, verified Solar model edit.
 Paper ranking alone is prediction-only. Optional licensed adapters are available via
 --paper-dmq PROFILE and --paper-dsr PROFILE; see docs/upstream-integration.md.
-They require dedicated installed simulator environments and are not yet license-tested. Windows bundles these assets.
+They require dedicated installed simulator environments and are not yet license-tested.
 
 ## General research agent
 
@@ -137,7 +132,7 @@ The default chat now supports recorded engineering plans, user-approved ANDES
 workbook registration, Kundur/IEEE14/IEEE39, topology inspection, branch-hop
 paths, existing-run retrieval, waveform analysis and fingerprinted comparisons.
 Use `gridagent --import-model case.xlsx`, `gridagent --models`, then ask a
-research question in chat. The Windows file picker and TUI share the registry.
+research question in chat.
 
 General chat can also compare hypothetical steady-state scenarios with bounded
 uniform PQ load scaling and one in-service branch outage, without modifying the
@@ -145,14 +140,14 @@ original workbook. See [general agent](docs/general-agent.md) for boundaries.
 
 ## Native simulation libraries
 
-Install `.[core]` for the default ANDES/pandapower Windows runtime.
+Install `.[core]` for the default ANDES/pandapower scientific runtime.
 The full developer extra `.[engineering]` includes PyPSA; production installs it on demand. The normal agent can compose typed
 native simulation programs and read result tables; `--native-program FILE.json`
 also runs them offline. See [native backends](docs/native-backends.md).
 
 ### Simulation plugins
 
-Use the native **Simulation Plugins** window or `gridagent --plugins`,
+Use `gridagent --plugins`,
 `gridagent --plugin-install pypsa`, `gridagent --plugin-remove pypsa`.
 Optional managed backends: PyPSA, OpenDSS, PyBaMM, pvlib, windpowerlib, CVXPY, Pyomo, CasADi, PYPOWER, PyPowSyBl, OSQP, scikit-rf, CoolProp and rainflow. Tools and curated prompts are
 bound on the next chat turn, without restarting the application. See [plugin design](docs/plugins.md).
