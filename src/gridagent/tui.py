@@ -374,7 +374,8 @@ class GridApp(App):
             from .simulator import AndesSimulator
 
             graph = build_agent(self._configured_model(), AndesSimulator(self.workspace / "runs"),
-                                budget=self.budget, workspace=self.workspace)
+                                budget=self.budget, workspace=self.workspace,
+                                session_store=self.store, session_id=self.sid)
             for event in recorded_task(graph, self.store, self.sid, question):
                 for node, update in event.items():
                     if "used" in update:
