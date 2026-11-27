@@ -2,7 +2,6 @@
 import json
 import subprocess
 import time
-from contextlib import nullcontext
 from pathlib import Path
 from uuid import UUID, uuid4
 from xml.etree import ElementTree as ET
@@ -11,6 +10,7 @@ from filelock import FileLock
 
 from . import plugins
 from . import scientific_workspace as ws
+from .scientific_library import MAX_PLUGINS, managed_targets, preflight, selected_plugins
 from .verified_python import require_runtime
 
 PROTOCOL = "scientific-python-v1"
@@ -27,10 +27,8 @@ from pathlib import Path
 project = Path(r"C:\GridAgentWork")
 shutil.copytree(r"C:\GridAgentInput\project", project)
 entry = sys.argv[1]
-sys.path.insert(0, str(project))
-plugin = Path(r"C:\GridAgentPlugin")
-if plugin.is_dir():
-    sys.path.insert(0, str(plugin))
+plugin_paths = [Path(r"C:\GridAgentPlugin" + str(index)) for index in range(4)]
+sys.path[0:0] = [str(project), *(str(path) for path in plugin_paths if path.is_dir())]
 os.environ["GRIDAGENT_PROJECT_DIR"] = str(project)
 os.environ["GRIDAGENT_OUTPUT_DIR"] = r"C:\GridAgentOutput"
 os.chdir(project)
@@ -39,7 +37,7 @@ runpy.run_path(str(project / entry), run_name="__main__")
 """
 
 
-def configuration(runtime, inputs, output, plugin=None):
+def configuration(runtime, inputs, output, plugin=None, *, plugin_targets=()):
     config = ET.Element("Configuration")
     for name in ("Networking", "VGpu", "ClipboardRedirection", "PrinterRedirection", "AudioInput", "VideoInput"):
         ET.SubElement(config, name).text = "Disable"
@@ -47,8 +45,11 @@ def configuration(runtime, inputs, output, plugin=None):
     mappings = ET.SubElement(config, "MappedFolders")
     folders = [(runtime, r"C:\GridAgentRuntime", True), (inputs, r"C:\GridAgentInput", True),
                (output, r"C:\GridAgentOutput", False)]
-    if plugin is not None:
-        folders.append((plugin, r"C:\GridAgentPlugin", True))
+    targets = (plugin,) if plugin is not None else tuple(plugin_targets)
+    if len(targets) > MAX_PLUGINS:
+        raise ValueError("Too many plugin mappings")
+    for index, target in enumerate(targets):
+        folders.append((target, r"C:\GridAgentPlugin" + str(index), True))
     for host, guest, readonly in folders:
         row = ET.SubElement(mappings, "MappedFolder")
         ET.SubElement(row, "HostFolder").text = str(host)
@@ -125,7 +126,8 @@ def status(root):
             "plugins": [{"id": row["id"], "versions": row["versions"],
                          "managed_available": plugins.installed_target(row["id"]) is not None}
                         for row in plugins.status()],
-            "scope": "one optional managed plugin per run; no host fallback; no network"}
+            "max_plugins_per_run": MAX_PLUGINS,
+            "scope": "compatible managed plugins only; no host fallback; no network"}
 
 
 def _launch(root, folder, executable, config):
@@ -173,7 +175,7 @@ def _launch(root, folder, executable, config):
     return state, reason
 
 
-def execute(root, entry, plugin=None, arguments=None, *, probe=None):
+def execute(root, entry, plugin=None, arguments=None, *, probe=None, plugin_ids=None):
     ws.require_grant(root)
     ws.safe_parts(entry)
     if not entry.endswith(".py"):
@@ -184,17 +186,12 @@ def execute(root, entry, plugin=None, arguments=None, *, probe=None):
         raise ValueError("Invalid Python arguments")
     executable, runtime = require_runtime()
     root = Path(root).resolve()
-    plugin_lock = nullcontext()
-    if plugin is not None:
-        plugins.spec(plugin)
-        plugin_lock = FileLock(str(plugins.plugin_root() / (plugin + ".lock")), timeout=0)
-    with FileLock(str(root / "scientific-execution.lock"), timeout=0), plugin_lock:
+    ids = selected_plugins(plugin, plugin_ids)
+    with FileLock(str(root / "scientific-execution.lock"), timeout=0), managed_targets(ids) as targets:
         ws.require_grant(root)
         if active_session(root) is not None:
             raise ValueError("Unresolved sandbox session; ask the user to run scientific recovery")
-        target = plugins.installed_target(plugin) if plugin is not None else None
-        if plugin is not None and target is None:
-            raise ValueError("Install this managed plugin before using its native API")
+        environment = preflight(runtime, targets)
         identifier = uuid4().hex
         folder = ws.directory(root, "scientific-runs") / identifier
         folder.mkdir()
@@ -227,10 +224,12 @@ def execute(root, entry, plugin=None, arguments=None, *, probe=None):
             "move /y C:\\GridAgentOutput\\exit.tmp C:\\GridAgentOutput\\exit-code.txt > NUL\r\n",
             encoding="ascii")
         plan = {"protocol": PROTOCOL, "run_id": identifier, "entry": entry, "inputs": snapshot,
-                "arguments": arguments, "api_probe": probe, "plugin": plugin, "plugin_versions": plugins.installed_metadata(plugin).get("versions", {})
-                if plugin else {}, "timeout_seconds": TIMEOUT}
+                "arguments": arguments, "api_probe": probe, "plugin": ids[0] if len(ids) == 1 else None,
+                "plugin_ids": list(ids),
+                "plugin_versions": plugins.installed_metadata(ids[0]).get("versions", {}) if len(ids) == 1 else {},
+                "environment": environment, "timeout_seconds": TIMEOUT}
         ws.atomic_bytes(folder / "manifest.json", json.dumps(plan, allow_nan=False).encode())
-        config = configuration(runtime, inputs, output, target)
+        config = configuration(runtime, inputs, output, plugin_targets=targets.values())
         ws.atomic_bytes(folder / "sandbox.wsb", config.encode())
         state, reason = _launch(root, folder, executable, config)
         result = {**plan, "status": state, "reason": reason, "artifacts": [], "exit_code": None,
