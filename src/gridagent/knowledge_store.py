@@ -1,6 +1,7 @@
 """Local, explicitly imported, attributed engineering reference packs."""
 import hashlib
 import json
+import re
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -55,6 +56,23 @@ def list_packs(root):
     with closing(connect(root)) as db:
         return [{"id": key, "title": title, "entries": len(json.loads(payload)["entries"])}
                 for key, title, payload in db.execute("SELECT id,title,payload FROM packs ORDER BY title,id")]
+
+
+def pack_page(root, identifier, offset=0):
+    """Bounded native reference inspection, by exact content ID, never a path."""
+    if not isinstance(identifier, str) or not re.fullmatch(r"[a-f0-9]{64}", identifier):
+        raise ValueError("Invalid reference pack ID")
+    if type(offset) is not int or not 0 <= offset < 1000 or offset % 10:
+        raise ValueError("Invalid reference page offset")
+    with closing(connect(root)) as db:
+        row = db.execute("SELECT payload FROM packs WHERE id=?", (identifier,)).fetchone()
+    if row is None:
+        raise ValueError("Reference pack not found")
+    pack = ReferencePack.model_validate_json(row[0])
+    if offset >= len(pack.entries):
+        raise ValueError("Reference page is out of range")
+    return {"id": identifier, "title": pack.title, "total": len(pack.entries), "offset": offset,
+            "entries": [entry.model_dump() for entry in pack.entries[offset:offset+10]]}
 
 
 def reference_rows(root):
