@@ -3,8 +3,7 @@
 This is the first-party Agent worker, built on the pinned Pi 1.6.0 SDK. It
 does not invoke Pi CLI, Codex, Claude Code, OpenCode or MCP. Pi core owns
 the LLM/tool loop; the native scientific service owns workspace and
-execution permissions. The Proliferate desktop session adapter has not
-yet been switched to this worker.
+execution permissions. The existing Proliferate workspace chat has an opt-in native Pi preview. Production cutover remains incomplete.
 
 ## Development
 
@@ -22,7 +21,7 @@ GRIDAGENT_NATIVE_TASKS=1 does not bypass the existing workspace grant.
 
 ## Desktop development bridge
 
-The debug Tauri host now exposes `pi_open`, `pi_prompt`, `pi_poll`, `pi_abort` and `pi_close` via the typed desktop `embeddedPi` client. Set `GRIDAGENT_PI_DEV=1`, `GRIDAGENT_PI_NODE` to an absolute Node executable and `GRIDAGENT_PI_WORKER` to the absolute installed `worker.mjs`, in addition to the trusted configuration above. The host returns a unique session ID from `pi_open`; pass it to every other command. Poll for protocol `ready` before prompting and keep polling through `settled`; tool IDs are separate from prompt IDs. The host admits one development session, validates and bounds public events, and never replays failed requests or launches an external Agent as fallback. The shared ProductClient DesktopBridge now exposes the typed Pi capability; the existing conversation UI and production packaging are not yet switched. The Rust host requires actual desktop compilation and integration testing.
+The debug Tauri host now exposes `pi_open`, `pi_prompt`, `pi_poll`, `pi_abort` and `pi_close` via the typed desktop `embeddedPi` client. Set `GRIDAGENT_PI_DEV=1`, `GRIDAGENT_PI_NODE` to an absolute Node executable and `GRIDAGENT_PI_WORKER` to the absolute installed `worker.mjs`, in addition to the trusted configuration above. The host returns a unique session ID from `pi_open`; pass it to every other command. Poll for protocol `ready` before prompting and keep polling through `settled`; tool IDs are separate from prompt IDs. The host admits one development session, validates and bounds public events, and never replays failed requests or launches an external Agent as fallback. The shared ProductClient DesktopBridge exposes the typed Pi capability; the existing workspace ChatView uses it when the native debug host explicitly enables Pi mode. The selected local workspace must canonically match GRIDAGENT_NATIVE_WORKSPACE; pi_open repeats that check. Production packaging remains pending. The Rust host requires actual desktop compilation and integration testing.
 
 ## Tools
 
@@ -47,11 +46,11 @@ No external executable extension discovery is enabled.
 
 ## Shared session controller
 
-`ProductClient` now receives the typed native Pi capability via `DesktopBridge.pi`. The shared `PiSessionController` owns the host session ID, prompt ID, readiness, cancellation, event batches and settlement; it does not import Tauri or start any external Agent. `drainTurn` is the reusable polling loop for a future transcript consumer. The Node test suite exercises this actual TypeScript controller without installing the full desktop monorepo. It is intentionally not yet substituted into the existing AnyHarness-backed session directory, launch catalog, prompt outbox or transcript ingest. Those need a coordinated cutover, not a second parallel chat screen.
+`ProductClient` now receives the typed native Pi capability via `DesktopBridge.pi`. The shared `PiSessionController` owns the host session ID, prompt ID, readiness, cancellation, event batches and settlement; it does not import Tauri or start any external Agent. `drainTurn` drives the native chat transcript consumer. The Node test suite exercises this actual TypeScript controller without installing the full desktop monorepo. It is intentionally not yet substituted into the existing AnyHarness-backed session directory, launch catalog, prompt outbox or transcript ingest. The native preview reuses ChatView, ChatComposerDock, ChatComposerSurface, ComposerRichTextEditor, ChatComposerActions, UserMessage and AssistantMessage. It preserves the single in-memory conversation across pane navigation, renders text and tool status only, and refuses legacy session tabs and unmatched workspace selections rather than rerouting them to Pi. Existing shell inventory still depends on AnyHarness. Other legacy entry points, non-opted-in desktop mode and external Agent infrastructure are not yet retired.
 
 ## Remaining integration
 
-Wire the debug bridge into the existing desktop conversation/session lifecycle,
+Complete the native session directory, launch catalog and all launch-entry cutover,
 persist and restore Pi sessions, configure user-owned model settings,
 remove the external Agent catalog, discovery, installer, launch and
 authentication paths from the product, and verify real desktop and sandbox

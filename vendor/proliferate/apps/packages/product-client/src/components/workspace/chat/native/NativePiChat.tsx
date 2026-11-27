@@ -9,6 +9,7 @@ import { ComposerRichTextEditor } from "../input/ComposerRichTextEditor";
 import { ChatComposerActions } from "../input/ChatComposerActions";
 import { UserMessage } from "../transcript/UserMessage";
 import { AssistantMessage } from "../transcript/AssistantMessage";
+import { Button } from "#product/primitives/Button";
 import { CHAT_COLUMN_CLASSNAME, CHAT_SURFACE_GUTTER_CLASSNAME } from "#product/config/chat-layout";
 
 // The debug host permits one worker. Preserve its controller across chat pane
@@ -71,7 +72,7 @@ function ConversationView({conversation}: {conversation: PiConversation}) {
                   <span>{segment.status === "running" ? "Running…" : segment.status === "error" ? "Failed" : segment.status === "interrupted" ? "Interrupted" : "Finished"}</span>
                 </div>)}
             {turn.status === "failed" && <p role="alert" className="text-chat text-muted-foreground">Turn not confirmed. Check the workspace before retrying.</p>}
-            {turn.status === "cancelled" && <p className="text-chat text-muted-foreground">Generation stopped. Scientific jobs may still require inspection.</p>}
+            {turn.status === "cancel_requested" && <p className="text-chat text-muted-foreground">Cancellation was requested; the turn has settled. Scientific jobs may still require inspection.</p>}
           </section>)}
         </div>
       </div>
@@ -92,8 +93,8 @@ function ConversationView({conversation}: {conversation: PiConversation}) {
         {conversation.workspacePath} · {status}
       </div>
       {state.session.failure && <p role="alert" className="mt-2 text-center text-chat text-muted-foreground">{state.session.failure}</p>}
-      {status === "ready" && <button type="button" className="mt-2 text-chat text-muted-foreground hover:text-foreground"
-        onClick={() => {void conversation.newChat().catch(() => {});}}>New chat</button>}
+      {status === "ready" && <Button type="button" variant="unstyled" size="unstyled" className="mt-2 text-chat text-muted-foreground hover:text-foreground"
+        onClick={() => {void conversation.newChat().catch(() => {});}}>New chat</Button>}
     </ChatComposerDock>
   </div>;
 }
