@@ -92,7 +92,11 @@ cancel, submit clarifications, approve proposed repair ranges and export JSON.
 See [verified workflow and experiments](docs/research-tasks.md) for the model
 contract, references, sandbox, external runtimes and public benchmarks.
 
-## Native Windows desktop
+## Proliferate desktop migration
+
+The new desktop direction reuses the preserved Proliferate 0.4.27 Tauri/React workbench rather than starting another interface from scratch. GridAgent's scientific Python tools are exposed through an optional local MCP server; the external harness owns the LLM loop. See [integration setup and acceptance gates](integration/proliferate/README.md). This migration is not yet a validated desktop release.
+
+## Native Windows desktop (legacy during migration)
 
 GridAgent has a native WinUI 3 Windows client (no Web UI, Electron or browser server). The older WPF implementation remains temporarily for regression comparison. The portable Windows build bundles CPython and numerical dependencies;
 no user Python setup is intended. See [Windows setup and build](docs/windows.md). TUI and Windows use
