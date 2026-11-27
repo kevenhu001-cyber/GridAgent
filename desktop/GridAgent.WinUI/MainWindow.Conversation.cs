@@ -13,6 +13,11 @@ public partial class MainWindow
     {
         Notice.Message = message; Notice.Severity = severity; Notice.IsOpen = true;
     }
+    private void ReportOperationError(string message)
+    {
+        if (_conversationOperation) Append(message, "Error");
+        else Notify(message, InfoBarSeverity.Error);
+    }
     private void UpdateModelCaption() => ConversationModel.Text = string.IsNullOrWhiteSpace(ModelName.Text) ? "Engineering assistant" : ModelName.Text.Trim();
     private void OpenConversationHistory(object sender, RoutedEventArgs e)
     {
