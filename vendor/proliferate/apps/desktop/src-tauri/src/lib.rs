@@ -9,6 +9,7 @@ mod quit_flow;
 mod runtime_version_assert;
 mod sidecar;
 mod scientific;
+mod pi_bridge;
 mod state;
 mod telemetry;
 mod updater_owned;
@@ -262,6 +263,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(sc.clone())
         .manage(scientific::ScientificState::default())
+        .manage(pi_bridge::PiState::default())
         .manage(cloud_worker_state)
         .manage(owned_updater_state)
         .manage(diagnostics_supervisor.clone())
@@ -272,6 +274,11 @@ pub fn run() {
         .manage(workspace_activity_indicator::WorkspaceActivityIndicatorStore::default())
         .manage(window_chrome::WindowChromeZoom::default())
         .invoke_handler(tauri::generate_handler![
+            pi_bridge::pi_open,
+            pi_bridge::pi_prompt,
+            pi_bridge::pi_abort,
+            pi_bridge::pi_poll,
+            pi_bridge::pi_close,
             scientific::scientific_read,
             scientific::scientific_task,
             anonymous_telemetry::load_anonymous_telemetry_bootstrap,

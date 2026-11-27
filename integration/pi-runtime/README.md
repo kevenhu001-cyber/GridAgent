@@ -20,6 +20,10 @@ GRIDAGENT_PI_PROVIDER (openai/anthropic/google), GRIDAGENT_PI_MODEL,
 GRIDAGENT_PI_API_KEY. Do not log credentials. Developer task opt-in
 GRIDAGENT_NATIVE_TASKS=1 does not bypass the existing workspace grant.
 
+## Desktop development bridge
+
+The debug Tauri host now exposes `pi_open`, `pi_prompt`, `pi_poll`, `pi_abort` and `pi_close` via the typed desktop `embeddedPi` client. Set `GRIDAGENT_PI_DEV=1`, `GRIDAGENT_PI_NODE` to an absolute Node executable and `GRIDAGENT_PI_WORKER` to the absolute installed `worker.mjs`, in addition to the trusted configuration above. Poll for protocol `ready` before prompting and keep polling through `settled`; tool IDs are separate from prompt IDs. The host admits one development session, validates and bounds public events, and never replays failed requests or launches an external Agent as fallback. This is not yet wired into the existing conversation UI or production packaging. The Rust host requires actual desktop compilation and integration testing.
+
 ## Tools
 
 Pi's own read, edit, write, find, ls, grep, bash and PowerShell tools are
@@ -43,7 +47,7 @@ No external executable extension discovery is enabled.
 
 ## Remaining integration
 
-Connect the trusted worker to the existing Rust desktop/session lifecycle,
+Wire the debug bridge into the existing desktop conversation/session lifecycle,
 persist and restore Pi sessions, configure user-owned model settings,
 remove the external Agent catalog, discovery, installer, launch and
 authentication paths from the product, and verify real desktop and sandbox
