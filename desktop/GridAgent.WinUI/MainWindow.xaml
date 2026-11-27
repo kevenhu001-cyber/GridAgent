@@ -11,7 +11,7 @@
    <Grid Padding="0,0,12,12">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <InfoBar x:Name="Notice" IsOpen="False" IsClosable="True" Margin="12,0,12,8" AutomationProperties.Name="Operation notification"/>
-    <Grid Grid.Row="1" x:Name="Pages" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="8">
+    <Grid Grid.Row="1" x:Name="Pages" Background="{ThemeResource GridAgentConversationBrush}">
      <Grid x:Name="ChatPage" Padding="16,16">
       <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
       <Grid ColumnSpacing="12" Margin="8,0,8,0">
@@ -40,12 +40,12 @@
         <Button Content="Analyze power-system stability" Click="UseSuggestion" HorizontalAlignment="Center"/>
        </StackPanel>
       </Grid>
-      <Border Grid.Row="2" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="20" Padding="12" MaxWidth="820" HorizontalAlignment="Stretch">
+      <Border Grid.Row="2" Style="{StaticResource ConversationComposerStyle}" HorizontalAlignment="Stretch">
        <StackPanel Spacing="8">
         <TextBox x:Name="Prompt" Background="Transparent" BorderThickness="0" PlaceholderText="Ask anything about your power system…" MinHeight="64" MaxHeight="160" AcceptsReturn="True" TextWrapping="Wrap" AutomationProperties.Name="Research question" KeyDown="PromptKeyDown"/>
         <Grid ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
          <ComboBox x:Name="Mode" SelectedIndex="0" AutomationProperties.Name="Execution mode"><ComboBoxItem Content="Ask assistant"/><ComboBoxItem Content="Verified research"/><ComboBoxItem Content="Multi-agent research"/></ComboBox>
-         <Button x:Name="SendButton" Grid.Column="1" Click="Send" Style="{StaticResource AccentButtonStyle}" CornerRadius="18" Width="38" Height="38" Padding="0" AutomationProperties.Name="Send message" ToolTipService.ToolTip="Send (Ctrl+Enter)"><SymbolIcon Symbol="Send"/></Button>
+         <Button x:Name="SendButton" Grid.Column="1" Click="Send" Style="{StaticResource ConversationSendStyle}" AutomationProperties.Name="Send message" ToolTipService.ToolTip="Send (Ctrl+Enter)"><SymbolIcon Symbol="Send"/></Button>
         </Grid>
         <TextBlock Text="Verify numerical results before making engineering decisions." Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
        </StackPanel>
