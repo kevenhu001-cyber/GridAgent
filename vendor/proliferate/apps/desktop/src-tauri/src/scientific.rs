@@ -1,5 +1,6 @@
 //! Desktop-owned persistent IPC to the GridAgent scientific core.
-//! The initial lane is read-only. No model or renderer supplies an executable or root.
+//! The default lane is read-only. Mutations require explicit debug-host opt-in.
+//! No model or renderer supplies an executable or root.
 use serde_json::{json, Value};
 use std::{path::PathBuf, process::Stdio, time::Duration};
 use tauri::State;
@@ -35,6 +36,15 @@ fn configured_path(key: &str, file: bool) -> Result<PathBuf, String> {
     }
 }
 
+fn python_parent() -> Result<PathBuf, String> {
+    configured_path("GRIDAGENT_NATIVE_PYTHON", true)?
+        .parent().map(PathBuf::from).ok_or("Invalid interpreter directory".into())
+}
+
+fn developer_tasks_enabled() -> bool {
+    cfg!(debug_assertions) && std::env::var("GRIDAGENT_NATIVE_TASKS").as_deref() == Ok("1")
+}
+
 impl ScientificProcess {
     fn start() -> Result<Self, String> {
         // Development-only host configuration. Packaged runtime discovery and
@@ -42,8 +52,8 @@ impl ScientificProcess {
         let python = configured_path("GRIDAGENT_NATIVE_PYTHON", true)?;
         let root = configured_path("GRIDAGENT_NATIVE_WORKSPACE", false)?;
         let mut command = Command::new(python);
-        command.args(["-X", "utf8", "-m", "gridagent.native_service"])
-            .arg(&root).current_dir(&root)
+        command.args(["-I", "-X", "utf8", "-m", "gridagent.native_service"])
+            .arg(&root).current_dir(python_parent()?)
             .env_clear().env("PYTHONNOUSERSITE", "1")
             .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
             .kill_on_drop(true);
@@ -52,9 +62,12 @@ impl ScientificProcess {
             if matches!(name.as_str(), "PATH" | "HOME" | "USERPROFILE" | "SYSTEMROOT" |
                 "WINDIR" | "TEMP" | "TMP" | "LOCALAPPDATA" | "APPDATA" | "LANG" |
                 "LC_ALL" | "LD_LIBRARY_PATH" | "COMSPEC" | "PATHEXT" |
-                "GRIDAGENT_SANDBOX_RUNTIME") {
+                "GRIDAGENT_SANDBOX_RUNTIME" | "GRIDAGENT_PLUGIN_ROOT") {
                 command.env(key, value);
             }
+        }
+        if developer_tasks_enabled() {
+            command.arg("--tasks");
         }
         let mut child = command.spawn().map_err(|_| "Cannot start scientific service".to_string())?;
         let input = child.stdin.take().ok_or("Scientific stdin unavailable")?;
@@ -93,9 +106,27 @@ pub async fn scientific_read(
     state: State<'_, ScientificState>, method: String, params: Value,
 ) -> Result<Value, String> {
     if !matches!(method.as_str(), "hello" | "scientific.status" | "scientific.runs" |
-        "scientific.artifact" | "solver.backends" | "solver.table" | "workspace.files") {
+        "scientific.artifact" | "solver.backends" | "solver.table" | "workspace.files" |
+        "workspace.read" | "job.status") {
         return Err("Unknown or non-read scientific operation".into());
     }
+    exchange(&state, &method, params).await
+}
+
+#[tauri::command]
+pub async fn scientific_task(
+    state: State<'_, ScientificState>, method: String, params: Value,
+) -> Result<Value, String> {
+    if !developer_tasks_enabled() {
+        return Err("Scientific task control is disabled outside explicit development opt-in".into());
+    }
+    if !matches!(method.as_str(), "workspace.write" | "job.submit" | "job.cancel") {
+        return Err("Unknown scientific task operation".into());
+    }
+    exchange(&state, &method, params).await
+}
+
+async fn exchange(state: &ScientificState, method: &str, params: Value) -> Result<Value, String> {
     let mut guard = state.0.lock().await;
     // Own the child during the exchange: cancellation drops it rather than
     // leaving a stale response queued for the next request.
@@ -103,7 +134,7 @@ pub async fn scientific_read(
         Some(process) => process,
         None => ScientificProcess::start()?,
     };
-    match timeout(Duration::from_secs(30), process.request(&method, params)).await {
+    match timeout(Duration::from_secs(30), process.request(method, params)).await {
         Ok(Ok(response)) => {
             *guard = Some(process);
             Ok(response)
