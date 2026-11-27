@@ -88,7 +88,7 @@ def scientific_tools(root):
         Returns actual exit status, output/error log tail, run ID and artifact manifest.
         Execution alone does not verify physical correctness.
         """
-        return runtime.execute(root, entry, plugin, arguments, **({"plugin_ids": plugin_ids} if plugin_ids is not None else {}))
+        return runtime.execute(root, entry, plugin, arguments, plugin_ids=plugin_ids)
 
     @tool
     def read_scientific_artifact(run_id: str, path: str, offset: int = 0,
