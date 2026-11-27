@@ -47,9 +47,11 @@ test("worker correlates tool and request IDs, rejects concurrent prompt, and abo
   await wait("rejected");
   send({method: "abort", id});
   await wait("settled");
+  send({method: "abort", id}); // settlement may still be queued at the host
   input.end();
   await running;
   assert.equal(aborted, 1);
+  assert.equal(events.filter(e => e.kind === "rejected").length, 1);
   assert.deepEqual(events.find(e => e.kind === "tool_started"),
     {kind: "tool_started", id, tool_id: "tool-1", name: "read"});
   assert.deepEqual(events.find(e => e.kind === "rejected"), {kind: "rejected", id: other});

@@ -59,8 +59,10 @@ export async function serveWorker({agent, projectEvent, input, output}) {
         emit({kind: "rejected", id: null});
         continue;
       }
-      if (request.method === "abort" && request.id === active) {
-        agent.abort();
+      if (request.method === "abort") {
+        // A host can request cancellation after settlement was queued but
+        // before it observed that event. Stale aborts are harmless no-ops.
+        if (request.id === active) agent.abort();
         continue;
       }
       if (request.method !== "prompt" || active !== null ||
