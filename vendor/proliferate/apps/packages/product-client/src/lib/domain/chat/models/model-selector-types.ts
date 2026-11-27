@@ -94,6 +94,8 @@ export function resolveModelSelectorEnabled(input: {
 }
 
 export interface ModelSelectorProps {
+  /** Native Pi catalog: provider settings, never external harness install. */
+  nativePi?: boolean;
   connectionState: string;
   currentModel: ModelSelectorCurrentModel | null;
   groups: ModelSelectorGroup[];

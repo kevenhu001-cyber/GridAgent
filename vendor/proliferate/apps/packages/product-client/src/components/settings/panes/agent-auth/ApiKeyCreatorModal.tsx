@@ -82,6 +82,7 @@ export function ApiKeyCreatorModal({
   // and seed the env-var field from the caller's suggestion.
   useEffect(() => {
     if (!open) {
+      setValue("");
       return;
     }
     setTitle("");

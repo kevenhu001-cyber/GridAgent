@@ -1,3 +1,4 @@
+import { usePiMode } from "#product/hooks/chat/derived/use-pi-model-selector";
 import { useMemo } from "react";
 import { useWorkspaceSessionsQuery } from "@anyharness/sdk-react";
 import { useWorkspaceHeaderTabsKnownSessions } from "#product/hooks/workspaces/facade/tabs/use-workspace-header-tabs-known-sessions";
@@ -34,6 +35,7 @@ import { useWorkspaceHeaderTabsPreferences } from "#product/hooks/workspaces/fac
 import { useWorkspaceHeaderTabsVisibility } from "#product/hooks/workspaces/facade/tabs/use-workspace-header-tabs-visibility";
 
 export function useWorkspaceHeaderTabsViewModel() {
+  const {mode}=usePiMode();
   const {
     activeSessionId,
     activeSessionWorkspaceId,
@@ -61,12 +63,12 @@ export function useWorkspaceHeaderTabsViewModel() {
 
   const workspaceSessionsQuery = useWorkspaceSessionsQuery({
     workspaceId: selectedWorkspaceId,
-    enabled: shouldUseLocalRuntimeWorkspaceSessionsQuery({
+    enabled: mode==="legacy" && shouldUseLocalRuntimeWorkspaceSessionsQuery({
       workspaceId: selectedWorkspaceId,
       hotPaintPending,
     }),
   });
-  const workspaceSessionsLoaded = workspaceSessionsQuery.data !== undefined;
+  const workspaceSessionsLoaded = mode==="legacy" && workspaceSessionsQuery.data !== undefined;
 
   const {
     collapsedParentFallback,
@@ -100,7 +102,7 @@ export function useWorkspaceHeaderTabsViewModel() {
     liveSlots,
     optimisticHeaderSessionIds,
     selectedWorkspaceId,
-    workspaceSessionsData: workspaceSessionsQuery.data,
+    workspaceSessionsData: mode==="legacy" ? workspaceSessionsQuery.data : undefined,
   });
   const {
     displayManualGroups,

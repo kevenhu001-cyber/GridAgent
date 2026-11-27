@@ -1,4 +1,6 @@
 import { useEffect, useMemo } from "react";
+import { getPiSessionSelection } from "#product/lib/access/pi/product-session";
+import { usePiModelSelector } from "#product/hooks/chat/derived/use-pi-model-selector";
 import { CHAT_MODEL_SELECTOR_LABELS } from "#product/copy/chat/chat-copy";
 import { getProviderDisplayName } from "#product/lib/domain/agents/provider-display";
 import { useAgentCatalog } from "#product/hooks/agents/derived/use-agent-catalog";
@@ -29,6 +31,7 @@ export function useChatModelSelectorState(options?: {
   suppressActiveSessionState?: boolean;
   replacementSessionId?: string | null;
 }) {
+  const native = usePiModelSelector();
   const suppressActiveSessionState = options?.suppressActiveSessionState ?? false;
   const connectionState = useHarnessConnectionStore((state) => state.connectionState);
   const selectedCloudRuntime = useSelectedCloudRuntimeState();
@@ -223,6 +226,23 @@ export function useChatModelSelectorState(options?: {
     selectorHasAgents,
     selectorIsLoading,
   ]);
+
+  if (native.mode !== "legacy") {
+    const pinned = scopedActiveSessionId ? getPiSessionSelection(scopedActiveSessionId) : null;
+    const pinnedRow = pinned ? native.props.groups.flatMap(g=>g.models).find(m=>m.kind===pinned.provider && m.modelId===pinned.modelId) : null;
+    return {
+      ...native.props,
+      ...(pinned ? {
+        currentModel:{kind:pinned.provider,displayName:pinnedRow?.displayName ?? pinned.modelId,pendingState:null},
+        groups:native.props.groups.map(group=>({...group,models:group.models.map(model=>({...model,
+          isSelected:model.kind===pinned.provider && model.modelId===pinned.modelId,
+          isUnsupported:model.kind!==pinned.provider || model.modelId!==pinned.modelId || model.isUnsupported}))})),
+        onSelect:()=>{},
+      } : {}),
+      launchControls: [],
+      launchAgentKind: null,
+    };
+  }
 
   return {
     connectionState: resolvedConnectionState,

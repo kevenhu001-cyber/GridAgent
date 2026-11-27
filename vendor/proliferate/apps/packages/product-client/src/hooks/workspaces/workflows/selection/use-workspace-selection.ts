@@ -1,3 +1,7 @@
+import { findLogicalWorkspace } from "#product/lib/domain/workspaces/cloud/logical-workspace-lookup";
+import { getSessionRecord, getWorkspaceSessionRecords } from "#product/stores/sessions/session-records";
+import { writeChatShellIntentForEmptySurface, writeChatShellIntentForSession } from "#product/hooks/workspaces/workflows/tabs/workspace-shell-intent-writer";
+import { markWorkspaceViewed } from "#product/stores/preferences/workspace-ui-store";
 import { useCallback } from "react";
 import type { Workspace } from "@anyharness/sdk";
 import { useProductHost } from "@proliferate/product-client/host/ProductHostProvider";
@@ -69,6 +73,31 @@ export function useWorkspaceSelection() {
           currentSelectionId: useSessionSelectionStore.getState().selectedWorkspaceId,
         })
         : [];
+      if (desktop?.pi) {
+        const before=useSessionSelectionStore.getState();
+        const native=await desktop.pi.mode();
+        if (native) {
+          const logical=findLogicalWorkspace(logicalWorkspaces,workspaceId);
+          const workspace=workspaceCollections?.localWorkspaces.find(w=>w.id===(logical?.localWorkspace?.id ?? workspaceId));
+          if (!workspace || workspace.surface!=="standard" || workspace.lifecycleState!=="active" ||
+            workspace.availability==="workspace_directory_missing" || !await desktop.pi.matchesWorkspace(workspace.path))
+            throw new Error("Choose a local workspace authorized for native Pi.");
+          const now=useSessionSelectionStore.getState();
+          if(now.workspaceSelectionNonce!==before.workspaceSelectionNonce || now.activeSessionVersion!==before.activeSessionVersion) return;
+          if(now.selectedWorkspaceId===workspace.id && !options?.force) return;
+          const requested=options?.initialActiveSessionId;
+          const requestedSlot=requested ? getSessionRecord(requested) : null;
+          const initial=options && "initialActiveSessionId" in options
+            ? requestedSlot?.workspaceId===workspace.id && requestedSlot.agentKind==="pi" ? requestedSlot.sessionId : null
+            : Object.values(getWorkspaceSessionRecords(workspace.id)).find(s=>s.agentKind==="pi" && s.status!=="closed")?.sessionId ?? null;
+          cancelPreviousWorkspaceDisplayQueries({runtimeUrl,previousWorkspaceIds:[now.selectedLogicalWorkspaceId,now.selectedWorkspaceId],nextWorkspaceIds:[workspace.id]});
+          setSelectedWorkspace({logicalWorkspaceId:logical?.id ?? workspace.id,workspaceId:workspace.id,initialActiveSessionId:initial,hotPaintGate:null});
+          if(initial) writeChatShellIntentForSession({workspaceId:workspace.id,sessionId:initial});
+          else writeChatShellIntentForEmptySurface({workspaceId:workspace.id});
+          markWorkspaceViewed(workspace.id);
+          return;
+        }
+      }
       const deps = {
         localRuntime,
         cloudClient,
@@ -107,6 +136,7 @@ export function useWorkspaceSelection() {
       clearSelection,
       getWorkspaceSelectionSnapshot,
       localRuntime,
+      desktop?.pi,
       reconcileHotWorkspace,
       setSelectedLogicalWorkspaceId,
       setSelectedWorkspace,

@@ -89,7 +89,7 @@ contract, references, sandbox, external runtimes and public benchmarks.
 
 ## Proliferate desktop migration
 
-The new desktop direction reuses the preserved Proliferate 0.4.27 Tauri/React workbench rather than starting another interface from scratch. GridAgent's scientific Python tools are exposed through an optional local MCP server; the external harness owns the LLM loop. See [integration setup and acceptance gates](integration/proliferate/README.md). This migration is not yet a validated desktop release.
+The new desktop direction reuses the preserved Proliferate 0.4.27 Tauri/React workbench rather than starting another interface from scratch. GridAgent's scientific Python core is being integrated as a first-party desktop runtime via persistent native IPC. Pi is the sole supported desktop Agent engine and owns the LLM loop; external Agent hosting will be removed. MCP may remain optional tool interoperability. See [integration setup and acceptance gates](integration/proliferate/README.md). This migration is not yet a validated desktop release.
 
 ## Desktop status
 
@@ -97,7 +97,7 @@ The retired WinUI/WPF desktop is removed from this migration branch. The Prolife
 
 ## Architecture
 
-Proliferate desktop → AnyHarness → local GridAgent MCP scientific tools → shared Python execution and solvers (desktop integration pending acceptance).
+Proliferate desktop → embedded Pi SDK → native Rust/Python scientific IPC (target); Pi integration and external Agent retirement are pending. See [ADR 0003](docs/adr/0003-native-scientific-runtime.md).
 
 Textual TUI / CLI → LLM-led LangGraph tool loop → scoped scientific workspace and execution runtime → professional numerical libraries → artifacts, logs and independent verification → LLM.
 

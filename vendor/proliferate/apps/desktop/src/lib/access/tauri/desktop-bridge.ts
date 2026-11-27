@@ -15,6 +15,7 @@ import type {
 } from "@proliferate/product-client/host/desktop-updater-bridge";
 
 import { getRuntimeInfo, restartRuntime } from "./runtime";
+import { embeddedPi } from "../scientific/pi";
 import {
   getHomeDir,
   inspectPath,
@@ -95,6 +96,7 @@ const desktopSupportSnapshotBridge: DesktopSupportSnapshotBridge = {
  * fallbacks beyond what the underlying functions already provide.
  */
 export const desktopBridge: DesktopBridge = {
+  pi: embeddedPi,
   runtime: {
     async getConnection(): Promise<LocalRuntimeSnapshot> {
       const info = await getRuntimeInfo();

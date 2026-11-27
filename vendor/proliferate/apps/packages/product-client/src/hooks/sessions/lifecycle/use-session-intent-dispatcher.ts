@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
+import { dispatchPiPromptIntent, isPiProductSession } from "#product/lib/access/pi/product-session";
 import { useProductHost } from "@proliferate/product-client/host/ProductHostProvider";
 import {
   useDeletePendingPromptMutation,
@@ -76,6 +77,22 @@ export function useSessionIntentDispatcher(): void {
   }, []);
 
   const dispatchIntent = useCallback(async function dispatchIntent(intent: SessionIntent) {
+    if (isPiProductSession(intent.clientSessionId)) {
+      if (intent.kind === "send_prompt") await dispatchPiPromptIntent(intent);
+      else useSessionIntentStore.getState().patchIntent(intent.intentId,{status:"failed",errorMessage:"This operation is not supported by native Pi yet."});
+      return;
+    }
+    // Unknown/native mode must not dispatch old Agent intents.
+    if (host.desktop?.pi) {
+      let legacy=false;
+      try {legacy=!(await host.desktop.pi.mode());} catch { /* fail closed */ }
+      if (!legacy) {
+        useSessionIntentStore.getState().patchIntent(intent.intentId,intent.kind==="send_prompt"
+          ? {status:"failed",deliveryState:"failed_before_dispatch",errorMessage:"External Agent dispatch is disabled in native Pi mode."}
+          : {status:"failed",errorMessage:"External Agent dispatch is disabled in native Pi mode."});
+        return;
+      }
+    }
     switch (intent.kind) {
       case "send_prompt":
         await dispatchPromptIntent(intent, {
@@ -130,6 +147,7 @@ export function useSessionIntentDispatcher(): void {
     setSessionConfigOptionMutation,
     showErrorToast,
     cloudClient,
+    host.desktop?.pi,
     upsertWorkspaceSessionRecord,
   ]);
 

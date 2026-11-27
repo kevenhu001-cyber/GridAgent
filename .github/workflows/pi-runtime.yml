@@ -1,0 +1,96 @@
+name: Embedded Pi runtime
+on:
+  pull_request:
+    paths:
+      - 'integration/pi-runtime/**'
+      - 'vendor/proliferate/anyharness/sdk/src/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/lib/access/pi/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/hooks/chat/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/hooks/sessions/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/stores/sessions/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/hooks/home/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/hooks/workspaces/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/components/home/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/components/settings/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/components/workspace/chat/input/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/lib/domain/chat/models/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/host/desktop-bridge.ts'
+      - 'vendor/proliferate/apps/desktop/src-tauri/src/pi_bridge.rs'
+      - 'vendor/proliferate/apps/desktop/src-tauri/src/pi_credentials.rs'
+      - 'vendor/proliferate/apps/desktop/src-tauri/src/commands/keychain.rs'
+      - 'vendor/proliferate/apps/desktop/src-tauri/Cargo.toml'
+      - 'vendor/proliferate/apps/desktop/src/lib/access/scientific/**'
+      - '.github/workflows/pi-runtime.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'integration/pi-runtime/**'
+      - 'vendor/proliferate/anyharness/sdk/src/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/lib/access/pi/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/hooks/chat/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/hooks/sessions/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/stores/sessions/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/hooks/home/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/hooks/workspaces/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/components/home/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/components/settings/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/components/workspace/chat/input/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/lib/domain/chat/models/**'
+      - 'vendor/proliferate/apps/packages/product-client/src/host/desktop-bridge.ts'
+      - 'vendor/proliferate/apps/desktop/src-tauri/src/pi_bridge.rs'
+      - 'vendor/proliferate/apps/desktop/src-tauri/src/pi_credentials.rs'
+      - 'vendor/proliferate/apps/desktop/src-tauri/src/commands/keychain.rs'
+      - 'vendor/proliferate/apps/desktop/src-tauri/Cargo.toml'
+      - 'vendor/proliferate/apps/desktop/src/lib/access/scientific/**'
+      - '.github/workflows/pi-runtime.yml'
+permissions:
+  contents: read
+jobs:
+  pi-sdk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: integration/pi-runtime
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+      - run: npm install --ignore-scripts --no-audit --no-fund
+      - run: npm test
+      - name: Compile retained AnyHarness SDK contracts and reducer
+        run: npm exec --yes --package=typescript@5.7.3 -- tsc -p ../../vendor/proliferate/anyharness/sdk/tsconfig.json
+      - name: Verify Pi events using original transcript reducer
+        run: node --test product-reducer.integration.mjs
+
+  retained-product-client:
+    name: Retained ProductClient typecheck and focused regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: vendor/proliferate
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.11.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm shared:typecheck
+      - run: pnpm shared:build
+      - name: Test retained UI and native adapter
+        run: >-
+          pnpm --filter @proliferate/product-client exec vitest run
+          src/components/settings/panes/agents/api-keys/ApiKeysPane.test.tsx
+          src/components/settings/panes/agent-auth/ApiKeyCreatorModal.test.tsx
+          src/components/settings/screen/render-settings-section.test.tsx
+          src/lib/access/pi
+          src/hooks/chat/derived/use-pi-model-selector.test.tsx
+          src/hooks/home/workflows/use-home-next-launch.test.tsx
+          src/hooks/home/workflows/use-home-next-launch.concurrency.test.tsx
+          src/components/home/screen/HomeNextScreen.test.tsx
+          src/components/home/screen/HomeNextScreen.model-gate.test.tsx

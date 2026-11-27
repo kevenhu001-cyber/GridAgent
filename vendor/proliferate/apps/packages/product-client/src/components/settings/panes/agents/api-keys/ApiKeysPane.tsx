@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import type { AgentApiKey } from "@proliferate/cloud-sdk";
+import { useQueryClient } from "@tanstack/react-query";
+import { PI_CREDENTIAL_STATUS_QUERY_KEY } from "#product/hooks/chat/derived/use-pi-model-selector";
+import type { DesktopPiCredentialBridge, PiCredentialStatus, PiProvider } from "@proliferate/product-client/host/desktop-bridge";
 import { ProliferateClientError } from "@proliferate/cloud-sdk";
 import {
   useAgentApiKeys,
@@ -37,25 +39,123 @@ function formatCreatedAt(value: string): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
 }
 
-export function ApiKeysPane() {
+type KeyRow = { id: string; title: string; redactedHint: string; createdAt?: string };
+type KeysQuery = { data?: readonly KeyRow[]; isLoading: boolean; isError: boolean; refetch(): Promise<unknown> };
+type PaneSource = {
+  keysQuery: KeysQuery; authReady: boolean; unreachable: boolean; local: boolean;
+  createPending: boolean; revokePending: boolean;
+  create(input: ApiKeyCreatorSubmit, done: () => void): void;
+  revoke(id: string, done: () => void): void;
+};
+
+export function ApiKeysPane({local}: {local?: DesktopPiCredentialBridge} = {}) {
+  return local ? <NativeApiKeysPane bridge={local} /> : <CloudApiKeysPane />;
+}
+
+function CloudApiKeysPane() {
   const { authStatus, controlPlaneReachable } = useCloudAvailabilityState();
-  const showToast = useToastStore((state) => state.show);
-
-  // The API key vault is a control-plane feature, not a cloud-compute one: it
-  // must stay usable whenever the control plane is reachable and the user is
-  // signed in, independent of `cloudComputeEnabled` (ADR FM6/Q9). The settings
-  // router already routes this pane through exactly that gate
-  // (render-settings-section.tsx `authGate`); gating the pane body on
-  // `cloudActive` re-coupled it to cloud compute and slammed the door the
-  // router had just opened.
+  const showToast = useToastStore(state => state.show);
   const authReady = authStatus === "authenticated" && controlPlaneReachable;
-
   const keysQuery = useAgentApiKeys(authReady);
   const createKey = useCreateAgentApiKey();
   const revokeKey = useRevokeAgentApiKey();
+  return <ApiKeysView source={{
+    keysQuery, authReady, unreachable: authStatus === "authenticated" && !controlPlaneReachable, local: false,
+    createPending: createKey.isPending, revokePending: revokeKey.isPending,
+    create: (input, done) => createKey.mutate({title: input.title, value: input.value}, {
+      onSuccess: created => { done(); showToast(`Added API key ${created.title}.`, "info"); },
+      onError: error => showToast(error.message || AGENT_API_KEYS_COPY.addError),
+    }),
+    revoke: (id, done) => revokeKey.mutate(id, {
+      onSuccess: () => {done(); showToast(AGENT_API_KEYS_COPY.revokedToast, "info");},
+      onError: error => {
+        done();
+        const harnesses = revokeConflictHarnesses(error);
+        showToast(harnesses ? AGENT_API_KEYS_COPY.revokeReferencedError(harnesses) : error.message || AGENT_API_KEYS_COPY.revokeError);
+      },
+    }),
+  }} />;
+}
 
+const providers: Record<PiProvider, string> = {openai:"OpenAI", anthropic:"Anthropic", google:"Google"};
+function providerForEnv(name: string): PiProvider | undefined {
+  switch(name) {
+    case "OPENAI_API_KEY": return "openai";
+    case "ANTHROPIC_API_KEY": return "anthropic";
+    case "GOOGLE_API_KEY": return "google";
+    default: return undefined;
+  }
+}
+
+function NativeApiKeysPane({bridge}: {bridge: DesktopPiCredentialBridge}) {
+  const queryClient = useQueryClient();
+  const showToast = useToastStore(state => state.show);
+  const [records, setRecords] = useState<PiCredentialStatus[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [pending, setPending] = useState<"save" | "remove" | null>(null);
+  const generation = useRef(0);
+  const busy = useRef(false);
+  async function refresh() {
+    const current = ++generation.current;
+    setLoading(true);
+    setError(false);
+    try {
+      const rows = await bridge.list();
+      if (generation.current === current) setRecords(rows);
+    } catch {
+      if (generation.current === current) setError(true);
+    } finally {
+      if (generation.current === current) setLoading(false);
+    }
+  }
+  useEffect(() => {
+    void refresh();
+    return () => {generation.current++;};
+  // The bridge identity owns the native credential scope.
+  }, [bridge]);
+
+  // Secrets go directly to the native host; never React Query's mutation cache,
+  // localStorage, cloud SDK, transcript or diagnostic output.
+  async function write(kind: "save" | "remove", operation: () => Promise<void>, done: () => void) {
+    if (busy.current) return;
+    busy.current = true;
+    setPending(kind);
+    try {
+      await operation();
+      void queryClient.invalidateQueries({queryKey:PI_CREDENTIAL_STATUS_QUERY_KEY});
+      done();
+      showToast(kind === "save" ? "API key saved locally." : "Local API key removed.", "info");
+      await refresh();
+    } catch {
+      showToast(kind === "save" ? "Could not save the local API key." : "Could not remove the local API key.");
+    } finally {
+      busy.current = false;
+      setPending(null);
+    }
+  }
+  return <ApiKeysView source={{
+    keysQuery: {data: records.filter(row=>row.configured).map(row=>({
+      id:row.provider, title:providers[row.provider], redactedHint:"••••••••",
+    })), isLoading:loading, isError:error, refetch:refresh},
+    authReady:true, unreachable:false, local:true, createPending:pending==="save", revokePending:pending==="remove",
+    create: (input, done) => {
+      const provider = providerForEnv(input.envVarName);
+      if (!provider) {showToast("Use OPENAI_API_KEY, ANTHROPIC_API_KEY or GOOGLE_API_KEY."); return;}
+      void write("save", () => bridge.save(provider,input.value), done);
+    },
+    revoke: (id,done) => {
+      if (!Object.prototype.hasOwnProperty.call(providers,id)) return;
+      void write("remove", () => bridge.remove(id as PiProvider), done);
+    },
+  }} />;
+}
+
+function ApiKeysView({source}: {source: PaneSource}) {
+  const {keysQuery, authReady, unreachable, local} = source;
+  const description = local ? "Provider credentials stored in the system credential manager." : AGENT_API_KEYS_COPY.description;
   const [addOpen, setAddOpen] = useState(false);
-  const [pendingRevoke, setPendingRevoke] = useState<AgentApiKey | null>(null);
+  const [pendingRevoke, setPendingRevoke] = useState<KeyRow | null>(null);
   const [isRetrying, setIsRetrying] = useState(false);
   const retryInFlight = useRef(false);
   const retryGeneration = useRef(0);
@@ -71,41 +171,11 @@ export function ApiKeysPane() {
   }, []);
 
   const keys = keysQuery.data ?? [];
-
   function handleCreate(input: ApiKeyCreatorSubmit) {
-    createKey.mutate(
-      { title: input.title, value: input.value },
-      {
-        onSuccess: (created) => {
-          setAddOpen(false);
-          showToast(`Added API key ${created.title}.`, "info");
-        },
-        onError: (error) => {
-          showToast(error.message || AGENT_API_KEYS_COPY.addError);
-        },
-      },
-    );
+    source.create(input, () => setAddOpen(false));
   }
-
   function handleConfirmRevoke() {
-    if (!pendingRevoke) {
-      return;
-    }
-    revokeKey.mutate(pendingRevoke.id, {
-      onSuccess: () => {
-        setPendingRevoke(null);
-        showToast(AGENT_API_KEYS_COPY.revokedToast, "info");
-      },
-      onError: (error) => {
-        setPendingRevoke(null);
-        const harnesses = revokeConflictHarnesses(error);
-        showToast(
-          harnesses
-            ? AGENT_API_KEYS_COPY.revokeReferencedError(harnesses)
-            : error.message || AGENT_API_KEYS_COPY.revokeError,
-        );
-      },
-    });
+    if (pendingRevoke) source.revoke(pendingRevoke.id, () => setPendingRevoke(null));
   }
 
   function handleRetry() {
@@ -136,13 +206,13 @@ export function ApiKeysPane() {
     // Truthful cause: a signed-in user whose control plane is unreachable gets
     // a connectivity explanation, not a "sign in" prompt they can't act on
     // (PR2-GATING-01 class). Anonymous users still get the sign-in prompt.
-    const unreachable = authStatus === "authenticated" && !controlPlaneReachable;
+
     return (
       <SettingsPageBody data-api-keys-pane="" data-api-keys-state="gated">
         <PageHeader
           variant="flat"
           title={AGENT_API_KEYS_COPY.title}
-          description={AGENT_API_KEYS_COPY.description}
+          description={description}
         />
         <SettingsEmptyState
           size="compact"
@@ -168,7 +238,7 @@ export function ApiKeysPane() {
       <PageHeader
         variant="flat"
         title={AGENT_API_KEYS_COPY.title}
-        description={AGENT_API_KEYS_COPY.description}
+        description={description}
         action={
           <Button
             type="button"
@@ -188,7 +258,7 @@ export function ApiKeysPane() {
       ) : keysQuery.isError ? (
         <SettingsEmptyState
           size="compact"
-          title={AGENT_API_KEYS_COPY.loadError}
+          title={local ? "Could not load native credentials." : AGENT_API_KEYS_COPY.loadError}
           action={
             <Button
               type="button"
@@ -207,7 +277,7 @@ export function ApiKeysPane() {
         <SettingsEmptyState
           size="compact"
           title={AGENT_API_KEYS_COPY.emptyTitle}
-          description={AGENT_API_KEYS_COPY.emptyDescription}
+          description={local ? "Add a provider key for Pi." : AGENT_API_KEYS_COPY.emptyDescription}
         />
       ) : (
         <SettingsSection title={AGENT_API_KEYS_COPY.keysSection}>
@@ -222,7 +292,7 @@ export function ApiKeysPane() {
                   </span>
                 </span>
               }
-              description={AGENT_API_KEYS_COPY.createdDetail(formatCreatedAt(key.createdAt))}
+              description={local ? "Saved locally" : AGENT_API_KEYS_COPY.createdDetail(formatCreatedAt(key.createdAt ?? ""))}
             >
               <Button
                 type="button"
@@ -230,7 +300,7 @@ export function ApiKeysPane() {
                 size="sm"
                 onClick={() => setPendingRevoke(key)}
               >
-                {AGENT_API_KEYS_COPY.revokeAction}
+                {local ? "Remove" : AGENT_API_KEYS_COPY.revokeAction}
               </Button>
             </SettingsRow>
           ))}
@@ -241,23 +311,24 @@ export function ApiKeysPane() {
         open={addOpen}
         onClose={() => setAddOpen(false)}
         heading={AGENT_API_KEYS_COPY.addModalHeading}
-        description={AGENT_API_KEYS_COPY.addModalDescription}
-        showTitleField
+        description={local ? "Save or replace the key for the selected provider. Existing sessions keep their current credentials until restarted." : AGENT_API_KEYS_COPY.addModalDescription}
+        showTitleField={!local}
+        envVarField={local ? {label:"Provider credential",placeholder:"OPENAI_API_KEY",helpText:"OPENAI_API_KEY, ANTHROPIC_API_KEY or GOOGLE_API_KEY"} : undefined}
         submitLabel={AGENT_API_KEYS_COPY.addAction}
-        submitting={createKey.isPending}
+        submitting={source.createPending}
         error={null}
         onSubmit={handleCreate}
       />
 
       <ConfirmationDialog
         open={pendingRevoke !== null}
-        title={AGENT_API_KEYS_COPY.revokeTitle}
+        title={local ? "Remove local API key" : AGENT_API_KEYS_COPY.revokeTitle}
         description={pendingRevoke
-          ? AGENT_API_KEYS_COPY.revokeDescription(pendingRevoke.title)
+          ? (local ? `Remove ${pendingRevoke.title} from this device? This does not revoke the provider key remotely or stop an existing session.` : AGENT_API_KEYS_COPY.revokeDescription(pendingRevoke.title))
           : ""}
-        confirmLabel={AGENT_API_KEYS_COPY.revokeConfirmLabel}
+        confirmLabel={local ? "Remove key" : AGENT_API_KEYS_COPY.revokeConfirmLabel}
         confirmVariant="destructive"
-        loading={revokeKey.isPending}
+        loading={source.revokePending}
         onClose={() => setPendingRevoke(null)}
         onConfirm={handleConfirmRevoke}
       />

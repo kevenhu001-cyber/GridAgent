@@ -67,6 +67,13 @@ const screenMocks = vi.hoisted(() => {
   };
 });
 
+vi.mock("#product/hooks/chat/derived/use-pi-model-selector", () => ({
+  usePiMode: () => ({mode:"legacy",pi:undefined}),
+  usePiModelSelector: () => ({mode:"legacy",selection:null,props:{
+    connectionState:"healthy",currentModel:null,groups:[],hasAgents:false,isLoading:false,onSelect:()=>{},
+  }}),
+}));
+
 vi.mock("react-router-dom", () => ({
   useNavigate: () => screenMocks.navigate,
 }));

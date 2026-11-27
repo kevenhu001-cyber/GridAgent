@@ -23,6 +23,8 @@ import type {
  */
 export interface DesktopBridge {
   runtime: DesktopRuntimeBridge;
+  /** Optional during migration; never fall back to an external Agent on failure. */
+  pi?: DesktopPiBridge;
   files: DesktopFilesBridge;
   nativeUi: DesktopNativeUiBridge;
   updater: DesktopUpdaterBridge;
@@ -357,4 +359,39 @@ export interface DesktopDiagnosticsBridge {
 
   /** Present only when the packaged native support coordinator is available. */
   supportSnapshot: DesktopSupportSnapshotBridge | null;
+}
+
+/** Native Pi runtime, independent of AnyHarness agent hosting.
+ * A session ID is host-issued and cannot be reused after close/disconnect.
+ * This development capability does not select arbitrary workspace paths.
+ */
+export type PiEvent =
+  | { kind: "ready"; version: 1 }
+  | { kind: "started" | "finished" | "settled" | "rejected"; id: string }
+  | { kind: "text"; id: string; delta: string }
+  | { kind: "error"; id: string; code: "provider_error" | "agent_failure" }
+  | { kind: "tool_started"; id: string; tool_id: string; name: string }
+  | { kind: "tool_finished"; id: string; tool_id: string; name: string; error: boolean };
+
+export type PiProvider = "openai" | "anthropic" | "google";
+export interface PiModelSelection { provider: PiProvider; modelId: string }
+export interface PiModelRecord { provider: PiProvider; id: string; name: string }
+export interface PiCredentialStatus { provider: PiProvider; configured: boolean }
+export interface DesktopPiCredentialBridge {
+  list(): Promise<PiCredentialStatus[]>;
+  save(provider: PiProvider, value: string): Promise<void>;
+  remove(provider: PiProvider): Promise<void>;
+}
+
+export interface DesktopPiBridge {
+  /** Write-only native credential operations, independent of the cloud vault. */
+  credentials?: DesktopPiCredentialBridge;
+  listModels?(): Promise<PiModelRecord[]>;
+  mode(): Promise<boolean>;
+  matchesWorkspace(path: string): Promise<boolean>;
+  open(workspacePath: string, selection?: PiModelSelection): Promise<string>;
+  prompt(sessionId: string, text: string): Promise<string>;
+  abort(sessionId: string, id: string): Promise<void>;
+  poll(sessionId: string): Promise<PiEvent[]>;
+  close(sessionId: string): Promise<void>;
 }

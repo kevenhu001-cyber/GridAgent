@@ -1,5 +1,12 @@
 # Proliferate
 
+> GridAgent fork: [repository-wide AGENTS.md](../../AGENTS.md) and the
+> [reuse inventory](../../docs/proliferate-reuse-audit.md) supersede conflicting
+> upstream product directions. Preserve original UI/interaction and non-Agent
+> infrastructure; Pi is the sole desktop Agent target. Do not develop duplicate
+> UI or revive external Agent hosting. The upstream guidance below remains
+> useful for finding existing implementation and respecting source boundaries.
+
 Proliferate runs coding agents against real codebases, end to end. This
 repository contains the Desktop, Web, and Mobile clients; the hosted control
 plane (server); the AnyHarness runtime that executes coding-agent sessions

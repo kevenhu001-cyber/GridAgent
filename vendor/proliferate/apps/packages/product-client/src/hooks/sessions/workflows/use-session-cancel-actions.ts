@@ -4,6 +4,7 @@ import {
   useSetSessionGoalMutation,
 } from "@anyharness/sdk-react";
 import { useCallback } from "react";
+import { cancelPiProductSession, isPiProductSession } from "#product/lib/access/pi/product-session";
 import { useProductHost } from "@proliferate/product-client/host/ProductHostProvider";
 import { useWorkspaceRuntimeBlock } from "#product/hooks/workspaces/derived/use-workspace-runtime-block";
 import { goalCapabilitiesForSession } from "#product/lib/domain/sessions/goal-mirror";
@@ -43,6 +44,8 @@ export function useSessionCancelActions() {
       return;
     }
 
+    if (isPiProductSession(sessionId)) { await cancelPiProductSession(sessionId); return; }
+    if (host.desktop?.pi && await host.desktop.pi.mode()) throw new Error("External Agent cancellation disabled in native Pi mode");
     const initialRecord = getSessionRecord(sessionId);
     const selectedWorkspaceId = initialRecord?.workspaceId ?? state.selectedWorkspaceId;
     const blockedReason = getWorkspaceRuntimeBlockReason(selectedWorkspaceId);
@@ -114,6 +117,7 @@ export function useSessionCancelActions() {
     cancelSessionMutation,
     clearGoalMutation,
     cloudClient,
+    host.desktop?.pi,
     getWorkspaceRuntimeBlockReason,
     setGoalMutation,
     showToast,
