@@ -19,7 +19,7 @@ This is a local-first research application, not a certified engineering system, 
 
 ## 2. Architecture and boundaries
 
-- **Agent:** Pi is the sole supported desktop Agent engine; embed its SDK in a local worker and adapt its event stream to the retained Proliferate UI/session contracts. Remove external Agent catalogs, launchers, installers, provider-specific Agent login screens and binary seeds. Retain model selection, not Agent selection. Retain Pi's default general coding tools with workspace-scoped file operations and isolated shell execution; add scientific custom tools directly. Native desktop integration is pending; the IPC lane supports read operations and opt-in developer tasks. LLM-led planning, code generation, tool calls, model debugging, experimental decisions and synthesis. Shared state and model context across clients.
+- **Agent:** Pi is the sole supported desktop Agent engine; embed its SDK in a local worker and adapt its event stream to the retained Proliferate UI/session contracts. Remove external Agent catalogs, launchers, installers, provider-specific Agent login screens and binary seeds. Retain model selection, not Agent selection. Retain Pi's default general coding tools with workspace-scoped file operations and isolated shell execution; add scientific custom tools directly. An opt-in native Pi chat preview and IPC lane exist; the production session lifecycle and existing UI contracts are not fully migrated. LLM-led planning, code generation, tool calls, model debugging, experimental decisions and synthesis. Shared state and model context across clients.
 - **Scientific workspace:** persistent scoped code, model files, inputs, logs, data and results; source snapshots and versioned artifacts.
 - **Execution runtime:** OS-isolated authorized Python/command execution, bounded resource use, cancellation, dependency requests, provenance and actionable feedback. Never fall back to unsafe host execution.
 - **Professional libraries:** ANDES, pandapower, NumPy/SciPy, SymPy, HiGHS and Python Control as core capabilities; on-demand PyPSA, OpenDSS, PyBaMM, CVXPY, Pyomo, CasADi and other supported plugins. Expand access to native APIs, not only narrow wrappers.
@@ -42,6 +42,22 @@ This is a local-first research application, not a certified engineering system, 
 | P2 | Optional accelerators and release | Add tested specialist tools only when useful; avoid mandatory policies. Verify real desktop behavior, packaging, signing and release readiness. |
 
 No milestone is complete merely because a module exists. Record CI, actual runtime evidence and remaining limitations. Reuse existing implementation where it advances these goals, but do not continue the old roadmap by inertia.
+
+## 3a. Reuse-first desktop cutover (active execution order)
+
+The owner requires reusing existing functionality rather than developing it again. The [source-level inventory](docs/proliferate-reuse-audit.md) classifies what to keep, adapt, add and retire. This sequence supersedes plans to build new generic chat, settings, session management, model selection or file explorer UI.
+
+| Priority | Work | Acceptance gate |
+| --- | --- | --- |
+| P0 | Existing model picker and provider settings | Retain ComposerModelSelectorControl/ComposerModelPickerPopover, existing settings rows and API-key dialog; replace Agent-catalog and cloud-vault dependencies with Pi-backed data and an authorized local credential service. Test model selection, provider credentials and secret handling on Windows. |
+| P0 | Existing chat/session contract cutover | Feed Pi events into the existing session directory, transcript reducer/ingest, prompt outbox, session controls and original ChatView/ChatInput. Verify normal and long streaming turns, cancellation, errors, tab switching and history. Remove temporary preview UI/store after parity; no duplicate product chat stack. |
+| P0 | Existing workspace and persistence integration | Reuse workspace inventory, file tree, editor, session tabs, selection and persistence contracts. Inspect existing durable stores before adding a Pi-specific persistence adapter; prove isolated sessions, restoration, context continuity and read-only legacy history. |
+| P0 | Remove external Agent execution | Audit and cut every launch, install, discovery, auth, seed and resume path; retain provider-neutral and non-Agent components. Pi failure must not launch another Agent. |
+| P0 | Real desktop validation | Compile retained shared ProductClient and Tauri desktop on Windows; test existing interactions and native Pi integration. Restore Windows packaging with private runtimes, signing and dependency validation. |
+| P1 | Scientific additions only | Extend existing tool rows, file previews and artifact surfaces with scientific data, charts, network topology, numerical evidence and provenance only where the existing components cannot represent them. |
+| P1 | Engineering validation | Real provider-driven unseen modeling tasks, sandbox execution, solver feedback, artifact verification and performance measurements. |
+
+Existing Python solvers, plugin management, evidence/revision records and job APIs should similarly be reused before adding new scientific services. A completed source-level component is not evidence of an operational Pi-backed feature. Changes requiring significant UI redesign need owner approval.
 
 ## 4. Primary tool surface (target)
 

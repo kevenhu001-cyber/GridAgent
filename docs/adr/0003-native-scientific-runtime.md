@@ -24,6 +24,18 @@ model or renderer. The development host selects Python and workspace through
 environment variables. The default Python lane has no execution or mutation endpoint. A separately opted-in debug lane exposes hash-guarded writes and durable asynchronous jobs, still requiring the existing workspace grant.
 Desktop TypeScript client calls Tauri directly.
 
+## Reuse-first clarification (owner, 2026-11-28)
+
+Proliferate's existing product behavior is the baseline, not just its visual
+style. Follow the [reuse inventory](../proliferate-reuse-audit.md) and repository
+contract: adapt existing model picker, credential settings, chat/session
+state, workspace and tool-rendering contracts to Pi; do not build parallel
+generic product features. Native preview components are temporary qualification
+adapters and must converge on the original UI. Reuse the existing keychain
+worker when suitable; do not reuse plaintext provider-secret files as secure
+Windows storage. The credential UI currently depends on a cloud vault and
+must be adapted without retaining that cloud dependency solely for convenience.
+
 ## Next gates
 1. Integrate workspace selection and packaged runtime discovery in the host.
 2. Developer task/write lane with durable job IDs and cooperative cancellation is implemented; complete event delivery and explicit interrupted-job recovery, then enable only through authorized production host controls. Preserve sandbox fail-closed behavior.

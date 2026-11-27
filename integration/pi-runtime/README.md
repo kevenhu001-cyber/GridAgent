@@ -50,8 +50,14 @@ No external executable extension discovery is enabled.
 
 ## Remaining integration
 
-Complete the native session directory, launch catalog and all launch-entry cutover,
-persist and restore Pi sessions, configure user-owned model settings,
+Follow the [reuse-first inventory](../../docs/proliferate-reuse-audit.md).
+NativePiChat and PiConversation are temporary preview adapters: do not grow
+them into an independent product UI or permanent duplicate transcript store.
+Adapt the existing session directory, prompt outbox, transcript ingest,
+ChatView/ChatInput/SessionTranscriptPane, session persistence and model picker
+contracts to Pi. Reuse the existing API-key settings and modal; adapt the
+cloud-backed mutation layer to a Windows-safe local credential service.
+Complete all launch-entry cutover,
 remove the external Agent catalog, discovery, installer, launch and
 authentication paths from the product, and verify real desktop and sandbox
 execution. Current tests exercise SDK factories, dispatch, event projection

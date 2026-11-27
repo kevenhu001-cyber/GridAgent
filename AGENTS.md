@@ -24,6 +24,17 @@ The LLM owns requirements interpretation, assumptions and clarification, mathema
 
 Follow [docs/ui-design.md](docs/ui-design.md) for every native UI change. ChatGPT-inspired neutral, minimal, content-first design is an owner requirement, not optional styling. Reuse the selected Proliferate design system; do not introduce inconsistent layouts, ornamental gradients or nested cards. Preserve accessibility and visible evidence provenance. Real visual acceptance requires Windows screenshots and interaction checks; do not claim fidelity based only on source code.
 
+## Mandatory reuse-first migration (owner clarification, 2026-11-28)
+
+Preserve the existing Proliferate UI and mature non-Agent infrastructure. Before proposing or implementing a feature, inspect the vendored source, existing GridAgent code, contracts and tests; identify the existing component, data owner, reusable backend and actual missing capability. Consult [the reuse inventory](docs/proliferate-reuse-audit.md). Classify each item as KEEP, ADAPT, ADD or RETIRE. Do not treat a missing Pi binding as a missing UI feature.
+
+- KEEP existing layout, visual tokens, model picker, API-key settings and dialogs, session/tab/sidebar/transcript UI, composer, file browser/editor, tools presentation, keyboard shortcuts, themes and accessibility. Reuse behavior and state contracts where compatible, not merely styling.
+- ADAPT at existing data/transport seams. Feed the retained model selector from Pi models/providers; route existing credential forms to a local secure vault; map Pi lifecycle and public events into existing session directory, outbox and transcript contracts. Reuse storage, persistence and workspace infrastructure when its dependencies and security permit.
+- ADD only demonstrated missing behavior (e.g. scientific artifact viewers, Pi transport, scoped compute and Windows-specific security/release support). No second chat store, independent model picker, replacement settings pane, separate file browser or duplicate session database without an explicit documented incompatibility and owner approval of a material UI redesign.
+- RETIRE external Agent executables, installers, selectors, authentication and launch paths, not their reusable provider-neutral UI or non-Agent infrastructure. Preserve old session data read-only when needed; never silently relaunch an external Agent.
+- The existing NativePiChat/NativePiChatGate and PiConversation are development qualification adapters, not the product UI architecture. Do not extend them into a parallel product. Converge to original ChatView/ChatInput/SessionTranscriptPane and existing directory, ingest and transcript contracts; delete temporary duplicate presentation/state after acceptance.
+- Every implementation PR must identify reused paths, adaptation seams, genuinely new gaps and retirement scope. Explain any new UI component, durable store or service by concrete unmet requirements; no broad visual changes without separate owner approval. Validate interactions and desktop builds before calling migration complete.
+
 ## Review and implementation discipline
 
 Before opening or merging a PR, ask: does this increase the LLM's ability to solve an engineering problem that the developers did not anticipate? Prefer reusable tools and safe native-library access over adding a hardcoded domain procedure. If a solver-specific adapter is useful, justify its scope and show that it does not block general code execution.
