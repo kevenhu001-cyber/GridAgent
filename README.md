@@ -4,7 +4,9 @@
 
 Developed by **TopoDrive**. Lead developer: **Adex Hu**.
 
-An open-source, simulation-grounded agent for power-system dynamics and engineering research, inspired by [PowerAgentBench-Dyn](https://arxiv.org/abs/2606.20401).
+An open-source **LLM-first scientific coding agent for power systems, electrical engineering and energy storage**. GridAgent provides the scientific workspace, professional solvers, documentation, execution and visualization; the LLM formulates models, writes code, designs experiments and interprets results.
+
+**Product direction:** not an expert system with an AI front end. General-purpose isolated scientific execution and native solver API access are the highest-priority development goals. Read [AGENTS.md](AGENTS.md), the [active roadmap](ROADMAP.md) and [ADR 0001](docs/adr/0001-llm-first.md) before contributing. Existing fixed workflows are optional research tools; the general sandbox is still being developed.
 
 **Status: early development.** Independent implementation; not an official reproduction or production grid-control system.
 
@@ -92,30 +94,19 @@ contract, references, sandbox, external runtimes and public benchmarks.
 
 ## Native Windows desktop
 
-GridAgent also has a native WPF/.NET 10 client (no Web UI, Electron or browser
-server). The portable Windows build bundles CPython and numerical dependencies;
+GridAgent has a native WinUI 3 Windows client (no Web UI, Electron or browser server). The older WPF implementation remains temporarily for regression comparison. The portable Windows build bundles CPython and numerical dependencies;
 no user Python setup is intended. See [Windows setup and build](docs/windows.md). TUI and Windows use
 the same Python engine and can share a local workspace.
 
 ## Architecture
 
-Native Windows WPF / Textual TUI / CLI → LangGraph decision loop → validated tools and budget guard → isolated ANDES solver → waveform CSV and deterministic voltage metrics.
+Native WinUI / Textual TUI / CLI → LLM-led LangGraph tool loop → scoped scientific workspace and execution runtime → professional numerical libraries → artifacts, logs and independent verification → LLM.
 
-- Only packaged Kundur research system and bounded fault parameters are allowed.
-- Solver runs in a separate process with a timeout and per-run working directory.
-- Tool calls are executed sequentially. Attempted power flow and fault simulations consume budget.
-- Each run stores solver logs and result files under .gridagent/runs.
-- Solver non-convergence is not evidence of physical instability. The normalized voltage metric is a proxy, not the full paper evaluator.
-- SQLite retains local sessions, task attempts and audit events. DSR and verified AC research tasks can resume from their saved stages.
+The current chat path supports typed native solver tools and script drafting. General autonomous Python execution is a target capability, not yet available through the normal chat loop. Numerical attempts are bounded and saved locally; solver non-convergence is not proof of physical instability.
 
 ## Roadmap
 
-1. Verify real ANDES integration and tool loop in CI.
-2. Add project configuration, audit records and persistent sessions.
-3. Add DSR case retrieval, explicit candidate budgets and hidden offline evaluator.
-4. Implement DMQ with model-specific parameter whitelist, baseline tests and rollback.
-5. Develop native Windows desktop workspace and interactive scientific charts (no Web frontend).
-6. Add native provider adapters, MCP and optional licensed simulators.
+The [active LLM-first roadmap](ROADMAP.md) prioritizes general sandbox execution, persistent projects, native API access, versioned documentation, long-horizon agent capability, scientific visualization and unseen-task validation. Specialized benchmark and diagnostic workflows are optional, not the primary product architecture.
 
 ## Development
 

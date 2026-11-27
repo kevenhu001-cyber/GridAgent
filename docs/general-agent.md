@@ -1,5 +1,7 @@
 # General research agent (first milestone)
 
+**Implementation snapshot:** the target is the [LLM-first execution platform](adr/0001-llm-first.md). The limitations documented below describe current capability, not permanent restrictions on scientific modeling. General isolated code execution and native library access are priorities in the [active roadmap](../ROADMAP.md).
+
 The normal chat path uses the same LangGraph decision loop in native Windows,
 TUI and CLI. It is no longer restricted to fixed DMQ/DSR commands. The paper
 protocols remain isolated, including their model, evaluator and test-data rules.

@@ -1,8 +1,10 @@
 # GridAgent architectural direction
 
+**Normative update, 2026-11-27:** [ADR 0001](adr/0001-llm-first.md), [AGENTS.md](../AGENTS.md) and [the active roadmap](../ROADMAP.md) govern future development. The LLM is the primary research decision-maker; runtime and numerical tools support it. Existing descriptions below are retained as implementation context, not authorization for mandatory specialist workflows.
+
 ## Purpose
 
-GridAgent is a local, simulation-grounded power-system research workbench. Its long-term value is repeatable engineering workflows, not the number of model prompts, plugins, or UI controls. A conclusion must be traceable to an input specification, model revision, solver run and evaluation evidence where applicable.
+GridAgent is a local, simulation-grounded power-system research workbench. Its long-term value is the LLM's ability to independently solve unfamiliar engineering problems using a reusable scientific execution environment, with reproducible evidence. A conclusion must be traceable to an input specification, model revision, solver run and evaluation evidence where applicable.
 
 ## Current boundaries
 
@@ -21,13 +23,13 @@ The TUI and Windows shell share the Python domain and execution layer. No GUI co
 ## Adopted decisions
 
 1. **Read/execute separation.** Reuse a workspace-scoped read service only for allowlisted projection and metadata requests. Provider calls, solver execution, plugin changes and durable research mutations remain isolated. Separate cooperative cancellation from process reuse. Never automatically replay a mutation after an IPC failure.
-2. **Evidence-backed presentation.** The versioned artifact contract projects verified persisted run data into typed, bounded UI structures. The LLM may select operations through typed tools; it cannot submit arbitrary UI code or authoritative numerical chart data. Solver completion, local quality evaluation and benchmark success must stay distinct.
+2. **Evidence-backed presentation.** The versioned artifact contract projects verified persisted run data into typed, bounded UI structures. The LLM may select typed operations or author scientific code in an explicitly authorized isolated environment; it cannot submit arbitrary UI code or label invented chart data as measured. Solver completion, local quality evaluation and benchmark success must stay distinct.
 3. **State before controls.** Extract interaction and domain projections into testable state models. Views render state and send user actions; they do not own durable business logic. ConversationState is the initial extraction. Use the same pattern for task, plugin, model and settings pages rather than adding generic framework abstractions without a concrete use case.
 4. **Immutable engineering evidence.** Preserve original solver input and results. Parameter edits create new revisions. An explicit user authorization is required for repairs or sandbox execution when the workflow requires it. Link revisions to parent runs and preserve solver provenance.
 5. **Native, incremental rendering.** Use WinUI controls, platform themes and accessibility semantics. Virtualize lists, batch public text, lazily load charts and use native scientific drawing. Keep rendered previews bounded and label downsampling. Do not expose hidden reasoning, provider payloads, raw tool arguments or diagnostics.
-6. **Plugin isolation.** Use a versioned capability/manifest model, typed parameter schemas, separate environments and verified results. Keep optional dependencies outside the base distribution. Prefer a small number of well-tested capabilities per solver before broadening the catalog. Commercial adapters have explicit licensing and verification prerequisites.
+6. **Plugin isolation.** Use a versioned capability/manifest model, typed parameter schemas, separate environments and verified results. Keep optional dependencies outside the base distribution. Prioritize general native API access in the authorized sandbox, with well-tested typed shortcuts where useful. Commercial adapters have explicit licensing and verification prerequisites.
 
-## Next architectural milestones, in order
+## Earlier infrastructure milestones (implementation context; see active roadmap for priority)
 
 | Milestone | Acceptance gate |
 | --- | --- |
