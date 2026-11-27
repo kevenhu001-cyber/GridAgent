@@ -14,8 +14,12 @@ public partial class MainWindow
         Notice.Message = message; Notice.Severity = severity; Notice.IsOpen = true;
     }
     private void UpdateModelCaption() => ConversationModel.Text = string.IsNullOrWhiteSpace(ModelName.Text) ? "Engineering assistant" : ModelName.Text.Trim();
-    private void OpenConversationHistory(object sender, RoutedEventArgs e) =>
-        Navigation.SelectedItem = Navigation.MenuItems.OfType<NavigationViewItem>().First(i => (string)i.Tag == "studies");
+    private void OpenConversationHistory(object sender, RoutedEventArgs e)
+    {
+        Navigation.SelectedItem = Navigation.MenuItems.OfType<NavigationViewItem>().First(i => (string?)i.Tag == "studies");
+        StudiesTabs.SelectedItem = ConversationsTab;
+        DispatcherQueue.TryEnqueue(() => SessionSearch.Focus(FocusState.Programmatic));
+    }
     private void UseSuggestion(object sender, RoutedEventArgs e)
     {
         if (sender is Button button && button.Content is string text) { Prompt.Text = text; Prompt.Focus(FocusState.Programmatic); }
