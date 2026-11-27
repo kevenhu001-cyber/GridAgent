@@ -1,0 +1,227 @@
+// @vitest-environment jsdom
+
+import { cleanup, renderHook } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { useChatComposerKeyboard } from "#product/hooks/chat/ui/use-chat-composer-keyboard";
+import type { LiveSessionControlDescriptor } from "#product/lib/domain/chat/session-controls/session-controls";
+
+function keyboardEvent(overrides: Partial<{
+  key: string;
+  code: string;
+  repeat: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  defaultPrevented: boolean;
+  nativeEvent: { isComposing?: boolean };
+  currentTarget: EventTarget | { value: string; selectionStart: number; selectionEnd: number };
+}> = {}) {
+  const event = {
+    key: "Enter",
+    code: "Enter",
+    repeat: false,
+    shiftKey: false,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    defaultPrevented: false,
+    nativeEvent: {
+      isComposing: false,
+      ...overrides.nativeEvent,
+    },
+    currentTarget: {
+      value: "",
+      selectionStart: 0,
+      selectionEnd: 0,
+    },
+    preventDefault: vi.fn(() => {
+      event.defaultPrevented = true;
+    }),
+    stopPropagation: vi.fn(),
+    ...overrides,
+  };
+  return event;
+}
+
+describe("useChatComposerKeyboard", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("prevents repeated submit keys without submitting", () => {
+    vi.stubGlobal("navigator", {
+      platform: "Linux x86_64",
+      userAgent: "Linux",
+    });
+    const handleSubmit = vi.fn();
+    const { result } = renderHook(() => useChatComposerKeyboard({
+      handleSubmit,
+      handleCancel: vi.fn(),
+      isRunning: false,
+      canSubmit: true,
+      modeControl: null,
+    }));
+    const event = keyboardEvent({ repeat: true });
+
+    result.current.handleKeyDown(event as never);
+
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(handleSubmit).not.toHaveBeenCalled();
+  });
+
+  it("prevents repeated submit keys even when submit is currently unavailable", () => {
+    vi.stubGlobal("navigator", {
+      platform: "Linux x86_64",
+      userAgent: "Linux",
+    });
+    const handleSubmit = vi.fn();
+    const { result } = renderHook(() => useChatComposerKeyboard({
+      handleSubmit,
+      handleCancel: vi.fn(),
+      isRunning: false,
+      canSubmit: false,
+      modeControl: null,
+    }));
+    const event = keyboardEvent({ repeat: true });
+
+    result.current.handleKeyDown(event as never);
+
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(handleSubmit).not.toHaveBeenCalled();
+  });
+
+  it("submits on a non-repeated submit key", () => {
+    vi.stubGlobal("navigator", {
+      platform: "Linux x86_64",
+      userAgent: "Linux",
+    });
+    const handleSubmit = vi.fn();
+    const { result } = renderHook(() => useChatComposerKeyboard({
+      handleSubmit,
+      handleCancel: vi.fn(),
+      isRunning: false,
+      canSubmit: true,
+      modeControl: null,
+    }));
+    const event = keyboardEvent();
+
+    result.current.handleKeyDown(event as never);
+
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(handleSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("edits the newest queued prompt on unmodified ArrowUp in an empty draft", () => {
+    const onEditLastQueued = vi.fn();
+    const { result } = renderHook(() => useChatComposerKeyboard({
+      handleSubmit: vi.fn(),
+      handleCancel: vi.fn(),
+      isRunning: true,
+      canSubmit: false,
+      modeControl: null,
+      onEditLastQueued,
+    }));
+    const event = keyboardEvent({ key: "ArrowUp", code: "ArrowUp" });
+
+    result.current.handleKeyDown(event as never);
+
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(onEditLastQueued).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads a textarea value before deciding whether ArrowUp edits the queue", () => {
+    const onEditLastQueued = vi.fn();
+    const { result } = renderHook(() => useChatComposerKeyboard({
+      handleSubmit: vi.fn(),
+      handleCancel: vi.fn(),
+      isRunning: true,
+      canSubmit: true,
+      modeControl: null,
+      onEditLastQueued,
+    }));
+    const textarea = document.createElement("textarea");
+    textarea.value = "draft";
+    const event = keyboardEvent({ key: "ArrowUp", code: "ArrowUp", currentTarget: textarea });
+
+    result.current.handleKeyDown(event as never);
+
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(onEditLastQueued).not.toHaveBeenCalled();
+  });
+
+  it("reads contenteditable text before deciding whether ArrowUp edits the queue", () => {
+    const onEditLastQueued = vi.fn();
+    const { result } = renderHook(() => useChatComposerKeyboard({
+      handleSubmit: vi.fn(),
+      handleCancel: vi.fn(),
+      isRunning: true,
+      canSubmit: true,
+      modeControl: null,
+      onEditLastQueued,
+    }));
+    const contenteditable = document.createElement("div");
+    contenteditable.contentEditable = "true";
+    contenteditable.textContent = "draft";
+    const event = keyboardEvent({ key: "ArrowUp", code: "ArrowUp", currentTarget: contenteditable });
+
+    result.current.handleKeyDown(event as never);
+
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(onEditLastQueued).not.toHaveBeenCalled();
+  });
+
+  it("leaves ArrowUp alone at the start of a non-empty draft", () => {
+    const onEditLastQueued = vi.fn();
+    const { result } = renderHook(() => useChatComposerKeyboard({
+      handleSubmit: vi.fn(),
+      handleCancel: vi.fn(),
+      isRunning: true,
+      canSubmit: true,
+      modeControl: null,
+      onEditLastQueued,
+    }));
+    const event = keyboardEvent({
+      key: "ArrowUp",
+      code: "ArrowUp",
+      currentTarget: { value: "draft", selectionStart: 0, selectionEnd: 0 },
+    });
+
+    result.current.handleKeyDown(event as never);
+
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(onEditLastQueued).not.toHaveBeenCalled();
+  });
+
+  it("cycles working mode through the control transition on Shift+Tab", () => {
+    const onSelect = vi.fn();
+    const modeControl: LiveSessionControlDescriptor = {
+      key: "collaboration_mode",
+      label: "Mode",
+      detail: "Plan",
+      rawConfigId: "collaboration_mode",
+      settable: true,
+      pendingState: null,
+      kind: "select",
+      options: [
+        { value: "default", label: "Default", selected: false },
+        { value: "plan", label: "Plan", selected: true },
+      ],
+      onSelect,
+    };
+    const { result } = renderHook(() => useChatComposerKeyboard({
+      handleSubmit: vi.fn(),
+      handleCancel: vi.fn(),
+      isRunning: false,
+      canSubmit: true,
+      modeControl,
+    }));
+    const event = keyboardEvent({ key: "Tab", code: "Tab", shiftKey: true });
+
+    result.current.handleKeyDown(event as never);
+
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith("default");
+  });
+});

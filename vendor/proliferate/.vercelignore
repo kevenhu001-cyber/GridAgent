@@ -1,0 +1,46 @@
+# Build outputs and caches (these are what bloated the upload to 4.4GB)
+node_modules
+**/node_modules
+# Cargo build outputs only — anchored so source dirs named "target"
+# (e.g. product-client src/lib/domain/automations/target) survive the upload.
+/target
+anyharness/**/target
+apps/desktop/src-tauri/target
+dist
+**/dist
+build
+**/build
+.next
+.cache
+.turbo
+coverage
+**/coverage
+
+# Python
+.venv
+**/.venv
+.pytest_cache
+**/.pytest_cache
+__pycache__
+**/__pycache__
+*.pyc
+
+# OS / editor / VCS
+.DS_Store
+**/.DS_Store
+.git
+tmp
+*.log
+
+# Local dev state
+.proliferate-local
+.claude
+
+# Not needed by the web build — anchor to repo root only (leading /)
+# so we don't accidentally strip nested e.g. apps/packages/design/scripts.
+/reference
+/docs
+/scripts
+/install
+# NOTE: /catalogs intentionally NOT ignored — product-client bundles
+# catalogs/agents/catalog.json (?raw) and the Web build needs it.

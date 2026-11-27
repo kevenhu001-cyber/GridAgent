@@ -1,0 +1,446 @@
+"""Unit tests for cloud repos service boundary.
+
+Verifies that the repos service uses the integration adapter correctly
+and owns cloud-specific access checks without leaking raw GitHub behavior.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+import uuid
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from proliferate.integrations.github import (
+    GitHubIntegrationError,
+    GitHubRepositoryPage,
+    GitHubRepositorySummary,
+    GitHubRepoBranches,
+    GitHubRepoAccessRequired,
+    GitHubRateLimited,
+    GitHubServiceUnavailable,
+    list_branches,
+)
+from proliferate.db.store.repositories import RepoEnvironmentValue
+from proliferate.server.api_errors import CloudApiError
+from proliferate.server.github.repos.domain.github_credentials import (
+    CloudRepoGitHubCredentials,
+)
+from proliferate.server.github.repos.service import (
+    _require_github_access_token,
+    build_cloud_repo_credentials_for_user,
+    get_cloud_repo_branches,
+    get_linked_github_account,
+    list_cloud_repositories,
+    get_repo_branches_for_credentials,
+    get_repo_branches_for_user,
+)
+
+
+def _make_user(*, github_token: str | None = None):
+    """Build a minimal User-like object with optional GitHub OAuth account."""
+
+    class FakeOAuth:
+        def __init__(self, oauth_name: str, access_token: str) -> None:
+            self.oauth_name = oauth_name
+            self.access_token = access_token
+
+    class FakeUser:
+        def __init__(self, oauth_accounts: list) -> None:
+            self.id = uuid.uuid4()
+            self.oauth_accounts = oauth_accounts
+
+    accounts = []
+    if github_token is not None:
+        accounts.append(FakeOAuth("github", github_token))
+    return FakeUser(accounts)
+
+
+class TestGetLinkedGithubAccount:
+    def test_returns_account_when_github_linked(self) -> None:
+        user = _make_user(github_token="gh-token")
+        account = get_linked_github_account(user)
+        assert account is not None
+        assert account.access_token == "gh-token"
+
+    def test_returns_none_when_no_github_link(self) -> None:
+        user = _make_user()
+        assert get_linked_github_account(user) is None
+
+
+class TestRequireGithubAccessToken:
+    def test_returns_token_when_present(self) -> None:
+        credentials = CloudRepoGitHubCredentials(
+            user_id=uuid.uuid4(),
+            access_token="gh-token",
+        )
+        assert _require_github_access_token(credentials, "msg") == "gh-token"
+
+    def test_raises_cloud_error_when_missing(self) -> None:
+        credentials = CloudRepoGitHubCredentials(
+            user_id=uuid.uuid4(),
+            access_token=None,
+        )
+        with pytest.raises(CloudApiError) as exc_info:
+            _require_github_access_token(credentials, "connect first")
+        assert exc_info.value.code == "github_link_required"
+        assert exc_info.value.status_code == 400
+
+
+class TestBuildCloudRepoCredentialsForUser:
+    def test_returns_user_id_and_token(self) -> None:
+        user = _make_user(github_token="gh-token")
+        credentials = build_cloud_repo_credentials_for_user(user)
+        assert credentials.user_id == user.id
+        assert credentials.access_token == "gh-token"
+
+    def test_returns_none_token_when_unlinked(self) -> None:
+        user = _make_user()
+        credentials = build_cloud_repo_credentials_for_user(user)
+        assert credentials.user_id == user.id
+        assert credentials.access_token is None
+
+
+class TestGetRepoBranchesForUser:
+    @pytest.mark.asyncio
+    async def test_delegates_to_integration_adapter(self) -> None:
+        user = _make_user(github_token="gh-token")
+        branches = GitHubRepoBranches(default_branch="main", branches=["main", "dev"])
+
+        with patch(
+            "proliferate.server.github.repos.service.get_github_repo_branches",
+            new_callable=AsyncMock,
+            return_value=branches,
+        ) as mock:
+            result = await get_repo_branches_for_user(
+                user,
+                git_owner="acme",
+                git_repo_name="rocket",
+                missing_access_message="msg",
+            )
+            mock.assert_awaited_once_with("gh-token", "acme", "rocket")
+            assert result is branches
+
+    @pytest.mark.asyncio
+    async def test_wraps_repo_access_error(self) -> None:
+        user = _make_user(github_token="gh-token")
+
+        with patch(
+            "proliferate.server.github.repos.service.get_github_repo_branches",
+            new_callable=AsyncMock,
+            side_effect=GitHubRepoAccessRequired("no access"),
+        ):
+            with pytest.raises(CloudApiError) as exc_info:
+                await get_repo_branches_for_user(
+                    user,
+                    git_owner="acme",
+                    git_repo_name="rocket",
+                    missing_access_message="msg",
+                )
+            assert exc_info.value.code == "github_repo_access_required"
+            assert exc_info.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_wraps_repo_access_error_with_contextual_message(self) -> None:
+        user = _make_user(github_token="gh-token")
+
+        with patch(
+            "proliferate.server.github.repos.service.get_github_repo_branches",
+            new_callable=AsyncMock,
+            side_effect=GitHubRepoAccessRequired("no access"),
+        ):
+            with pytest.raises(CloudApiError) as exc_info:
+                await get_repo_branches_for_user(
+                    user,
+                    git_owner="acme",
+                    git_repo_name="rocket",
+                    missing_access_message="msg",
+                    repo_access_required_message="custom repo access message",
+                )
+            assert exc_info.value.code == "github_repo_access_required"
+            assert exc_info.value.status_code == 400
+            assert exc_info.value.message == "custom repo access message"
+
+    @pytest.mark.asyncio
+    async def test_wraps_integration_error(self) -> None:
+        user = _make_user(github_token="gh-token")
+
+        with patch(
+            "proliferate.server.github.repos.service.get_github_repo_branches",
+            new_callable=AsyncMock,
+            side_effect=GitHubIntegrationError("timeout"),
+        ):
+            with pytest.raises(CloudApiError) as exc_info:
+                await get_repo_branches_for_user(
+                    user,
+                    git_owner="acme",
+                    git_repo_name="rocket",
+                    missing_access_message="msg",
+                )
+            assert exc_info.value.code == "github_branch_lookup_failed"
+            assert exc_info.value.status_code == 502
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("retry_after_seconds", "expected_headers"),
+        [(45, {"Retry-After": "45"}), (None, {})],
+    )
+    async def test_wraps_github_service_unavailable(
+        self,
+        retry_after_seconds: int | None,
+        expected_headers: dict[str, str],
+    ) -> None:
+        user = _make_user(github_token="gh-token")
+
+        with patch(
+            "proliferate.server.github.repos.service.get_github_repo_branches",
+            new_callable=AsyncMock,
+            side_effect=GitHubServiceUnavailable(
+                "GitHub is temporarily unavailable. Try again.",
+                retry_after_seconds=retry_after_seconds,
+            ),
+        ):
+            with pytest.raises(CloudApiError) as exc_info:
+                await get_repo_branches_for_user(
+                    user,
+                    git_owner="acme",
+                    git_repo_name="rocket",
+                    missing_access_message="msg",
+                )
+            assert exc_info.value.code == "github_service_unavailable"
+            assert exc_info.value.status_code == 503
+            assert exc_info.value.message == "GitHub is temporarily unavailable. Try again."
+            assert exc_info.value.headers == expected_headers
+
+    @pytest.mark.asyncio
+    async def test_rejects_user_without_github_link(self) -> None:
+        user = _make_user()
+
+        with pytest.raises(CloudApiError) as exc_info:
+            await get_repo_branches_for_user(
+                user,
+                git_owner="acme",
+                git_repo_name="rocket",
+                missing_access_message="connect first",
+            )
+        assert exc_info.value.code == "github_link_required"
+
+
+class TestGetRepoBranchesForCredentials:
+    @pytest.mark.asyncio
+    async def test_delegates_to_integration_adapter(self) -> None:
+        credentials = CloudRepoGitHubCredentials(
+            user_id=uuid.uuid4(),
+            access_token="gh-token",
+        )
+        branches = GitHubRepoBranches(default_branch="main", branches=["main", "dev"])
+
+        with patch(
+            "proliferate.server.github.repos.service.get_github_repo_branches",
+            new_callable=AsyncMock,
+            return_value=branches,
+        ) as mock:
+            result = await get_repo_branches_for_credentials(
+                credentials,
+                git_owner="acme",
+                git_repo_name="rocket",
+                missing_access_message="msg",
+            )
+            mock.assert_awaited_once_with("gh-token", "acme", "rocket")
+            assert result is branches
+
+
+class TestGetCloudRepoBranches:
+    @pytest.mark.asyncio
+    async def test_shapes_response_for_api(self) -> None:
+        credentials = CloudRepoGitHubCredentials(
+            user_id=uuid.uuid4(),
+            access_token="gh-token",
+        )
+        branches = GitHubRepoBranches(
+            default_branch="main",
+            branches=["main", "release", "stable"],
+        )
+
+        with patch(
+            "proliferate.server.github.repos.service.get_github_repo_branches",
+            new_callable=AsyncMock,
+            return_value=branches,
+        ):
+            result = await get_cloud_repo_branches(
+                credentials,
+                git_owner="acme",
+                git_repo_name="rocket",
+            )
+            assert result.model_dump(by_alias=True) == {
+                "defaultBranch": "main",
+                "branches": ["main", "release", "stable"],
+                "permission": None,
+                "private": False,
+                "fork": False,
+                "archived": False,
+                "disabled": False,
+            }
+
+
+class TestListCloudRepositories:
+    @pytest.mark.asyncio
+    async def test_maps_github_repositories_and_existing_config_state(self) -> None:
+        credentials = CloudRepoGitHubCredentials(
+            user_id=uuid.uuid4(),
+            access_token="gh-token",
+        )
+        github_page = GitHubRepositoryPage(
+            repositories=[
+                GitHubRepositorySummary(
+                    owner="acme",
+                    name="rocket",
+                    full_name="acme/rocket",
+                    default_branch="main",
+                    private=True,
+                    fork=False,
+                    archived=False,
+                    disabled=False,
+                    html_url="https://github.com/acme/rocket",
+                    owner_avatar_url=None,
+                    pushed_at="2026-05-01T00:00:00Z",
+                    updated_at="2026-05-02T00:00:00Z",
+                    permission="push",
+                ),
+                GitHubRepositorySummary(
+                    owner="acme",
+                    name="disabled",
+                    full_name="acme/disabled",
+                    default_branch="main",
+                    private=False,
+                    fork=False,
+                    archived=False,
+                    disabled=False,
+                    html_url=None,
+                    owner_avatar_url=None,
+                    pushed_at=None,
+                    updated_at=None,
+                    permission="admin",
+                ),
+            ],
+            next_cursor="cursor-2",
+        )
+        environments = [
+            RepoEnvironmentValue(
+                id=uuid.uuid4(),
+                repo_config_id=uuid.uuid4(),
+                user_id=credentials.user_id,
+                git_provider="github",
+                git_owner="acme",
+                git_repo_name="rocket",
+                environment_kind="cloud",
+                desktop_install_id=None,
+                local_path=None,
+                default_branch="main",
+                setup_script="",
+                run_command="",
+                archive_script="",
+                rerun_setup_on_unarchive=True,
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            ),
+        ]
+
+        with (
+            patch(
+                "proliferate.server.github.repos.service.list_github_repositories",
+                new_callable=AsyncMock,
+                return_value=github_page,
+            ) as list_github,
+            patch(
+                "proliferate.server.github.repos.service.list_cloud_repo_environments",
+                new_callable=AsyncMock,
+                return_value=environments,
+            ),
+        ):
+            result = await list_cloud_repositories(
+                object(),  # type: ignore[arg-type]
+                credentials,
+                query=None,
+                limit=25,
+            )
+
+        list_github.assert_awaited_once_with(
+            "gh-token",
+            cursor=None,
+            limit=25,
+            affiliation="owner,collaborator,organization_member",
+            visibility="all",
+        )
+        assert result.next_cursor == "cursor-2"
+        assert [repo.repo_config_state for repo in result.repositories] == [
+            "configured",
+            "missing",
+        ]
+        assert result.repositories[0].configured is True
+        assert result.repositories[1].configured is False
+
+    @pytest.mark.asyncio
+    async def test_maps_github_rate_limits(self) -> None:
+        credentials = CloudRepoGitHubCredentials(
+            user_id=uuid.uuid4(),
+            access_token="gh-token",
+        )
+        with (
+            patch(
+                "proliferate.server.github.repos.service.list_github_repositories",
+                new_callable=AsyncMock,
+                side_effect=GitHubRateLimited("slow down", retry_after_seconds=30),
+            ),
+            pytest.raises(CloudApiError) as exc_info,
+        ):
+            await list_cloud_repositories(
+                object(),  # type: ignore[arg-type]
+                credentials,
+            )
+        assert exc_info.value.code == "github_rate_limited"
+        assert exc_info.value.status_code == 429
+        assert exc_info.value.extra_detail == {"retryAfterSeconds": 30}
+        assert exc_info.value.headers == {"Retry-After": "30"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("retry_after_seconds", "expected_headers"),
+        [(45, {"Retry-After": "45"}), (None, {})],
+    )
+    async def test_maps_github_service_unavailable(
+        self,
+        retry_after_seconds: int | None,
+        expected_headers: dict[str, str],
+    ) -> None:
+        credentials = CloudRepoGitHubCredentials(
+            user_id=uuid.uuid4(),
+            access_token="gh-token",
+        )
+        with (
+            patch(
+                "proliferate.server.github.repos.service.list_github_repositories",
+                new_callable=AsyncMock,
+                side_effect=GitHubServiceUnavailable(
+                    "GitHub is temporarily unavailable. Try again.",
+                    retry_after_seconds=retry_after_seconds,
+                ),
+            ),
+            pytest.raises(CloudApiError) as exc_info,
+        ):
+            await list_cloud_repositories(
+                object(),  # type: ignore[arg-type]
+                credentials,
+            )
+        assert exc_info.value.code == "github_service_unavailable"
+        assert exc_info.value.status_code == 503
+        assert exc_info.value.message == "GitHub is temporarily unavailable. Try again."
+        assert exc_info.value.headers == expected_headers
+
+
+class TestListBranchesAlias:
+    def test_list_branches_is_same_function(self) -> None:
+        from proliferate.integrations.github import get_github_repo_branches
+
+        assert list_branches is get_github_repo_branches

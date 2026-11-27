@@ -1,0 +1,52 @@
+import { Button } from "#product/primitives/Button";
+import { ChevronRight } from "#product/primitives/icons/core";
+
+interface TurnSeparatorProps {
+  label: string;
+  interactive?: boolean;
+  expanded?: boolean;
+  onClick?: () => void;
+  /** Removes the disclosure's own border box without changing its focus ring. */
+  borderless?: boolean;
+}
+
+/** Left-aligned transcript disclosure used for nested or completed work. */
+export function TurnSeparator({
+  label,
+  interactive = false,
+  expanded = false,
+  onClick,
+  borderless = false,
+}: TurnSeparatorProps) {
+  if (interactive) {
+    return (
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        data-chat-transcript-ignore
+        onClick={onClick}
+        className={`group/turn-separator h-auto max-w-full justify-start gap-1 whitespace-normal bg-transparent px-0 py-0 text-chat font-normal text-muted-foreground hover:bg-transparent active:bg-transparent hover:text-foreground focus-visible:outline-none focus-visible:ring-0 focus-visible:underline ${
+          borderless ? "rounded-none border-0" : "rounded-md border border-transparent"
+        }`}
+        aria-expanded={expanded}
+      >
+        <span className="min-w-0 truncate">{label}</span>
+        <ChevronRight
+          aria-hidden="true"
+          className={`icon-compact shrink-0 text-current transition-[transform,opacity] ${
+            expanded
+              ? "rotate-90 opacity-100"
+              : "opacity-0 group-hover/turn-separator:opacity-100 group-focus-visible/turn-separator:opacity-100"
+          }`}
+        />
+      </Button>
+    );
+  }
+
+  return (
+    <div className="text-chat text-muted-foreground">
+      {label}
+    </div>
+  );
+}

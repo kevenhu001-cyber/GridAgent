@@ -1,0 +1,535 @@
+use std::sync::Arc;
+use std::time::Duration;
+
+use anyharness_contract::v1::{
+    InteractionPayload, PendingInteractionPayloadSummary, PendingInteractionSource,
+    PendingInteractionSummary, SessionEndReason, SessionEndedEvent, SessionEvent,
+    SessionEventEnvelope, SessionExecutionPhase, SessionStartedEvent,
+};
+use tokio::sync::{broadcast, mpsc};
+
+use crate::domains::sessions::model::SessionRecord;
+use crate::domains::sessions::runtime_event::RuntimeEventInjectionError;
+use crate::live::sessions::actor::command::{
+    ConditionalUnloadOutcome, ForkSessionCommandError, PromptAcceptError, QueueMutationError,
+    ResolveInteractionCommandError, SessionCommand, SetConfigOptionCommandError,
+    UnloadRetainedReason,
+};
+use crate::live::sessions::actor::spawn::ActorReadyResult;
+use crate::live::sessions::handle::LiveSessionHandle;
+use crate::live::sessions::model::{EventPersist, SessionStateDurable};
+use crate::live::sessions::sink::publish::publish_session_event;
+
+const MAX_REPLAY_GAP: Duration = Duration::from_millis(1500);
+
+pub struct ReplayActorConfig {
+    pub session: SessionRecord,
+    pub events: Vec<SessionEventEnvelope>,
+    pub speed: f32,
+    pub event_tx: broadcast::Sender<SessionEventEnvelope>,
+    pub state: std::sync::Arc<dyn SessionStateDurable>,
+    pub event_persist: std::sync::Arc<dyn EventPersist>,
+    pub last_seq: i64,
+    pub on_exit: Option<Box<dyn FnOnce(bool) + Send + 'static>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReplayExitDisposition {
+    Completed,
+    Close,
+    Dismiss,
+}
+
+pub fn spawn_replay_actor(
+    mut config: ReplayActorConfig,
+) -> anyhow::Result<(Arc<LiveSessionHandle>, ActorReadyResult)> {
+    let session_id = config.session.id.clone();
+    let native_session_id = format!("replay:{session_id}");
+    let (command_tx, command_rx) = mpsc::channel::<SessionCommand>(32);
+    let handle = Arc::new(LiveSessionHandle::new(
+        session_id.clone(),
+        command_tx,
+        config.event_tx.clone(),
+        Some(native_session_id.clone()),
+        SessionExecutionPhase::Starting,
+    ));
+    let actor_handle = handle.clone();
+    let event_sequence_releaser = handle.event_sequence_releaser();
+    let actor_finished_releaser = handle.actor_finished_releaser();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel::<anyhow::Result<String>>();
+    let on_exit = config.on_exit.take();
+
+    std::thread::Builder::new()
+        .name(format!(
+            "replay-session-{}",
+            &session_id[..8.min(session_id.len())]
+        ))
+        .spawn(move || {
+            let event_sequence_releaser = event_sequence_releaser;
+            let actor_finished_releaser = actor_finished_releaser;
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build replay tokio runtime");
+            let errored = match rt.block_on(run_replay_actor(
+                config,
+                command_rx,
+                ready_tx,
+                actor_handle,
+                native_session_id,
+            )) {
+                Ok(()) => false,
+                Err(error) => {
+                    tracing::error!(session_id = %session_id, error = %error, "replay actor failed");
+                    true
+                }
+            };
+            drop(event_sequence_releaser);
+            if let Some(cb) = on_exit {
+                cb(errored);
+            }
+            drop(actor_finished_releaser);
+        })?;
+
+    let native_session_id = ready_rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .map_err(|error| match error {
+            std::sync::mpsc::RecvTimeoutError::Timeout => {
+                anyhow::anyhow!("replay session startup timed out after 10s")
+            }
+            std::sync::mpsc::RecvTimeoutError::Disconnected => {
+                anyhow::anyhow!("replay actor died before startup completed")
+            }
+        })??;
+
+    Ok((handle, ActorReadyResult { native_session_id }))
+}
+
+async fn run_replay_actor(
+    config: ReplayActorConfig,
+    mut command_rx: mpsc::Receiver<SessionCommand>,
+    ready_tx: std::sync::mpsc::Sender<anyhow::Result<String>>,
+    handle: Arc<LiveSessionHandle>,
+    native_session_id: String,
+) -> anyhow::Result<()> {
+    let session_id = config.session.id.clone();
+    let store = config.state.clone();
+    let event_persist = config.event_persist.clone();
+    let mut next_seq = config.last_seq + 1;
+    let mut first_turn_started = false;
+    let mut previous_recorded_timestamp: Option<chrono::DateTime<chrono::FixedOffset>> = None;
+    let mut emitted_session_ended = false;
+
+    let _ = ready_tx.send(Ok(native_session_id));
+    handle
+        .set_execution_phase(SessionExecutionPhase::Idle)
+        .await;
+    let now = chrono::Utc::now().to_rfc3339();
+    let _ = store.update_status(&session_id, "idle", &now);
+
+    let mut exit = ReplayExitDisposition::Completed;
+    for recorded in config.events {
+        if matches!(recorded.event, SessionEvent::TurnStarted(_)) {
+            if first_turn_started {
+                handle.set_busy(false);
+                handle
+                    .set_execution_phase(SessionExecutionPhase::Idle)
+                    .await;
+                let _ = store.update_status(&session_id, "idle", &chrono::Utc::now().to_rfc3339());
+                match wait_for_advance(&mut command_rx).await {
+                    Ok(()) => {}
+                    Err(disposition) => {
+                        exit = disposition;
+                        break;
+                    }
+                }
+            }
+            first_turn_started = true;
+            handle.set_busy(true);
+            handle
+                .set_execution_phase(SessionExecutionPhase::Running)
+                .await;
+            let _ = store.update_status(&session_id, "running", &chrono::Utc::now().to_rfc3339());
+        }
+
+        let recorded_timestamp = parse_recorded_timestamp(&recorded)?;
+        let delay = replay_delay(
+            previous_recorded_timestamp,
+            recorded_timestamp,
+            config.speed,
+        );
+        previous_recorded_timestamp = Some(recorded_timestamp);
+        if !delay.is_zero() {
+            match sleep_or_handle_commands(delay, &mut command_rx).await {
+                Ok(()) => {}
+                Err(disposition) => {
+                    exit = disposition;
+                    break;
+                }
+            }
+        }
+
+        let event = remap_event(recorded.event, &session_id);
+        publish_session_event(
+            &session_id,
+            &mut next_seq,
+            &config.event_tx,
+            event_persist.as_ref(),
+            event.clone(),
+            recorded.turn_id,
+            recorded.item_id,
+        );
+
+        match event {
+            SessionEvent::InteractionRequested(interaction) => {
+                handle
+                    .add_pending_interaction(pending_summary_from_interaction(&interaction))
+                    .await;
+                match wait_for_interaction(&mut command_rx, &handle, &interaction.request_id).await
+                {
+                    Ok(()) => {}
+                    Err(disposition) => {
+                        exit = disposition;
+                        break;
+                    }
+                }
+            }
+            SessionEvent::InteractionResolved(interaction) => {
+                handle
+                    .remove_pending_interaction(&interaction.request_id)
+                    .await;
+            }
+            SessionEvent::TurnEnded(_) => {
+                handle.set_busy(false);
+                handle
+                    .set_execution_phase(SessionExecutionPhase::Idle)
+                    .await;
+                let _ = store.update_status(&session_id, "idle", &chrono::Utc::now().to_rfc3339());
+            }
+            SessionEvent::SessionEnded(event) => {
+                emitted_session_ended = true;
+                let is_error = matches!(event.reason, SessionEndReason::Error);
+                let phase = if is_error {
+                    SessionExecutionPhase::Errored
+                } else {
+                    SessionExecutionPhase::Closed
+                };
+                handle
+                    .clear_pending_interactions_for_terminal_state(phase)
+                    .await;
+                let status = if is_error { "errored" } else { "closed" };
+                let _ = store.update_status(&session_id, status, &chrono::Utc::now().to_rfc3339());
+            }
+            SessionEvent::Error(_) => {
+                handle
+                    .clear_pending_interactions_for_terminal_state(SessionExecutionPhase::Errored)
+                    .await;
+                let _ =
+                    store.update_status(&session_id, "errored", &chrono::Utc::now().to_rfc3339());
+            }
+            SessionEvent::ItemStarted(_) | SessionEvent::ItemDelta(_) => {
+                handle
+                    .set_execution_phase(SessionExecutionPhase::Running)
+                    .await;
+                let _ =
+                    store.update_status(&session_id, "running", &chrono::Utc::now().to_rfc3339());
+            }
+            _ => {}
+        }
+    }
+
+    if matches!(exit, ReplayExitDisposition::Close) && !emitted_session_ended {
+        publish_session_event(
+            &session_id,
+            &mut next_seq,
+            &config.event_tx,
+            event_persist.as_ref(),
+            SessionEvent::SessionEnded(SessionEndedEvent {
+                reason: SessionEndReason::Closed,
+            }),
+            None,
+            None,
+        );
+    }
+
+    handle.set_busy(false);
+    match exit {
+        ReplayExitDisposition::Close => {
+            handle
+                .clear_pending_interactions_for_terminal_state(SessionExecutionPhase::Closed)
+                .await;
+        }
+        ReplayExitDisposition::Dismiss | ReplayExitDisposition::Completed => {
+            handle
+                .clear_pending_interactions_for_terminal_state(SessionExecutionPhase::Idle)
+                .await;
+        }
+    }
+    Ok(())
+}
+
+async fn wait_for_advance(
+    command_rx: &mut mpsc::Receiver<SessionCommand>,
+) -> Result<(), ReplayExitDisposition> {
+    loop {
+        match command_rx.recv().await {
+            Some(SessionCommand::ReplayAdvance { respond_to }) => {
+                let _ = respond_to.send(Ok(()));
+                return Ok(());
+            }
+            Some(command) => {
+                if let Some(disposition) = handle_non_replay_command(command, true).await {
+                    return Err(disposition);
+                }
+            }
+            None => return Err(ReplayExitDisposition::Close),
+        }
+    }
+}
+
+async fn wait_for_interaction(
+    command_rx: &mut mpsc::Receiver<SessionCommand>,
+    handle: &Arc<LiveSessionHandle>,
+    request_id: &str,
+) -> Result<(), ReplayExitDisposition> {
+    loop {
+        match command_rx.recv().await {
+            Some(SessionCommand::ResolveInteraction {
+                request_id: resolved_id,
+                respond_to,
+                ..
+            }) if resolved_id == request_id => {
+                handle.remove_pending_interaction(request_id).await;
+                let _ = respond_to.send(Ok(()));
+                return Ok(());
+            }
+            Some(SessionCommand::ResolveInteraction { respond_to, .. }) => {
+                let _ = respond_to.send(Err(ResolveInteractionCommandError::NotFound));
+            }
+            Some(command) => {
+                if let Some(disposition) = handle_non_replay_command(command, false).await {
+                    return Err(disposition);
+                }
+            }
+            None => return Err(ReplayExitDisposition::Close),
+        }
+    }
+}
+
+async fn sleep_or_handle_commands(
+    delay: Duration,
+    command_rx: &mut mpsc::Receiver<SessionCommand>,
+) -> Result<(), ReplayExitDisposition> {
+    let sleep = tokio::time::sleep(delay);
+    tokio::pin!(sleep);
+    loop {
+        tokio::select! {
+            _ = &mut sleep => return Ok(()),
+            command = command_rx.recv() => {
+                match command {
+                    Some(command) => {
+                        if let Some(disposition) = handle_non_replay_command(command, false).await {
+                            return Err(disposition);
+                        }
+                    }
+                    None => return Err(ReplayExitDisposition::Close),
+                }
+            }
+        }
+    }
+}
+
+async fn handle_non_replay_command(
+    command: SessionCommand,
+    advance_allowed: bool,
+) -> Option<ReplayExitDisposition> {
+    match command {
+        SessionCommand::ReplayAdvance { respond_to } => {
+            let result = if advance_allowed {
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!(
+                    "replay is not paused at an advance boundary"
+                ))
+            };
+            let _ = respond_to.send(result);
+            None
+        }
+        SessionCommand::Prompt { respond_to, .. } => {
+            let _ = respond_to.send(Err(PromptAcceptError::EnqueueFailed(
+                "replay sessions do not accept prompts".to_string(),
+            )));
+            None
+        }
+        SessionCommand::EditPendingPrompt { respond_to, .. }
+        | SessionCommand::DeletePendingPrompt { respond_to, .. }
+        | SessionCommand::ReorderPendingPrompts { respond_to, .. }
+        | SessionCommand::SteerPendingPrompt { respond_to, .. } => {
+            let _ = respond_to.send(Err(QueueMutationError::NotFound));
+            None
+        }
+        SessionCommand::SetConfigOption { respond_to, .. } => {
+            let _ = respond_to.send(Err(SetConfigOptionCommandError::Rejected(
+                "replay sessions do not support config changes".to_string(),
+            )));
+            None
+        }
+        SessionCommand::ResolveInteraction { respond_to, .. } => {
+            let _ = respond_to.send(Err(ResolveInteractionCommandError::NotFound));
+            None
+        }
+        SessionCommand::RunDomainOp { respond_to, .. } => {
+            // Replay sessions carry no live domain state; dropping the
+            // responder surfaces ResponseDropped to the submitter.
+            drop(respond_to);
+            None
+        }
+        SessionCommand::CallAgentExtMethod { respond_to, .. } => {
+            let _ = respond_to.send(Err(anyhow::anyhow!(
+                "replay sessions have no live agent connection"
+            )));
+            None
+        }
+        SessionCommand::VerifyForkReady { respond_to, .. } => {
+            let _ = respond_to.send(Err(ForkSessionCommandError::Unsupported(
+                "replay sessions cannot be forked".to_string(),
+            )));
+            None
+        }
+        SessionCommand::Fork { respond_to, .. } => {
+            let _ = respond_to.send(Err(ForkSessionCommandError::Unsupported(
+                "replay sessions cannot be forked".to_string(),
+            )));
+            None
+        }
+        SessionCommand::SidedoorTargetedFork { respond_to, .. } => {
+            let _ = respond_to.send(Err(
+                crate::live::sessions::SidedoorForkCommandError::NotReady(
+                    "replay sessions cannot be forked".to_string(),
+                ),
+            ));
+            None
+        }
+        SessionCommand::CloseNativeSession { respond_to, .. } => {
+            let _ = respond_to.send(Err(anyhow::anyhow!(
+                "replay sessions have no native child sessions"
+            )));
+            None
+        }
+        SessionCommand::InjectRuntimeEvent { respond_to, .. } => {
+            let _ = respond_to.send(Err(RuntimeEventInjectionError::SessionReplaying));
+            None
+        }
+        SessionCommand::Cancel => None,
+        SessionCommand::CancelTurnIfActive { respond_to, .. } => {
+            // Replay sessions have no live turn to cancel.
+            let _ = respond_to
+                .send(crate::live::sessions::actor::command::ConditionalCancelOutcome::NotActive);
+            None
+        }
+        SessionCommand::Dismiss { respond_to } => {
+            let _ = respond_to.send(Ok(()));
+            Some(ReplayExitDisposition::Dismiss)
+        }
+        SessionCommand::Unload { respond_to } => {
+            let _ = respond_to.send(Ok(()));
+            Some(ReplayExitDisposition::Dismiss)
+        }
+        SessionCommand::UnloadIfIdle { respond_to } => {
+            // The idle reaper's conditional retirement. A replay session holds
+            // no agent process, so retiring it reclaims nothing, and the only
+            // exit it has is a dismissal. Keep it.
+            let _ = respond_to.send(ConditionalUnloadOutcome::Retained(
+                UnloadRetainedReason::ReplaySession,
+            ));
+            None
+        }
+        SessionCommand::Stop { respond_to } => {
+            // A replay session has no live agent process to kill; nothing
+            // was running, so the census is zero.
+            let _ = respond_to.send(Ok((0, 0)));
+            Some(ReplayExitDisposition::Dismiss)
+        }
+        SessionCommand::Close { respond_to } => {
+            let _ = respond_to.send(Ok(()));
+            Some(ReplayExitDisposition::Close)
+        }
+    }
+}
+
+fn remap_event(event: SessionEvent, session_id: &str) -> SessionEvent {
+    match event {
+        SessionEvent::SessionStarted(SessionStartedEvent {
+            source_agent_kind, ..
+        }) => SessionEvent::SessionStarted(SessionStartedEvent {
+            native_session_id: format!("replay:{session_id}"),
+            source_agent_kind,
+        }),
+        other => other,
+    }
+}
+
+fn parse_recorded_timestamp(
+    envelope: &SessionEventEnvelope,
+) -> anyhow::Result<chrono::DateTime<chrono::FixedOffset>> {
+    chrono::DateTime::parse_from_rfc3339(&envelope.timestamp).map_err(|error| {
+        anyhow::anyhow!("invalid replay timestamp at seq {}: {error}", envelope.seq)
+    })
+}
+
+fn replay_delay(
+    previous: Option<chrono::DateTime<chrono::FixedOffset>>,
+    current: chrono::DateTime<chrono::FixedOffset>,
+    speed: f32,
+) -> Duration {
+    if speed == 0.0 {
+        return Duration::ZERO;
+    }
+    let Some(previous) = previous else {
+        return Duration::ZERO;
+    };
+    let delta = current.signed_duration_since(previous);
+    if delta <= chrono::TimeDelta::zero() {
+        return Duration::ZERO;
+    }
+    let capped = delta.to_std().unwrap_or(Duration::ZERO).min(MAX_REPLAY_GAP);
+    capped.div_f32(speed)
+}
+
+fn pending_summary_from_interaction(
+    event: &anyharness_contract::v1::InteractionRequestedEvent,
+) -> PendingInteractionSummary {
+    PendingInteractionSummary {
+        request_id: event.request_id.clone(),
+        kind: event.kind.clone(),
+        title: event.title.clone(),
+        description: event.description.clone(),
+        source: PendingInteractionSource {
+            tool_call_id: event.source.tool_call_id.clone(),
+            tool_kind: event.source.tool_kind.clone(),
+            tool_status: event.source.tool_status.clone(),
+            linked_plan_id: None,
+        },
+        payload: pending_payload_summary(&event.payload),
+    }
+}
+
+fn pending_payload_summary(payload: &InteractionPayload) -> PendingInteractionPayloadSummary {
+    match payload {
+        InteractionPayload::Permission(payload) => PendingInteractionPayloadSummary::Permission {
+            options: payload.options.clone(),
+            context: payload.context.clone(),
+        },
+        InteractionPayload::UserInput(payload) => PendingInteractionPayloadSummary::UserInput {
+            questions: payload.questions.clone(),
+        },
+        InteractionPayload::McpElicitation(payload) => {
+            PendingInteractionPayloadSummary::McpElicitation {
+                payload: payload.clone(),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;

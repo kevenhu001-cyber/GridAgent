@@ -1,0 +1,252 @@
+import { twMerge } from "#product/primitives/utils/tw-merge";
+import { ProliferateLivingMark } from "#product/components/brand/ProliferateLivingMark";
+import { ConnectServerDialog } from "#product/components/auth/ConnectServerDialog";
+import { PasswordSignInForm } from "#product/components/auth/PasswordSignInForm";
+import { ThinkingText } from "#product/primitives/patterns/ThinkingText";
+import { useConnectServer } from "#product/hooks/auth/workflows/use-connect-server";
+import { ArrowRight } from "#product/primitives/icons/core";
+import { GitHub } from "#product/primitives/icons/platform";
+import { Button } from "#product/primitives/Button";
+import { AUTH_LOGIN_LABELS, AUTH_SCREEN_LABELS, CONNECT_SERVER_LABELS } from "#product/copy/auth/auth-copy";
+
+// Shared shell for the initial page (loading -> auth). The SAME element tree is
+// rendered in both modes so React never re-mounts the living mark — its
+// breathing animation stays cleanly persistent across the transition.
+// The mark + one-line heading sit in a fixed-height block, and the actions area
+// reserves its height in BOTH modes, so the mark never moves; only the contents
+// of the reserved slot cross-fade (loading skeleton -> GitHub button).
+
+export interface AuthScreenLayoutProps {
+  mode: "loading" | "auth";
+  /** When the mark should settle to the static icon (e.g. session resolved). */
+  markComplete?: boolean;
+  onMarkResolved?: () => void;
+  loadingHint?: string;
+  // Auth action state — only meaningful in mode="auth".
+  submitting?: boolean;
+  busy?: boolean;
+  error?: string | null;
+  githubSignInAvailable?: boolean;
+  githubSignInChecking?: boolean;
+  githubSignInUnavailableDescription?: string;
+  onGitHubSignIn?: () => void;
+  // Email/password sign-in: the default surface when the server reports
+  // GitHub OAuth is not configured (self-hosted posture).
+  passwordSignInAvailable?: boolean;
+  passwordSubmitting?: boolean;
+  onPasswordSignIn?: (email: string, password: string) => void;
+  onCancelSignIn?: () => void;
+  canContinueLocally?: boolean;
+  onContinueLocally?: () => void;
+}
+
+export function AuthScreenLayout({
+  mode,
+  markComplete = false,
+  onMarkResolved,
+  loadingHint = AUTH_SCREEN_LABELS.loadingHint,
+  submitting = false,
+  busy = false,
+  error = null,
+  githubSignInAvailable = true,
+  githubSignInChecking = false,
+  githubSignInUnavailableDescription = "",
+  onGitHubSignIn,
+  passwordSignInAvailable = false,
+  passwordSubmitting = false,
+  onPasswordSignIn,
+  onCancelSignIn,
+  canContinueLocally = false,
+  onContinueLocally,
+}: AuthScreenLayoutProps) {
+  const showAuth = mode === "auth";
+  // Password form is the DEFAULT when GitHub OAuth is not configured; the
+  // GitHub button keeps its place whenever GitHub is (or may still be) enabled.
+  const showPasswordForm = showAuth
+    && passwordSignInAvailable
+    && !githubSignInChecking
+    && !githubSignInAvailable;
+  const showCancelSignIn = showAuth
+    && Boolean(onCancelSignIn)
+    && submitting;
+  const showUnavailableMessage = showAuth
+    && !showPasswordForm
+    && !githubSignInChecking
+    && !githubSignInAvailable;
+
+  // Connect-to-a-self-hosted-server: a quiet secondary affordance, never
+  // rendered in the web build (no Tauri, no `set_app_config` command —
+  // `available` is false there).
+  const connectServer = useConnectServer();
+  const showConnectServer = showAuth && connectServer.available;
+
+  return (
+    <div
+      className="flex min-h-screen flex-col items-center justify-center bg-background p-8"
+      data-tauri-drag-region="true"
+      // Durable readiness marker for the phase-6 /login budget collector
+      // (scripts/measure-login-runtime-budget.mjs). "auth" only once the shell
+      // has resolved to the signed-out sign-in surface; "loading" while the
+      // session bootstrap is still in flight. The collector waits for
+      // [data-auth-screen="auth"] specifically — an error/retry/loading screen
+      // never satisfies it, so a passing ledger always reflects the real
+      // login-ready point rather than any stray button/input on the page.
+      data-auth-screen={mode}
+    >
+      <div className="w-full max-w-md space-y-8">
+        <div className="space-y-5">
+          <ProliferateLivingMark complete={markComplete} onResolved={onMarkResolved} />
+          <div className="space-y-2.5">
+            <h1 className="text-hero font-semibold text-foreground">
+              {AUTH_SCREEN_LABELS.heading}
+            </h1>
+          </div>
+        </div>
+
+        {/* Reserved actions slot: identical height in both modes so the block
+            above never shifts. Two absolutely-positioned layers cross-fade. */}
+        <div
+          className={twMerge(
+            "relative",
+            showPasswordForm ? "h-[8.25rem]" : "h-11",
+          )}
+        >
+          {/* Loading layer: a skeleton sitting where the button will land.
+              On exit it slides up so nothing drifts downward. */}
+          <div
+            className={twMerge(
+              "absolute inset-0 transition-all duration-enter ease-out-quint",
+              "motion-reduce:translate-y-0 motion-reduce:transition-none",
+              showAuth
+                ? "pointer-events-none -translate-y-1 opacity-0"
+                : "translate-y-0 opacity-100",
+            )}
+            aria-hidden={showAuth}
+          >
+            <div className="flex h-11 w-full items-center justify-center rounded-md border border-border/50 bg-card/30">
+              <ThinkingText text={loadingHint} className="text-ui font-normal" />
+            </div>
+          </div>
+
+          {/* Auth layer: the real GitHub button rises up into place. */}
+          <div
+            className={twMerge(
+              "absolute inset-0 transition-all duration-enter ease-out-quint",
+              "motion-reduce:translate-y-0 motion-reduce:transition-none",
+              showAuth
+                ? "translate-y-0 opacity-100"
+                : "pointer-events-none translate-y-1 opacity-0",
+            )}
+            aria-hidden={!showAuth}
+          >
+            <div className="grid gap-2">
+              {showPasswordForm ? (
+                <PasswordSignInForm
+                  submitting={passwordSubmitting}
+                  disabled={!showAuth || busy}
+                  tabbable={showAuth}
+                  onSubmit={(email, password) => onPasswordSignIn?.(email, password)}
+                />
+              ) : (
+                <Button
+                  type="button"
+                  size="md"
+                  loading={submitting}
+                  onClick={onGitHubSignIn}
+                  disabled={
+                    !showAuth
+                    || busy
+                    || githubSignInChecking
+                    || !githubSignInAvailable
+                  }
+                  tabIndex={showAuth ? 0 : -1}
+                  className="h-11 w-full"
+                >
+                  {!submitting && <GitHub className="icon-control shrink-0" />}
+                  {submitting ? AUTH_LOGIN_LABELS.waiting : AUTH_LOGIN_LABELS.signIn}
+                  {!submitting && <ArrowRight className="icon-paired" />}
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {/* Message line is absolutely anchored below the action slot so error /
+              unavailable / local text (which can wrap to multiple lines) never
+              changes the centered column height — the mark stays pinned. */}
+          <div className="absolute inset-x-0 top-full mt-3 text-center">
+            {showCancelSignIn
+              ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={onCancelSignIn}
+                  className="inline h-auto px-0 py-0 text-muted-foreground underline underline-offset-4 hover:bg-transparent hover:text-foreground"
+                >
+                  {AUTH_LOGIN_LABELS.cancelSignIn}
+                </Button>
+              )
+              : showAuth && error
+              ? <p className="text-ui text-destructive">{error}</p>
+              : showUnavailableMessage
+                ? (
+                  <p className="text-body text-muted-foreground">
+                    {githubSignInUnavailableDescription}
+                  </p>
+                )
+                : showAuth && canContinueLocally
+                  ? (
+                    <p className="text-body text-muted-foreground">
+                      {AUTH_LOGIN_LABELS.detailWithLocalPrefix}{" "}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={onContinueLocally}
+                        className="inline h-auto px-0 py-0 text-foreground underline underline-offset-4 hover:text-muted-foreground"
+                      >
+                        {AUTH_LOGIN_LABELS.continueLocallyInline}
+                      </Button>
+                      .
+                    </p>
+                  )
+                  : null}
+          </div>
+        </div>
+      </div>
+
+      {showConnectServer && (
+        <div className="fixed inset-x-0 bottom-6 flex items-center justify-center gap-2 text-ui-sm text-muted-foreground">
+          {connectServer.connectedServerHost ? (
+            <>
+              <span>
+                {CONNECT_SERVER_LABELS.connectedPrefix} {connectServer.connectedServerHost}
+              </span>
+              <span aria-hidden>·</span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => void connectServer.resetToDefaultServer()}
+                className="inline h-auto px-0 py-0 text-muted-foreground underline underline-offset-4 hover:text-foreground"
+              >
+                {CONNECT_SERVER_LABELS.reset}
+              </Button>
+            </>
+          ) : (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={connectServer.open}
+              className="inline h-auto px-0 py-0 text-muted-foreground underline underline-offset-4 hover:text-foreground"
+            >
+              {CONNECT_SERVER_LABELS.connectAffordance}
+            </Button>
+          )}
+        </div>
+      )}
+      <ConnectServerDialog controller={connectServer} />
+    </div>
+  );
+}

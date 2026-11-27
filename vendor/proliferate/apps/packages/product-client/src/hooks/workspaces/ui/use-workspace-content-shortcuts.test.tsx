@@ -1,0 +1,375 @@
+// @vitest-environment jsdom
+
+import { cleanup, renderHook } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  clearShortcutHandlerRegistryForTests,
+  runShortcutHandler,
+} from "#product/lib/domain/shortcuts/registry";
+import { useWorkspaceContentShortcuts } from "#product/hooks/workspaces/ui/use-workspace-content-shortcuts";
+import { useContentSearchStore } from "#product/stores/search/content-search-store";
+import {
+  requestRightPanelCloseActiveTab,
+  requestRightPanelRelativeTab,
+  requestRightPanelTabByIndex,
+} from "#product/lib/workflows/workspaces/right-panel-shortcut-requests";
+
+function createActions(overrides: Partial<{
+  activateRelativeTab: ReturnType<typeof vi.fn>;
+  activateTabByShortcutIndex: ReturnType<typeof vi.fn>;
+  closeActiveWorkspaceTab: ReturnType<typeof vi.fn>;
+  openNewSessionTab: ReturnType<typeof vi.fn>;
+  restoreLastDismissedTab: ReturnType<typeof vi.fn>;
+}> = {}) {
+  return {
+    activateRelativeTab: vi.fn(() => true),
+    activateTabByShortcutIndex: vi.fn(),
+    closeActiveWorkspaceTab: vi.fn(() => "closed" as const),
+    openNewSessionTab: vi.fn(() => true),
+    restoreLastDismissedTab: vi.fn(),
+    ...overrides,
+  };
+}
+
+/** Mounts and focuses a bare focus-zone element (no nested owner). */
+function mountFocusZone(kind: string): HTMLElement {
+  const zone = document.createElement("div");
+  zone.tabIndex = 0;
+  zone.setAttribute("data-focus-zone", kind);
+  document.body.append(zone);
+  zone.focus();
+  return zone;
+}
+
+// Mounts a right-panel zone containing a file-viewer frame and focuses a
+// child inside it: an ordinary control, or (with `inDock: true`) a filter
+// input nested inside `[data-docked-file-tree]`.
+function focusInsideFileViewerFrame(options: { inDock?: boolean } = {}): { focusTarget: HTMLElement } {
+  const zone = document.createElement("div");
+  zone.tabIndex = 0;
+  zone.setAttribute("data-focus-zone", "right-panel");
+  const frame = document.createElement("div");
+  frame.setAttribute("data-file-viewer-frame", "true");
+  const focusTarget = document.createElement(options.inDock ? "input" : "button");
+  if (!options.inDock) {
+    frame.append(focusTarget);
+  } else {
+    (focusTarget as HTMLInputElement).value = "some-filter";
+    const dock = document.createElement("div");
+    dock.setAttribute("data-docked-file-tree", "true");
+    dock.append(focusTarget);
+    frame.append(dock);
+  }
+  zone.append(frame);
+  document.body.append(zone);
+  focusTarget.focus();
+  return { focusTarget };
+}
+
+const harnessState = vi.hoisted(() => ({
+  selectedWorkspaceId: "workspace-1" as string | null,
+}));
+
+vi.mock("#product/stores/sessions/session-selection-store", () => ({
+  useSessionSelectionStore: (selector: (state: { selectedWorkspaceId: string | null }) => unknown) =>
+    selector(harnessState),
+}));
+
+vi.mock("#product/lib/workflows/workspaces/right-panel-shortcut-requests", () => ({
+  requestRightPanelCloseActiveTab: vi.fn(() => true),
+  requestRightPanelRelativeTab: vi.fn(() => true),
+  requestRightPanelTabByIndex: vi.fn(() => true),
+}));
+
+describe("useWorkspaceContentShortcuts", () => {
+  beforeEach(() => {
+    harnessState.selectedWorkspaceId = "workspace-1";
+    clearShortcutHandlerRegistryForTests();
+    useContentSearchStore.setState({
+      open: false,
+      query: "",
+      surface: "chat",
+      activeMatchIndex: 0,
+      activeMatchId: null,
+      unitsById: {},
+      nextUnitOrder: 0,
+      surfaceAvailability: { file: false, review: false },
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    clearShortcutHandlerRegistryForTests();
+    document.body.innerHTML = "";
+    vi.clearAllMocks();
+  });
+
+  it("uses Cmd+T for a new chat tab", () => {
+    const actions = createActions();
+
+    renderHook(() => useWorkspaceContentShortcuts(actions));
+
+    expect(actions.openNewSessionTab).not.toHaveBeenCalled();
+
+    expect(runShortcutHandler("workspace.new-session-tab", { source: "keyboard" })).toBe(true);
+    expect(actions.openNewSessionTab).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps shell tab shortcuts registered even before the global workspace selection store settles", () => {
+    harnessState.selectedWorkspaceId = null;
+    const actions = createActions();
+
+    renderHook(() => useWorkspaceContentShortcuts(actions));
+
+    expect(runShortcutHandler("workspace.close-active-tab", { source: "menu" })).toBe(true);
+    expect(actions.closeActiveWorkspaceTab).toHaveBeenCalledTimes(1);
+  });
+
+  it("consumes a blocked close shortcut without falling through to another action", () => {
+    const actions = createActions({
+      closeActiveWorkspaceTab: vi.fn(() => "blocked" as const),
+    });
+
+    renderHook(() => useWorkspaceContentShortcuts(actions));
+
+    expect(runShortcutHandler("workspace.close-active-tab", { source: "keyboard" })).toBe(true);
+    expect(actions.closeActiveWorkspaceTab).toHaveBeenCalledOnce();
+  });
+
+  it("routes close-tab shortcuts to the right panel when focus is in the right panel", () => {
+    const actions = createActions();
+    mountFocusZone("right-panel");
+
+    renderHook(() => useWorkspaceContentShortcuts(actions));
+
+    expect(runShortcutHandler("workspace.close-active-tab", { source: "keyboard" })).toBe(true);
+    expect(requestRightPanelCloseActiveTab).toHaveBeenCalledTimes(1);
+    expect(actions.closeActiveWorkspaceTab).not.toHaveBeenCalled();
+  });
+
+  it("falls back to workspace tab close when a stale right-panel close request is unhandled", () => {
+    const actions = createActions();
+    mountFocusZone("right-panel");
+    vi.mocked(requestRightPanelCloseActiveTab).mockReturnValueOnce(false);
+
+    renderHook(() => useWorkspaceContentShortcuts(actions));
+
+    expect(runShortcutHandler("workspace.close-active-tab", { source: "keyboard" })).toBe(true);
+    expect(requestRightPanelCloseActiveTab).toHaveBeenCalledTimes(1);
+    expect(actions.closeActiveWorkspaceTab).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes tab cycling to the right panel when focus is in the right panel", () => {
+    const actions = createActions();
+    mountFocusZone("right-panel");
+
+    renderHook(() => useWorkspaceContentShortcuts(actions));
+
+    expect(runShortcutHandler("workspace.next-tab", { source: "keyboard" })).toBe(true);
+    expect(requestRightPanelRelativeTab).toHaveBeenCalledWith(1);
+    expect(actions.activateRelativeTab).not.toHaveBeenCalled();
+  });
+
+  it("falls back to workspace tab cycling when a stale right-panel focus request is unhandled", () => {
+    const actions = createActions();
+    mountFocusZone("right-panel");
+    vi.mocked(requestRightPanelRelativeTab).mockReturnValueOnce(false);
+
+    renderHook(() => useWorkspaceContentShortcuts(actions));
+
+    expect(runShortcutHandler("workspace.next-tab", { source: "keyboard" })).toBe(true);
+    expect(requestRightPanelRelativeTab).toHaveBeenCalledWith(1);
+    expect(actions.activateRelativeTab).toHaveBeenCalledWith(1);
+  });
+
+  it("routes chat-tab number shortcuts to the right panel when focus is in the right panel", () => {
+    const actions = createActions();
+    mountFocusZone("right-panel");
+
+    renderHook(() => useWorkspaceContentShortcuts(actions));
+
+    expect(runShortcutHandler("workspace.tab-by-index", {
+      source: "keyboard",
+      digit: 3,
+    })).toBe(true);
+    expect(requestRightPanelTabByIndex).toHaveBeenCalledWith(3);
+    expect(actions.activateTabByShortcutIndex).not.toHaveBeenCalled();
+  });
+
+  it("falls back to chat-tab number shortcuts when a stale right-panel focus request is unhandled", () => {
+    const actions = createActions();
+    mountFocusZone("right-panel");
+    vi.mocked(requestRightPanelTabByIndex).mockReturnValueOnce(false);
+
+    renderHook(() => useWorkspaceContentShortcuts(actions));
+
+    expect(runShortcutHandler("workspace.tab-by-index", {
+      source: "keyboard",
+      digit: 3,
+    })).toBe(true);
+    expect(requestRightPanelTabByIndex).toHaveBeenCalledWith(3);
+    expect(actions.activateTabByShortcutIndex).toHaveBeenCalledWith("3");
+  });
+
+  it("keeps chat-tab number shortcuts in chat when chat owns focus", () => {
+    const actions = createActions();
+    mountFocusZone("chat");
+
+    renderHook(() => useWorkspaceContentShortcuts(actions));
+
+    expect(runShortcutHandler("workspace.tab-by-index", {
+      source: "keyboard",
+      digit: 3,
+    })).toBe(true);
+    expect(requestRightPanelTabByIndex).not.toHaveBeenCalled();
+    expect(actions.activateTabByShortcutIndex).toHaveBeenCalledWith("3");
+  });
+
+  it("opens chat content search when chat owns focus", () => {
+    const actions = createActions();
+    mountFocusZone("chat");
+
+    renderHook(() => useWorkspaceContentShortcuts(actions));
+
+    expect(runShortcutHandler("workspace.find-content", { source: "keyboard" })).toBe(true);
+    expect(useContentSearchStore.getState().open).toBe(true);
+    expect(useContentSearchStore.getState().surface).toBe("chat");
+  });
+
+  it("routes content search to the file viewer when file viewer owns focus and reports availability", () => {
+    const actions = createActions();
+    useContentSearchStore.getState().setSurfaceAvailability("file", true);
+    focusInsideFileViewerFrame();
+
+    renderHook(() => useWorkspaceContentShortcuts(actions));
+
+    expect(runShortcutHandler("workspace.find-content", { source: "keyboard" })).toBe(true);
+    expect(useContentSearchStore.getState().open).toBe(true);
+    expect(useContentSearchStore.getState().surface).toBe("file");
+  });
+
+  // Availability defaults to false in beforeEach — the same state
+  // `FileViewerFrame` now reports for a fileDiff, binary, too-large, or
+  // still-loading target (P1-2: registration is gated on `canFindInFile`).
+  it.each(["fileDiff target", "binary", "too large", "loading"])(
+    "does not open file search via Cmd/Ctrl+F when the target is %s (unavailable)",
+    () => {
+      const actions = createActions();
+      focusInsideFileViewerFrame();
+
+      renderHook(() => useWorkspaceContentShortcuts(actions));
+
+      expect(runShortcutHandler("workspace.find-content", { source: "keyboard" })).toBe(false);
+      expect(useContentSearchStore.getState().open).toBe(false);
+    },
+  );
+
+  it("declines content search when the terminal owns focus", () => {
+    const actions = createActions();
+    mountFocusZone("terminal");
+
+    renderHook(() => useWorkspaceContentShortcuts(actions));
+
+    expect(runShortcutHandler("workspace.find-content", { source: "keyboard" })).toBe(false);
+    expect(useContentSearchStore.getState().open).toBe(false);
+  });
+
+  it("routes content search to the review surface when the git review document owns focus", () => {
+    const actions = createActions();
+    const zone = document.createElement("div");
+    zone.tabIndex = 0;
+    zone.setAttribute("data-focus-zone", "right-panel");
+    const reviewDocument = document.createElement("div");
+    reviewDocument.setAttribute("data-git-review-document", "true");
+    const focusTarget = document.createElement("button");
+    reviewDocument.append(focusTarget);
+    zone.append(reviewDocument);
+    document.body.append(zone);
+    focusTarget.focus();
+
+    renderHook(() => useWorkspaceContentShortcuts(actions));
+
+    expect(runShortcutHandler("workspace.find-content", { source: "keyboard" })).toBe(true);
+    expect(useContentSearchStore.getState().open).toBe(true);
+    expect(useContentSearchStore.getState().surface).toBe("review");
+  });
+
+  it("falls back to chat and leaves the dock filter untouched when focus is inside the docked file tree", () => {
+    const actions = createActions();
+    const { focusTarget } = focusInsideFileViewerFrame({ inDock: true });
+
+    renderHook(() => useWorkspaceContentShortcuts(actions));
+
+    expect(runShortcutHandler("workspace.find-content", { source: "keyboard" })).toBe(true);
+    expect(useContentSearchStore.getState().open).toBe(true);
+    expect(useContentSearchStore.getState().surface).toBe("chat");
+    expect((focusTarget as HTMLInputElement).value).toBe("some-filter");
+  });
+
+  it("declines content search when the right panel owns focus but neither file viewer nor review document is present", () => {
+    const actions = createActions();
+    mountFocusZone("right-panel");
+
+    renderHook(() => useWorkspaceContentShortcuts(actions));
+
+    expect(runShortcutHandler("workspace.find-content", { source: "keyboard" })).toBe(false);
+    expect(useContentSearchStore.getState().open).toBe(false);
+  });
+
+  it("cycles chat and review scope when the search pill owns focus and review is available", () => {
+    const actions = createActions();
+    useContentSearchStore.getState().setSurfaceAvailability("review", true);
+    const overlay = document.createElement("div");
+    overlay.setAttribute("data-content-search-overlay", "true");
+    const focusTarget = document.createElement("input");
+    overlay.append(focusTarget);
+    document.body.append(overlay);
+    focusTarget.focus();
+    useContentSearchStore.getState().openSearch("chat");
+
+    renderHook(() => useWorkspaceContentShortcuts(actions));
+
+    expect(runShortcutHandler("workspace.find-content", { source: "keyboard" })).toBe(true);
+    expect(useContentSearchStore.getState().surface).toBe("review");
+
+    expect(runShortcutHandler("workspace.find-content", { source: "keyboard" })).toBe(true);
+    expect(useContentSearchStore.getState().surface).toBe("chat");
+  });
+
+  it("does not cycle away from the file surface even when review is available", () => {
+    const actions = createActions();
+    useContentSearchStore.getState().setSurfaceAvailability("review", true);
+    const overlay = document.createElement("div");
+    overlay.setAttribute("data-content-search-overlay", "true");
+    const focusTarget = document.createElement("input");
+    focusTarget.id = "content-search-input";
+    overlay.append(focusTarget);
+    document.body.append(overlay);
+    focusTarget.focus();
+    useContentSearchStore.getState().openSearch("file");
+
+    renderHook(() => useWorkspaceContentShortcuts(actions));
+
+    expect(runShortcutHandler("workspace.find-content", { source: "keyboard" })).toBe(true);
+    expect(useContentSearchStore.getState().surface).toBe("file");
+
+    expect(runShortcutHandler("workspace.find-content", { source: "keyboard" })).toBe(true);
+    expect(useContentSearchStore.getState().surface).toBe("file");
+  });
+
+  it("does not cycle scope when the search pill owns focus but review is unavailable", () => {
+    const actions = createActions();
+    const overlay = document.createElement("div");
+    overlay.setAttribute("data-content-search-overlay", "true");
+    const focusTarget = document.createElement("input");
+    overlay.append(focusTarget);
+    document.body.append(overlay);
+    focusTarget.focus();
+    useContentSearchStore.getState().openSearch("chat");
+
+    renderHook(() => useWorkspaceContentShortcuts(actions));
+
+    expect(runShortcutHandler("workspace.find-content", { source: "keyboard" })).toBe(true);
+    expect(useContentSearchStore.getState().surface).toBe("chat");
+  });
+});

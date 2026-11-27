@@ -1,0 +1,313 @@
+// @vitest-environment jsdom
+
+import { cleanup, render } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { TranscriptContextProviders } from "#product/components/workspace/chat/transcript/TranscriptContexts";
+import {
+  PendingInteractionMarkerView,
+  TURN_ITEM_GAP_CLASS,
+  TurnAssistantActionRow,
+  TurnGoalMetMarker,
+  TurnShell,
+  pendingInteractionMarkerKind,
+  resolvePendingPromptTrailingStatus,
+  resolveTurnTrailingStatus,
+} from "#product/components/workspace/chat/transcript/TranscriptTurnChrome";
+
+const pendingInteractionMocks = vi.hoisted(() => ({
+  readForSession: vi.fn(),
+  bySessionId: {} as Record<string, { kind: string } | null>,
+}));
+
+vi.mock("#product/hooks/chat/derived/use-active-session-identity", () => ({
+  useActiveSessionId: () => "main-session",
+}));
+
+vi.mock("#product/hooks/chat/derived/use-active-pending-session-interactions", () => ({
+  usePendingInteractionStateForSession: (sessionId: string | null) => {
+    pendingInteractionMocks.readForSession(sessionId);
+    const primaryPendingInteraction = sessionId
+      ? pendingInteractionMocks.bySessionId[sessionId] ?? null
+      : null;
+    return {
+      pendingInteractions: primaryPendingInteraction ? [primaryPendingInteraction] : [],
+      pendingApproval: null,
+      pendingUserInput: null,
+      pendingMcpElicitation: null,
+      primaryPendingInteraction,
+    };
+  },
+}));
+
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+  pendingInteractionMocks.bySessionId = {};
+});
+
+describe("TurnShell", () => {
+  it("shares the ruled 16px transcript-turn token across pending and materialized turns", () => {
+    // [CHAT-04] RULED, retuned: the live transcript's turn rhythm is the
+    // --spacing-transcript-turn token (16px), not a raw gap-4 utility.
+    expect(TURN_ITEM_GAP_CLASS).toBe("gap-transcript-turn");
+  });
+
+  it("uses one vertical rhythm for every row", () => {
+    const { container } = render(
+      <TurnShell>
+        <div>row</div>
+      </TurnShell>,
+    );
+
+    expect(container.innerHTML).toContain("pt-2");
+    expect(container.innerHTML).toContain("pb-2");
+  });
+
+  it("drops top padding on the first row only", () => {
+    const { container } = render(
+      <TurnShell isFirst>
+        <div>row</div>
+      </TurnShell>,
+    );
+
+    expect(container.innerHTML).toContain("pt-0");
+    expect(container.innerHTML).toContain("pb-2");
+  });
+});
+
+describe("TurnAssistantActionRow", () => {
+  it("hover-gates the copy button by default (earlier messages)", () => {
+    const { container } = render(
+      <TurnAssistantActionRow content="reply" showCopyButton timestampLabel="5:02pm" />,
+    );
+    expect(container.innerHTML).toContain("opacity-0 group-hover/turn:opacity-100");
+  });
+
+  it("keeps the copy button permanently visible on the final completed message", () => {
+    // PRO-119: the persistent copy button is the transcript's "session is
+    // done" marker — without it a finished session is indistinguishable from
+    // a quiet running one.
+    const { container } = render(
+      <TurnAssistantActionRow content="reply" showCopyButton timestampLabel="5:02pm" alwaysVisible />,
+    );
+    const copyWrapper = container.querySelector("[data-turn-assistant-footer-slot] > span");
+    expect(copyWrapper?.className).toContain("opacity-100");
+    expect(copyWrapper?.className).not.toContain("opacity-0");
+  });
+
+  it("hover-gates the date like the copy button", () => {
+    const { container } = render(
+      <TurnAssistantActionRow content="reply" showCopyButton timestampLabel="5:02pm" />,
+    );
+    // (The outer copy-button wrapper span also has "5:02pm" as its
+    // textContent since it contains the date span, so pick the innermost
+    // match — the one with no further descendant spans.)
+    const timestamp = Array.from(container.querySelectorAll("span")).find(
+      (span) => span.textContent === "5:02pm" && span.querySelector("span") === null,
+    );
+    expect(timestamp?.className).toContain("opacity-0 group-hover/turn:opacity-100");
+  });
+
+  it("keeps the date hover-gated even when the copy button is permanent", () => {
+    const { container } = render(
+      <TurnAssistantActionRow content="reply" showCopyButton timestampLabel="5:02pm" alwaysVisible />,
+    );
+    const timestamp = Array.from(container.querySelectorAll("span")).find(
+      (span) => span.textContent === "5:02pm" && span.querySelector("span") === null,
+    );
+    expect(timestamp?.className).toContain("opacity-0 group-hover/turn:opacity-100");
+  });
+
+  it("renders the goal-met marker between the copy button and the timestamp", () => {
+    const { container } = render(
+      <TurnAssistantActionRow
+        content="reply"
+        showCopyButton
+        timestampLabel="5:02pm"
+        metMarker={<TurnGoalMetMarker label="Goal achieved in 40s" />}
+      />,
+    );
+    expect(container.textContent).toContain("Goal achieved in 40s");
+    expect(container.textContent).toContain("5:02pm");
+  });
+
+  it("keeps an empty live footer the same height as completed copy actions", () => {
+    const live = render(<TurnAssistantActionRow content={null} reserveSlot />);
+    const liveSlot = live.container.querySelector("[data-turn-assistant-footer-slot]");
+    expect(liveSlot?.className).toContain("h-6");
+    live.unmount();
+
+    const completed = render(
+      <TurnAssistantActionRow content="reply" showCopyButton timestampLabel="5:02pm" />,
+    );
+    const completedSlot = completed.container.querySelector("[data-turn-assistant-footer-slot]");
+    expect(completedSlot?.className).toContain("h-6");
+  });
+
+  it("keeps a prose-less completed footer empty even when a goal is met", () => {
+    const { container } = render(
+      <TurnAssistantActionRow
+        content={null}
+        reserveSlot
+        metMarker={<span>Goal achieved</span>}
+        timestampLabel="5:02pm"
+      />,
+    );
+
+    expect(container.querySelector("[data-turn-assistant-footer-slot]")?.className)
+      .toContain("h-6");
+    expect(container.textContent).toBe("");
+  });
+});
+
+describe("TurnGoalMetMarker", () => {
+  it("renders the achieved label with a neutral check glyph", () => {
+    const { container } = render(<TurnGoalMetMarker label="Goal achieved in 40s" />);
+    expect(container.textContent).toContain("Goal achieved in 40s");
+    // Neutral, not green: the check glyph uses muted-foreground.
+    expect(container.querySelector("svg.text-muted-foreground")).not.toBeNull();
+    expect(container.querySelector(".text-success")).toBeNull();
+  });
+});
+
+const STARTED_AT = "2026-04-13T12:00:01.000Z";
+
+describe("resolveTurnTrailingStatus", () => {
+  it("shows the agent-work shimmer while working", () => {
+    const { container } = render(<>{resolveTurnTrailingStatus(STARTED_AT, "working", null)}</>);
+
+    expect(container.querySelector("[data-trailing-status='working']")).not.toBeNull();
+    expect(container.textContent).toContain("Thinking");
+    expect(container.innerHTML).toContain("--thinking-text-delay");
+    expect(container.innerHTML).not.toContain("motion-safe:animate-status-crossfade");
+  });
+
+  it("renders a transient thought at the semantic chat role", () => {
+    const { container } = render(
+      <>{resolveTurnTrailingStatus(STARTED_AT, "working", "Reading workspace flow")}</>,
+    );
+
+    expect(container.querySelector("[data-trailing-status='transient']")).not.toBeNull();
+    expect(container.textContent).toContain("Reading workspace flow");
+    expect(container.innerHTML).toContain("text-chat");
+    expect(container.innerHTML).toContain("icon-paired");
+    expect(container.innerHTML).not.toContain("text-xs");
+  });
+
+  it("renders the awaiting-response marker while waiting on input", () => {
+    const { container } = render(<>{resolveTurnTrailingStatus(STARTED_AT, "needs_input", null)}</>);
+
+    expect(container.querySelector("[data-trailing-status='needs-input']")).not.toBeNull();
+    expect(container.textContent).toContain("Awaiting response");
+    // No more generic 8px "Waiting for your input" copy.
+    expect(container.textContent).not.toContain("Waiting for your input");
+    expect(container.innerHTML).not.toContain("text-xs");
+  });
+
+  it("reads the embedded transcript child's pending interaction instead of the active main session", () => {
+    pendingInteractionMocks.bySessionId = {
+      "main-session": { kind: "permission" },
+      "child-session": { kind: "user_input" },
+    };
+    const { container } = render(
+      <TranscriptContextProviders sessionId="child-session">
+        {resolveTurnTrailingStatus(STARTED_AT, "needs_input", null)}
+      </TranscriptContextProviders>,
+    );
+
+    expect(pendingInteractionMocks.readForSession).toHaveBeenCalledWith("child-session");
+    expect(pendingInteractionMocks.readForSession).not.toHaveBeenCalledWith("main-session");
+    expect(container.textContent).toContain("Question");
+    expect(container.textContent).not.toContain("Permission");
+  });
+});
+
+describe("resolvePendingPromptTrailingStatus", () => {
+  it("says 'Thinking' while a prompt is dispatching (same voice as agent work)", () => {
+    const { container } = render(
+      <>{resolvePendingPromptTrailingStatus(STARTED_AT, "working", true)}</>,
+    );
+
+    expect(container.querySelector("[data-trailing-status='sending']")).not.toBeNull();
+    expect(container.textContent).toContain("Thinking");
+    expect(container.querySelector("[data-working-status-frame]")?.className).toContain("items-center");
+    expect(container.querySelector("[data-working-status-frame]")?.className).toContain("h-6");
+    expect(container.innerHTML).not.toContain("motion-safe:animate-status-crossfade");
+  });
+
+  it("uses identical geometry before and after pending ownership handoff", () => {
+    const pending = render(
+      <>{resolvePendingPromptTrailingStatus(STARTED_AT, "working", true)}</>,
+    );
+    const pendingFrame = pending.container.querySelector("[data-working-status-frame]");
+    const pendingClassName = pendingFrame?.className;
+    pending.unmount();
+
+    const materialized = render(
+      <>{resolveTurnTrailingStatus(STARTED_AT, "working", null)}</>,
+    );
+    const materializedFrame = materialized.container.querySelector("[data-working-status-frame]");
+
+    expect(materializedFrame?.className).toBe(pendingClassName);
+  });
+
+  it("uses identical needs-input geometry across pending ownership handoff", () => {
+    const pending = render(
+      <>{resolvePendingPromptTrailingStatus(STARTED_AT, "needs_input", false)}</>,
+    );
+    const pendingFrame = pending.container.querySelector("[data-trailing-status='needs-input']");
+    const pendingClassName = pendingFrame?.className;
+    pending.unmount();
+
+    const materialized = render(
+      <>{resolveTurnTrailingStatus(STARTED_AT, "needs_input", null)}</>,
+    );
+    const materializedFrame = materialized.container.querySelector(
+      "[data-trailing-status='needs-input']",
+    );
+
+    expect(materializedFrame?.className).toBe(pendingClassName);
+    expect(materializedFrame?.className).toContain("h-6");
+  });
+
+  it("shows the awaiting-response marker when the outbox is waiting on input", () => {
+    const { container } = render(
+      <>{resolvePendingPromptTrailingStatus(STARTED_AT, "needs_input", false)}</>,
+    );
+
+    expect(container.textContent).toContain("Awaiting response");
+  });
+});
+
+describe("pendingInteractionMarkerKind", () => {
+  it("maps interaction kinds to permission or question", () => {
+    expect(pendingInteractionMarkerKind("permission")).toBe("permission");
+    expect(pendingInteractionMarkerKind("user_input")).toBe("question");
+    expect(pendingInteractionMarkerKind("mcp_elicitation")).toBe("question");
+    expect(pendingInteractionMarkerKind(undefined)).toBeNull();
+  });
+});
+
+describe("PendingInteractionMarkerView", () => {
+  it("labels a permission request", () => {
+    const { container } = render(<PendingInteractionMarkerView kind="permission" />);
+
+    expect(container.textContent).toContain("Permission");
+    expect(container.textContent).toContain("Awaiting response");
+  });
+
+  it("labels a question request", () => {
+    const { container } = render(<PendingInteractionMarkerView kind="question" />);
+
+    expect(container.textContent).toContain("Question");
+    expect(container.textContent).toContain("Awaiting response");
+  });
+
+  it("falls back to a generic caption when the kind is unknown", () => {
+    const { container } = render(<PendingInteractionMarkerView kind={null} />);
+
+    expect(container.textContent).not.toContain("Permission");
+    expect(container.textContent).not.toContain("Question");
+    expect(container.textContent).toContain("Awaiting response");
+  });
+});

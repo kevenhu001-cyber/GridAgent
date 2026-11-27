@@ -1,0 +1,359 @@
+// @vitest-environment jsdom
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
+import type { ProductHost } from "@proliferate/product-client/host/product-host";
+import { ProductHostProvider } from "@proliferate/product-client/host/ProductHostProvider";
+import type { WorkspaceGitStatus } from "#product/lib/domain/workspaces/git-status/workspace-git-status-model";
+import { sidebarGitAttentionIndicator } from "#product/lib/domain/workspaces/sidebar/sidebar-indicators";
+import { WorkspaceItem } from "#product/components/workspace/shell/sidebar/WorkspaceItem";
+import { WORKSPACE_PEEK_DELAY_MS } from "#product/components/workspace/shell/sidebar/WorkspacePeekCard";
+
+const webTestHost = { desktop: null } as ProductHost;
+
+function renderWithProductHost(ui: ReactElement) {
+  return render(
+    <ProductHostProvider host={webTestHost}>{ui}</ProductHostProvider>,
+  );
+}
+
+function makeGitStatus(overrides: Partial<WorkspaceGitStatus> = {}): WorkspaceGitStatus {
+  return {
+    branch: "feature/thing",
+    dirty: false,
+    conflicted: false,
+    ahead: 0,
+    behind: 0,
+    hasUpstream: true,
+    pr: {
+      state: "open",
+      number: 805,
+      url: "https://github.com/acme/repo/pull/805",
+      checks: "none",
+      reviewDecision: "none",
+    },
+    attention: "none",
+    capturedAt: "2026-07-01T10:00:00.000Z",
+    source: "live",
+    ...overrides,
+  };
+}
+
+describe("WorkspaceItem", () => {
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("keeps the delete workspace context menu open after right-clicking", async () => {
+    const onSelect = vi.fn();
+
+    renderWithProductHost(
+      <WorkspaceItem
+        name="Feature worktree"
+        variant="worktree"
+        onSelect={onSelect}
+        onMarkDone={vi.fn()}
+      />,
+    );
+
+    const row = screen.getByText("Feature worktree").closest('[role="button"]');
+    expect(row).not.toBeNull();
+
+    fireEvent.contextMenu(row!, { clientX: 12, clientY: 12 });
+
+    expect(await screen.findByRole("button", { name: "Delete workspace..." })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Delete workspace" })).toBeNull();
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("does not select the workspace when confirming delete from the context menu", () => {
+    const onSelect = vi.fn();
+    const onMarkDone = vi.fn();
+
+    renderWithProductHost(
+      <WorkspaceItem
+        name="Feature worktree"
+        variant="worktree"
+        onSelect={onSelect}
+        onMarkDone={onMarkDone}
+      />,
+    );
+
+    const row = screen.getByText("Feature worktree").closest('[role="button"]');
+    expect(row).not.toBeNull();
+
+    fireEvent.contextMenu(row!);
+    fireEvent.click(screen.getByRole("button", { name: "Delete workspace..." }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete workspace" }));
+
+    expect(onMarkDone).toHaveBeenCalledTimes(1);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("shows workspace copy actions in the context menu", () => {
+    const onCopyWorkspacePath = vi.fn();
+    const onCopyBranchName = vi.fn();
+
+    renderWithProductHost(
+      <WorkspaceItem
+        name="Feature worktree"
+        variant="worktree"
+        onSelect={vi.fn()}
+        workspaceLocationCopyLabel="Copy workspace path"
+        onCopyWorkspaceLocation={onCopyWorkspacePath}
+        onCopyBranchName={onCopyBranchName}
+      />,
+    );
+
+    const row = screen.getByText("Feature worktree").closest('[role="button"]');
+    expect(row).not.toBeNull();
+
+    fireEvent.contextMenu(row!);
+    fireEvent.click(screen.getByRole("button", { name: "Copy workspace pathCtrl+Shift+C" }));
+    fireEvent.contextMenu(row!);
+    fireEvent.click(screen.getByRole("button", { name: "Copy branch nameCtrl+Alt+C" }));
+
+    expect(onCopyWorkspacePath).toHaveBeenCalledTimes(1);
+    expect(onCopyBranchName).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders PR status as the trailing identity glyph", () => {
+    renderWithProductHost(
+      <WorkspaceItem
+        name="Feature worktree"
+        variant="worktree"
+        gitStatus={makeGitStatus()}
+      />,
+    );
+
+    expect(screen.getByRole("img", { name: "PR #805 · Open" })).toBeTruthy();
+  });
+
+  it("renders PR identity and activity together in the two trailing cells", () => {
+    renderWithProductHost(
+      <WorkspaceItem
+        name="Feature worktree"
+        variant="worktree"
+        statusIndicator={{ kind: "iterating", tooltip: "Iterating" }}
+        gitStatus={makeGitStatus()}
+      />,
+    );
+
+    expect(screen.getByRole("img", { name: "Iterating" })).toBeTruthy();
+    // Live activity does not evict the PR identity cell.
+    expect(screen.getByRole("img", { name: "PR #805 · Open" })).toBeTruthy();
+    const cells = screen.getByRole("img", { name: "PR #805 · Open" })
+      .closest("[data-sidebar-trailing-cells]");
+    expect(cells?.children).toHaveLength(2);
+  });
+
+  it("falls back to the worktree identity for a branch with no PR", () => {
+    renderWithProductHost(
+      <WorkspaceItem
+        name="Feature worktree"
+        variant="worktree"
+        gitStatus={makeGitStatus({
+          pr: {
+            state: "none",
+            number: null,
+            url: null,
+            checks: "none",
+            reviewDecision: "none",
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByRole("img", { name: "Worktree · no pull request" })).toBeTruthy();
+  });
+
+  it("falls back to the worktree identity when PR data is unknown", () => {
+    renderWithProductHost(
+      <WorkspaceItem
+        name="Feature worktree"
+        variant="worktree"
+        gitStatus={makeGitStatus({ pr: null })}
+      />,
+    );
+
+    expect(screen.getByRole("img", { name: "Worktree · no pull request" })).toBeTruthy();
+  });
+
+  it("shows the cloud identity for a cloud workspace without a PR", () => {
+    renderWithProductHost(
+      <WorkspaceItem name="Cloud workspace" variant="cloud" />,
+    );
+
+    expect(screen.getByRole("img", { name: "Cloud workspace · no pull request" })).toBeTruthy();
+  });
+
+  it("leaves the identity cell out entirely for a local row without a PR", () => {
+    const { container } = renderWithProductHost(
+      <WorkspaceItem name="Local workspace" variant="local" />,
+    );
+
+    expect(container.querySelector("[data-sidebar-trailing-identity]")).toBeNull();
+  });
+
+  it("does not repeat check attention that the state dot already carries", () => {
+    renderWithProductHost(
+      <WorkspaceItem
+        name="Feature worktree"
+        variant="worktree"
+        gitStatus={makeGitStatus({ attention: "changes_requested" })}
+      />,
+    );
+
+    expect(screen.getByRole("img", { name: "PR #805 · Open" })).toBeTruthy();
+    expect(screen.queryByRole("img", { name: "Pull request changes requested" }))
+      .toBeNull();
+  });
+
+  it("puts merge conflicts in the status cell, not beside the identity glyph", () => {
+    const conflicted = makeGitStatus({ conflicted: true, attention: "conflicts" });
+    renderWithProductHost(
+      <WorkspaceItem
+        name="Feature worktree"
+        variant="worktree"
+        // The row is handed the indicator the domain waterfall builds, rather
+        // than deriving conflicts itself. Resolved through the real function
+        // so the two cannot drift apart.
+        statusIndicator={sidebarGitAttentionIndicator(conflicted)}
+        gitStatus={conflicted}
+      />,
+    );
+
+    const alert = screen.getByRole("img", { name: "Merge conflicts in worktree" });
+    expect(alert.closest("[data-sidebar-trailing-status]")).not.toBeNull();
+    expect(alert.closest("[data-sidebar-trailing-identity]")).toBeNull();
+  });
+
+  it("shows the unread dot in the right slot when the row needs review", () => {
+    renderWithProductHost(
+      <WorkspaceItem
+        name="Feature worktree"
+        variant="worktree"
+        needsReview
+      />,
+    );
+
+    expect(screen.getByRole("img", { name: "Unseen activity" })).toBeTruthy();
+  });
+
+  it("lets an activity indicator beat the unread dot in the right slot", () => {
+    renderWithProductHost(
+      <WorkspaceItem
+        name="Feature worktree"
+        variant="worktree"
+        needsReview
+        statusIndicator={{ kind: "iterating", tooltip: "Iterating" }}
+      />,
+    );
+
+    expect(screen.getByRole("img", { name: "Iterating" })).toBeTruthy();
+    expect(screen.queryByRole("img", { name: "Unseen activity" })).toBeNull();
+  });
+
+  it("opens the hover peek card from the row itself", () => {
+    vi.useFakeTimers();
+    try {
+      renderWithProductHost(
+        <WorkspaceItem
+          name="Feature worktree"
+          variant="worktree"
+          repoName="proliferate"
+          lastActivityLabel="38m ago"
+          gitStatus={makeGitStatus()}
+          onSelect={vi.fn()}
+        />,
+      );
+
+      const row = screen.getByText("Feature worktree").closest('[role="button"]');
+      fireEvent.pointerEnter(row!);
+      act(() => {
+        vi.advanceTimersByTime(WORKSPACE_PEEK_DELAY_MS);
+      });
+
+      const card = document.querySelector("[data-workspace-peek-card]");
+      expect(card).not.toBeNull();
+      expect(card?.textContent).toContain("proliferate");
+      expect(card?.textContent).toContain("PR #805 · Open");
+
+      // Closing has its own forwarding chain to survive: the row's
+      // `onPointerLeave` has to clear `ProductSidebarWorkspaceRow`'s Omit list
+      // and both spreads to reach `SidebarRowSurface`.
+      fireEvent.pointerLeave(row!);
+      expect(document.querySelector("[data-workspace-peek-card]")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("opens the pull request from the context menu", () => {
+    const onOpenPullRequest = vi.fn();
+
+    renderWithProductHost(
+      <WorkspaceItem
+        name="Feature worktree"
+        variant="worktree"
+        onSelect={vi.fn()}
+        gitStatus={makeGitStatus()}
+        onOpenPullRequest={onOpenPullRequest}
+      />,
+    );
+
+    const row = screen.getByText("Feature worktree").closest('[role="button"]');
+    expect(row).not.toBeNull();
+
+    fireEvent.contextMenu(row!);
+    fireEvent.click(screen.getByRole("button", { name: "Open pull request #805" }));
+
+    expect(onOpenPullRequest).toHaveBeenCalledWith("https://github.com/acme/repo/pull/805");
+  });
+
+  it("pins the workspace from the hover action, left of Archive, without selecting the row", () => {
+    const onSelect = vi.fn();
+    const onPin = vi.fn();
+
+    renderWithProductHost(
+      <WorkspaceItem
+        name="Feature worktree"
+        variant="worktree"
+        onSelect={onSelect}
+        onPin={onPin}
+        onArchive={vi.fn()}
+      />,
+    );
+
+    const pin = screen.getByRole("button", { name: "Pin workspace" });
+    const archive = screen.getByRole("button", { name: "Archive workspace (⌘⇧A)" });
+    expect(pin.compareDocumentPosition(archive) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(pin.querySelector("svg")?.getAttribute("class") ?? "").not.toContain("fill-current");
+
+    fireEvent.click(pin);
+    expect(onPin).toHaveBeenCalledTimes(1);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("offers Unpin in the hover slot for a pinned row", () => {
+    const onUnpin = vi.fn();
+
+    renderWithProductHost(
+      <WorkspaceItem
+        name="Feature worktree"
+        variant="worktree"
+        pinned
+        onUnpin={onUnpin}
+        onArchive={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Pin workspace" })).toBeNull();
+    const unpin = screen.getByRole("button", { name: "Unpin workspace" });
+    expect(unpin.querySelector("svg")?.getAttribute("class")).toContain("fill-current");
+    fireEvent.click(unpin);
+    expect(onUnpin).toHaveBeenCalledTimes(1);
+  });
+});

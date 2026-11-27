@@ -1,0 +1,75 @@
+import { useEffect } from "react";
+import { useProductStorageContext } from "#product/hooks/persistence/facade/use-product-storage-context";
+import {
+  hydrateChatDiffPreferences,
+  setChatDiffPreferencesStorageContext,
+} from "#product/stores/chat/chat-diff-preferences-store";
+import { useFileTreeDockPersistenceLifecycle } from "#product/hooks/workspaces/lifecycle/files/use-file-tree-dock-persistence-lifecycle";
+import {
+  hydrateHomeNextTargetSelection,
+  setHomeNextTargetSelectionStorageContext,
+} from "#product/hooks/home/ui/use-home-next-target-selection-state";
+import {
+  hydrateCloudDisplayNameSuppression,
+  setCloudDisplayNameSuppressionStorageContext,
+} from "#product/hooks/workspaces/lifecycle/cloud-display-name-backfill-suppression";
+import {
+  hydrateSlashCommandCatalog,
+  setSlashCommandCatalogStorageContext,
+} from "#product/stores/chat/slash-command-catalog-store";
+import {
+  hydrateSessionReplacementTombstones,
+  setSessionReplacementTombstonesStorageContext,
+} from "#product/lib/access/persistence/session-replacement-tombstones-storage";
+import { hydrateCommittedReplacedSessionTombstones } from "#product/hooks/sessions/workflows/session-replacement-tombstones";
+
+/**
+ * Wires the injected ProductStorage backend into the module-singleton product
+ * stores (Zustand stores + external stores that cannot call hooks) and runs a
+ * single hydration read for each. Reads that resolve after unmount/host
+ * replacement are discarded via each hydrator's `isStale` guard, so a late read
+ * never overwrites live state. Writes for these stores go through the wired
+ * context; there is no store-subscription to leak, so StrictMode's double-invoke
+ * only re-runs the idempotent wiring and an idempotent hydration read.
+ *
+ * Hook-owned surfaces (model-probe dismissal, support-report queue,
+ * organization-join target) take the context directly and are not wired here.
+ *
+ * The docked file tree is not a one-shot hydration read: its required-read gate,
+ * one-time legacy migration, serialized writer, and storage-authority
+ * coordinator live in `useFileTreeDockPersistenceLifecycle`, which this hook
+ * mounts instead of importing file-tree store I/O.
+ */
+export function useProductStoragePersistenceLifecycle(): void {
+  const storage = useProductStorageContext();
+
+  useFileTreeDockPersistenceLifecycle();
+
+  useEffect(() => {
+    let cancelled = false;
+    const isStale = () => cancelled;
+
+    setChatDiffPreferencesStorageContext(storage);
+    void hydrateChatDiffPreferences(storage, isStale);
+
+    setHomeNextTargetSelectionStorageContext(storage);
+    void hydrateHomeNextTargetSelection(storage, isStale);
+
+    setCloudDisplayNameSuppressionStorageContext(storage);
+    void hydrateCloudDisplayNameSuppression(storage, isStale);
+
+    setSlashCommandCatalogStorageContext(storage);
+    void hydrateSlashCommandCatalog(storage, isStale);
+
+    setSessionReplacementTombstonesStorageContext(storage);
+    void hydrateSessionReplacementTombstones(storage, isStale).then((entries) => {
+      if (!cancelled) {
+        hydrateCommittedReplacedSessionTombstones(entries);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [storage]);
+}

@@ -1,0 +1,294 @@
+import type {
+  CreateCoworkThreadRequest,
+  CreateCoworkThreadResponse,
+  Session,
+} from "@anyharness/sdk";
+import { UNTITLED_COWORK_THREAD_TITLE } from "#product/lib/domain/cowork/threads";
+import { workspaceFileTreeStateKey } from "#product/lib/domain/workspaces/cloud/collections";
+import {
+  buildPendingWorkspaceOriginTarget,
+  type PendingCoworkRequestInput,
+  type PendingWorkspaceEntry,
+} from "#product/lib/domain/workspaces/creation/pending-entry";
+
+export interface CreateCoworkThreadWorkflowInput {
+  /**
+   * Pre-minted by callers that need to scope launch-intent and prompt routing
+   * to this attempt before the workflow returns (PRO-230). Minted here when
+   * absent.
+   */
+  attemptId?: string;
+  agentKind: string;
+  modelId: string;
+  launchControlValues?: Record<string, string>;
+  draftText?: string | null;
+  sourceWorkspaceId?: string | null;
+  coworkWorkspaceDelegationEnabled: boolean;
+  runtimeUrl: string;
+}
+
+export interface CreateCoworkThreadWorkflowDeps {
+  createPendingWorkspaceAttemptId(): string;
+  nowMs(): number;
+  nowIso(): string;
+  startLatencyTimer(): number;
+  elapsedMs(startedAt: number): number;
+  elapsedSince(createdAt: number): number;
+  logLatency(event: string, fields?: Record<string, unknown>): void;
+  getSelectedWorkspaceId(): string | null;
+  getPendingWorkspaceEntry(attemptId: string): PendingWorkspaceEntry | null;
+  /** The attempt has not been dismissed, so the pipeline may keep working. */
+  isAttemptLive(attemptId: string): boolean;
+  /** The user is looking at this attempt, so selection may move. */
+  isAttemptAttended(attemptId: string): boolean;
+  setThreadsCollapsed(collapsed: boolean): void;
+  beginPendingWorkspace(
+    entry: PendingWorkspaceEntry,
+    options: {
+      initialSession: {
+        kind: "session";
+        agentKind: string;
+        modelId: string;
+        launchControlValues: Record<string, string>;
+        displayTitle: string;
+      };
+    },
+  ): string | null;
+  navigateToWorkspaceShell(): void;
+  createCoworkThread(
+    input: CreateCoworkThreadRequest,
+  ): Promise<CreateCoworkThreadResponse>;
+  upsertLocalWorkspace(workspace: CreateCoworkThreadResponse["workspace"]): void;
+  upsertWorkspaceSessionRecord(
+    workspaceId: string,
+    session: Session,
+  ): void;
+  recordCreatedSession(input: {
+    projectedSessionId: string | null;
+    launchedSession: Session;
+    workspaceId: string;
+    agentKind: string;
+    modelId: string;
+  }): void;
+  setDraftText(workspaceId: string, text: string): void;
+  clearDraft(workspaceId: string): void;
+  setPendingWorkspaceEntry(entry: PendingWorkspaceEntry): void;
+  clearPendingWorkspaceEntry(attemptId: string): void;
+  activateWorkspace(input: {
+    logicalWorkspaceId: string | null;
+    workspaceId: string;
+    initialActiveSessionId: string | null;
+  }): void;
+  rememberLastViewedSession(workspaceId: string, sessionId: string): void;
+  trackWorkspaceInteraction(workspaceId: string, viewedAt: string): void;
+  markWorkspaceViewed(workspaceId: string): void;
+  markWorkspaceBootstrappedInSession(workspaceId: string): void;
+  initWorkspace(input: {
+    workspaceUiKey: string;
+    materializedWorkspaceId: string;
+    anyharnessWorkspaceId: string;
+    runtimeUrl: string;
+    treeStateKey: string;
+  }): Promise<void>;
+  showToast(message: string): void;
+}
+
+export type CreateCoworkThreadWorkflowResult =
+  CreateCoworkThreadResponse
+  & { projectedSessionId: string | null };
+
+function resolveErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+export async function createCoworkThreadWorkflow(
+  input: CreateCoworkThreadWorkflowInput,
+  deps: CreateCoworkThreadWorkflowDeps,
+): Promise<CreateCoworkThreadWorkflowResult | null> {
+  const totalStartedAt = deps.startLatencyTimer();
+  const pendingRequest: PendingCoworkRequestInput = {
+    agentKind: input.agentKind,
+    modelId: input.modelId,
+    controlValues: { ...(input.launchControlValues ?? {}) },
+    draftText: input.draftText ?? null,
+    sourceWorkspaceId: input.sourceWorkspaceId ?? null,
+  };
+
+  const selectedWorkspaceId = deps.getSelectedWorkspaceId();
+  const entry: PendingWorkspaceEntry = {
+    attemptId: input.attemptId ?? deps.createPendingWorkspaceAttemptId(),
+    source: "cowork-created",
+    stage: "submitting",
+    displayName: UNTITLED_COWORK_THREAD_TITLE,
+    repoLabel: null,
+    baseBranchName: null,
+    workspaceId: null,
+    request: { kind: "cowork", input: pendingRequest },
+    originTarget: buildPendingWorkspaceOriginTarget(selectedWorkspaceId),
+    errorMessage: null,
+    setupScript: null,
+    createdAt: deps.nowMs(),
+  };
+
+  deps.logLatency("workspace.cowork.create.pending_shell", {
+    attemptId: entry.attemptId,
+    agentKind: input.agentKind,
+    modelId: input.modelId,
+  });
+  deps.setThreadsCollapsed(false);
+  const projectedSessionId = deps.beginPendingWorkspace(entry, {
+    initialSession: {
+      kind: "session",
+      agentKind: input.agentKind,
+      modelId: input.modelId,
+      launchControlValues: { ...(input.launchControlValues ?? {}) },
+      displayTitle: input.modelId,
+    },
+  });
+  deps.navigateToWorkspaceShell();
+
+  try {
+    if (!deps.isAttemptLive(entry.attemptId)) {
+      return null;
+    }
+
+    const createStartedAt = deps.startLatencyTimer();
+    deps.logLatency("workspace.cowork.create.request.start", {
+      attemptId: entry.attemptId,
+      agentKind: input.agentKind,
+      modelId: input.modelId,
+      controlValues: input.launchControlValues ?? {},
+      workspaceDelegationEnabled: input.coworkWorkspaceDelegationEnabled,
+      elapsedSincePendingMs: deps.elapsedSince(entry.createdAt),
+    });
+
+    const result = await deps.createCoworkThread({
+      agentKind: input.agentKind,
+      modelId: input.modelId,
+      controlValues: {
+        ...(input.launchControlValues ?? {}),
+      },
+      coworkWorkspaceDelegationEnabled: input.coworkWorkspaceDelegationEnabled,
+    });
+
+    deps.logLatency("workspace.cowork.create.request.success", {
+      attemptId: entry.attemptId,
+      workspaceId: result.workspace.id,
+      sessionId: result.session.id,
+      createElapsedMs: deps.elapsedMs(createStartedAt),
+      totalElapsedMs: deps.elapsedMs(totalStartedAt),
+    });
+
+    if (!deps.isAttemptLive(entry.attemptId)) {
+      return null;
+    }
+
+    // Materialization must preserve the pending projection's identity. The
+    // create mutation invalidates the real thread list immediately. Associate
+    // the real workspace before publication so the sidebar suppresses the
+    // duplicate query row throughout the handoff.
+    const materializedEntry: PendingWorkspaceEntry = {
+      ...entry,
+      workspaceId: result.workspace.id,
+      request: { kind: "select-existing", workspaceId: result.workspace.id },
+    };
+    deps.setPendingWorkspaceEntry(materializedEntry);
+
+    const launchedSession = result.session;
+
+    if (!deps.isAttemptLive(entry.attemptId)) {
+      return null;
+    }
+
+    deps.upsertLocalWorkspace(result.workspace);
+    deps.upsertWorkspaceSessionRecord(result.workspace.id, launchedSession);
+    const activeSessionId = projectedSessionId ?? launchedSession.id;
+    deps.recordCreatedSession({
+      projectedSessionId,
+      launchedSession,
+      workspaceId: result.workspace.id,
+      agentKind: input.agentKind,
+      modelId: input.modelId,
+    });
+    if (input.draftText?.length) {
+      deps.setDraftText(result.workspace.id, input.draftText);
+      if (input.sourceWorkspaceId && input.sourceWorkspaceId !== result.workspace.id) {
+        deps.clearDraft(input.sourceWorkspaceId);
+      }
+    }
+
+    const selectionStartedAt = deps.startLatencyTimer();
+    // Selection is a camera: an unattended thread still materializes, it just
+    // does not pull the user out of the workspace they are looking at.
+    const attended = deps.isAttemptAttended(entry.attemptId);
+    if (attended) {
+      deps.activateWorkspace({
+        logicalWorkspaceId: null,
+        workspaceId: result.workspace.id,
+        initialActiveSessionId: activeSessionId,
+      });
+    }
+    // "The user has seen this" state, so it only applies when the thread was
+    // actually on screen; stamping it for an unattended launch suppresses the
+    // unread and first-visit affordances that key off it (PRO-230).
+    if (attended) {
+      deps.rememberLastViewedSession(result.workspace.id, launchedSession.id);
+      deps.markWorkspaceViewed(result.workspace.id);
+      deps.markWorkspaceBootstrappedInSession(result.workspace.id);
+    }
+    // Recency ordering is not a viewed stamp: the thread exists and should sort
+    // as recent whether or not the user watched it appear (spec §8 step 6).
+    deps.trackWorkspaceInteraction(result.workspace.id, deps.nowIso());
+
+    const workspaceInitStartedAt = deps.startLatencyTimer();
+    void deps.initWorkspace({
+      workspaceUiKey: result.workspace.id,
+      materializedWorkspaceId: result.workspace.id,
+      anyharnessWorkspaceId: result.workspace.id,
+      runtimeUrl: input.runtimeUrl,
+      treeStateKey: workspaceFileTreeStateKey(result.workspace),
+    }).then(() => {
+      deps.logLatency("workspace.cowork.create.workspace_initialized", {
+        attemptId: entry.attemptId,
+        workspaceId: result.workspace.id,
+        elapsedMs: deps.elapsedMs(workspaceInitStartedAt),
+      });
+    }).catch(() => {
+      deps.logLatency("workspace.cowork.create.workspace_init_failed", {
+        attemptId: entry.attemptId,
+        workspaceId: result.workspace.id,
+        elapsedMs: deps.elapsedMs(workspaceInitStartedAt),
+      });
+    });
+    deps.logLatency("workspace.cowork.create.selection.success", {
+      attemptId: entry.attemptId,
+      workspaceId: result.workspace.id,
+      selectionElapsedMs: deps.elapsedMs(selectionStartedAt),
+      totalElapsedMs: deps.elapsedMs(totalStartedAt),
+    });
+    if (deps.isAttemptLive(entry.attemptId)) {
+      deps.clearPendingWorkspaceEntry(entry.attemptId);
+    }
+    return {
+      ...result,
+      projectedSessionId,
+    };
+  } catch (error) {
+    const message = resolveErrorMessage(error, "Couldn't start cowork thread.");
+    deps.logLatency("workspace.cowork.create.failed", {
+      attemptId: entry.attemptId,
+      errorMessage: message,
+      elapsedSincePendingMs: deps.elapsedSince(entry.createdAt),
+    });
+    if (deps.isAttemptLive(entry.attemptId)) {
+      const failedEntry = deps.getPendingWorkspaceEntry(entry.attemptId) ?? entry;
+      deps.setPendingWorkspaceEntry({
+        ...failedEntry,
+        stage: "failed",
+        errorMessage: message,
+      });
+    }
+    deps.showToast(message);
+    throw error;
+  }
+}

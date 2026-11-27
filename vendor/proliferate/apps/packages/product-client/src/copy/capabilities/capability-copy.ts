@@ -1,0 +1,43 @@
+export const CAPABILITY_COPY = {
+  cloudDisabledDescription:
+    "Cloud workspaces require a reachable control plane.",
+  cloudDisabledDetails:
+    "Proliferate could not reach the configured control plane. Local workspaces remain available.",
+  cloudDisabledTooltip:
+    "Cloud workspaces are unavailable because the configured control plane could not be reached.",
+  cloudSignInDescription:
+    "Credential sync is available when you're signed in.",
+  cloudSignInDetails:
+    "This control plane is reachable. Sign in to sync credentials.",
+  cloudSignInTooltip:
+    "Sign in to create cloud workspaces.",
+  cloudAuthUnavailableDescription:
+    "This control plane is reachable, but desktop GitHub sign-in is not configured.",
+  cloudAuthUnavailableDetails:
+    "Add GitHub OAuth credentials to this environment to enable desktop sign-in and cloud workspace creation.",
+  // Signed-in user, but the operator has not configured cloud compute
+  // (contract.cloudWorkspaces off). Never a sign-in CTA — the user is already
+  // signed in; only an operator can repair this.
+  cloudNotConfiguredDescription:
+    "Cloud is not configured on this deployment.",
+  cloudNotConfiguredDetails:
+    "Managed Cloud isn't configured on this deployment. An operator must finish configuring it before cloud workspaces can run.",
+  cloudNotConfiguredTooltip:
+    "Cloud is not configured on this deployment.",
+  cloudDocsLabel: "Open setup docs",
+  accountLocalDescription:
+    "Cloud features require a reachable control plane.",
+  accountAuthUnavailableDescription:
+    "This environment can reach the control plane, but desktop GitHub sign-in is not configured.",
+  githubLocalDescription:
+    "GitHub sign-in is unavailable while the control plane is unreachable.",
+  githubAuthUnavailableDescription:
+    "GitHub sign-in is not configured for this environment.",
+  githubSignedInUnavailableDescription:
+    "Connected through GitHub desktop sign-in, but cloud is currently unavailable.",
+  supportCopyLabel: "Copy email",
+  supportGmailLabel: "Open Gmail",
+  supportOutlookLabel: "Open Outlook",
+  supportMailAppLabel: "Mail app",
+  supportEmailSubject: "Proliferate support",
+} as const;

@@ -1,0 +1,376 @@
+/* @vitest-environment jsdom */
+
+import { render, renderHook } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { createTranscriptState, type TranscriptState } from "@anyharness/sdk";
+import type { ReactNode } from "react";
+import type { TranscriptVirtualRow } from "#product/domain/chats/transcript/transcript-virtual-rows";
+import type { ChatTranscriptTurnRowRenderInput } from "./chat-transcript-view-types";
+import type { SessionViewState } from "#product/domain/sessions/activity";
+import { MemoizedVirtualTranscriptRow } from "#product/components/workspace/chat/transcript/VirtualTranscriptRow";
+import { useChatTranscriptRowRenderer } from "./use-chat-transcript-row-renderer";
+
+const HISTORICAL_ROW = {
+  kind: "turn",
+  key: "turn:history:block:content",
+  turnId: "history",
+} as TranscriptVirtualRow;
+const LATEST_ROW = {
+  kind: "turn",
+  key: "turn:latest:block:content",
+  turnId: "latest",
+} as TranscriptVirtualRow;
+const EMPTY_OUTBOX_ENTRIES = [] as const;
+const OUTBOX_ACTIONS = {
+  retryPrompt: (_clientPromptId: string) => {},
+  dismissPrompt: (_clientPromptId: string) => {},
+};
+const OUTBOX_STARTED_AT_BY_PROMPT_ID = new Map<string, string>();
+const MEASURE_ELEMENT = (_element: Element | null) => {};
+
+function IntegratedLatestRow({
+  latestLiveStatus,
+  renderTurnRow,
+  transcript,
+}: {
+  latestLiveStatus: ReactNode;
+  renderTurnRow: (input: ChatTranscriptTurnRowRenderInput) => ReactNode;
+  transcript: TranscriptState;
+}) {
+  const rendering = useChatTranscriptRowRenderer({
+    activeSessionId: "session-1",
+    latestLiveExplorationBlock: null,
+    latestLiveStatus,
+    latestCompletedTurnId: null,
+    latestTurnId: "latest",
+    optimisticPromptTrailingStatus: null,
+    outboxActions: OUTBOX_ACTIONS,
+    outboxStartedAtByPromptId: OUTBOX_STARTED_AT_BY_PROMPT_ID,
+    renderPendingPromptRow: () => null,
+    renderTurnRow,
+    selectedWorkspaceId: "workspace-1",
+    sessionViewState: "working",
+    transcript,
+    visibleOutboxEntries: EMPTY_OUTBOX_ENTRIES,
+    visibleOptimisticPrompt: null,
+  });
+  return (
+    <MemoizedVirtualTranscriptRow
+      row={LATEST_ROW}
+      rowIndex={0}
+      virtualIndex={0}
+      renderRow={rendering.renderRow}
+      renderRevision={rendering.getRowRenderRevision(LATEST_ROW)}
+      measureElement={MEASURE_ELEMENT}
+    />
+  );
+}
+
+describe("useChatTranscriptRowRenderer", () => {
+  it("threads transcript completion state and workspace into pending receipt rows", () => {
+    const transcript = createTranscriptState("session-1");
+    transcript.linkCompletionsByCompletionId = {
+      "completion-1": {
+        relation: "subagent",
+        completionId: "completion-1",
+        sessionLinkId: "link-1",
+        parentSessionId: "session-1",
+        childSessionId: "child-1",
+        childTurnId: "turn-child",
+        childLastEventSeq: 4,
+        outcome: "completed",
+        label: "Schema audit",
+        seq: 5,
+        timestamp: "2026-08-10T00:00:00Z",
+      },
+    };
+    const prompt = {
+      seq: 6,
+      promptId: "prompt-agent",
+      text: "Hidden wake body",
+      contentParts: [],
+      queuedAt: "2026-08-10T00:00:01Z",
+      promptProvenance: {
+        type: "subagentWake" as const,
+        sessionLinkId: "link-1",
+        completionId: "completion-1",
+      },
+    };
+    const renderPendingPromptRow = vi.fn(() => null);
+    const row = {
+      kind: "pending_prompt" as const,
+      key: "pending-prompt:session-1",
+    };
+    const { result } = renderHook(() => useChatTranscriptRowRenderer({
+      activeSessionId: "session-1",
+      latestLiveExplorationBlock: null,
+      latestLiveStatus: null,
+      latestCompletedTurnId: null,
+      latestTurnId: null,
+      optimisticPromptTrailingStatus: null,
+      outboxActions: OUTBOX_ACTIONS,
+      outboxStartedAtByPromptId: OUTBOX_STARTED_AT_BY_PROMPT_ID,
+      renderPendingPromptRow,
+      renderTurnRow: () => null,
+      selectedWorkspaceId: "workspace-1",
+      sessionViewState: "working",
+      transcript,
+      visibleOutboxEntries: [],
+      visibleOptimisticPrompt: prompt,
+    }));
+
+    result.current.renderRow(row, 2);
+
+    expect(renderPendingPromptRow).toHaveBeenCalledWith(expect.objectContaining({
+      activeSessionId: "session-1",
+      transcript,
+      selectedWorkspaceId: "workspace-1",
+      row,
+      rowIndex: 2,
+      prompt,
+      sessionViewState: "working",
+    }));
+  });
+
+  it("repaints a pending prompt when authoritative session state changes", () => {
+    const transcript = createTranscriptState("session-1");
+    const prompt = {
+      seq: -1,
+      promptId: "prompt-1",
+      text: "Run this",
+      contentParts: [],
+      queuedAt: "2026-08-17T21:59:00Z",
+      promptProvenance: null,
+    };
+    const row = {
+      kind: "pending_prompt" as const,
+      key: "pending-prompt:session-1",
+    };
+    const renderPendingPromptRow = vi.fn(() => null);
+    let sessionViewState: SessionViewState = "working";
+    const { result, rerender } = renderHook(() => useChatTranscriptRowRenderer({
+      activeSessionId: "session-1",
+      latestLiveExplorationBlock: null,
+      latestLiveStatus: null,
+      latestCompletedTurnId: null,
+      latestTurnId: null,
+      optimisticPromptTrailingStatus: null,
+      outboxActions: OUTBOX_ACTIONS,
+      outboxStartedAtByPromptId: OUTBOX_STARTED_AT_BY_PROMPT_ID,
+      renderPendingPromptRow,
+      renderTurnRow: () => null,
+      selectedWorkspaceId: "workspace-1",
+      sessionViewState,
+      transcript,
+      visibleOutboxEntries: [],
+      visibleOptimisticPrompt: prompt,
+    }));
+    const workingRevision = result.current.getRowRenderRevision(row);
+
+    sessionViewState = "idle";
+    rerender();
+
+    expect(result.current.getRowRenderRevision(row)).not.toBe(workingRevision);
+    result.current.renderRow(row, 0);
+    expect(renderPendingPromptRow).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sessionViewState: "idle" }),
+    );
+  });
+
+  it("keeps historical revisions stable across stream batches and targets live status", () => {
+    const renderPendingPromptRow = vi.fn(() => null);
+    const renderTurnRow = vi.fn(() => null);
+    const outboxActions = { retryPrompt: vi.fn(), dismissPrompt: vi.fn() };
+    const outboxStartedAtByPromptId = new Map<string, string>();
+    let transcript = createTranscriptState("session-1");
+    let latestLiveStatus = null as ReactNode;
+
+    const { result, rerender } = renderHook(() => useChatTranscriptRowRenderer({
+      activeSessionId: "session-1",
+      latestLiveExplorationBlock: null,
+      latestLiveStatus,
+      latestCompletedTurnId: "history",
+      latestTurnId: "latest",
+      optimisticPromptTrailingStatus: null,
+      outboxActions,
+      outboxStartedAtByPromptId,
+      renderPendingPromptRow,
+      renderTurnRow,
+      selectedWorkspaceId: "workspace-1",
+      sessionViewState: "working",
+      transcript,
+      visibleOutboxEntries: [],
+      visibleOptimisticPrompt: null,
+    }));
+    const historicalRevision = result.current.getRowRenderRevision(HISTORICAL_ROW);
+    const latestRevision = result.current.getRowRenderRevision(LATEST_ROW);
+    const firstRenderer = result.current.renderRow;
+
+    transcript = { ...transcript, itemsById: { ...transcript.itemsById } };
+    rerender();
+
+    expect(result.current.renderRow).not.toBe(firstRenderer);
+    expect(result.current.getRowRenderRevision(HISTORICAL_ROW)).toBe(historicalRevision);
+    expect(result.current.getRowRenderRevision(LATEST_ROW)).toBe(latestRevision);
+
+    latestLiveStatus = <span>Working</span>;
+    rerender();
+
+    expect(result.current.getRowRenderRevision(HISTORICAL_ROW)).toBe(historicalRevision);
+    expect(result.current.getRowRenderRevision(LATEST_ROW)).not.toBe(latestRevision);
+
+    const historicalRevisionBeforeLinkMetadata = result.current.getRowRenderRevision(HISTORICAL_ROW);
+    transcript = {
+      ...transcript,
+      linkCompletionsByCompletionId: { ...transcript.linkCompletionsByCompletionId },
+    };
+    rerender();
+
+    expect(result.current.getRowRenderRevision(HISTORICAL_ROW))
+      .not.toBe(historicalRevisionBeforeLinkMetadata);
+  });
+
+  it("updates the mounted latest row only for row-visible revision changes", () => {
+    let transcript = createTranscriptState("session-1");
+    transcript = {
+      ...transcript,
+      sessionMeta: { ...transcript.sessionMeta, title: "Original" },
+      turnOrder: ["latest"],
+      turnsById: {
+        latest: {
+          turnId: "latest",
+          itemOrder: [],
+          startedAt: "2026-08-05T00:00:00.000Z",
+          completedAt: null,
+          stopReason: null,
+          fileBadges: [],
+        },
+      },
+    };
+    let latestLiveStatus: ReactNode = "idle";
+    const renderTurnRow = vi.fn((input: ChatTranscriptTurnRowRenderInput) => (
+      <div data-testid="integrated-latest-row">
+        {input.latestLiveStatus}:{input.transcript.sessionMeta.title}
+      </div>
+    ));
+    const rendered = render(
+      <IntegratedLatestRow
+        latestLiveStatus={latestLiveStatus}
+        renderTurnRow={renderTurnRow}
+        transcript={transcript}
+      />,
+    );
+
+    expect(rendered.getByTestId("integrated-latest-row").textContent).toBe("idle:Original");
+    expect(renderTurnRow).toHaveBeenCalledTimes(1);
+
+    transcript = { ...transcript, itemsById: { ...transcript.itemsById } };
+    rendered.rerender(
+      <IntegratedLatestRow
+        latestLiveStatus={latestLiveStatus}
+        renderTurnRow={renderTurnRow}
+        transcript={transcript}
+      />,
+    );
+    expect(renderTurnRow).toHaveBeenCalledTimes(1);
+
+    latestLiveStatus = "working";
+    rendered.rerender(
+      <IntegratedLatestRow
+        latestLiveStatus={latestLiveStatus}
+        renderTurnRow={renderTurnRow}
+        transcript={transcript}
+      />,
+    );
+    expect(rendered.getByTestId("integrated-latest-row").textContent).toBe("working:Original");
+    expect(renderTurnRow).toHaveBeenCalledTimes(2);
+
+    transcript = {
+      ...transcript,
+      sessionMeta: { ...transcript.sessionMeta, title: "Renamed" },
+    };
+    rendered.rerender(
+      <IntegratedLatestRow
+        latestLiveStatus={latestLiveStatus}
+        renderTurnRow={renderTurnRow}
+        transcript={transcript}
+      />,
+    );
+    expect(rendered.getByTestId("integrated-latest-row").textContent).toBe("working:Renamed");
+    expect(renderTurnRow).toHaveBeenCalledTimes(3);
+  });
+
+  const COMPLETION_RECEIPT_ROW = {
+    kind: "completion_receipt",
+    key: "completion-receipt:terminal:p1",
+    receipt: {
+      kind: "terminal",
+      key: "terminal:p1",
+      processId: "p1",
+      command: "echo hi",
+      exitCode: 0,
+      atMs: 1,
+      anchorTurnId: "turn-a",
+    },
+  } as TranscriptVirtualRow;
+  const BACKGROUND_WORK_ROW = {
+    kind: "background_work",
+    key: "background-work",
+    runningCount: 2,
+  } as TranscriptVirtualRow;
+
+  function baseRendererInput(overrides: {
+    renderCompletionReceiptRow?: (input: unknown) => ReactNode;
+    renderBackgroundWorkRow?: (input: unknown) => ReactNode;
+  }) {
+    return {
+      activeSessionId: "session-1",
+      latestLiveExplorationBlock: null,
+      latestLiveStatus: null,
+      latestCompletedTurnId: null,
+      latestTurnId: "latest",
+      optimisticPromptTrailingStatus: null,
+      outboxActions: OUTBOX_ACTIONS,
+      outboxStartedAtByPromptId: OUTBOX_STARTED_AT_BY_PROMPT_ID,
+      renderPendingPromptRow: () => null,
+      renderTurnRow: () => null,
+      selectedWorkspaceId: "workspace-1",
+      sessionViewState: "working" as const,
+      transcript: createTranscriptState("session-1"),
+      visibleOutboxEntries: [],
+      visibleOptimisticPrompt: null,
+      ...overrides,
+    };
+  }
+
+  it("dispatches completion_receipt and background_work rows to their render callbacks (bgwork r6 round 2)", () => {
+    const renderCompletionReceiptRow = vi.fn(() => <span>receipt</span>);
+    const renderBackgroundWorkRow = vi.fn(() => <span>footer</span>);
+    const { result } = renderHook(() =>
+      useChatTranscriptRowRenderer(
+        baseRendererInput({ renderCompletionReceiptRow, renderBackgroundWorkRow }),
+      ),
+    );
+
+    result.current.renderRow(COMPLETION_RECEIPT_ROW, 3);
+    result.current.renderRow(BACKGROUND_WORK_ROW, 4);
+
+    expect(renderCompletionReceiptRow).toHaveBeenCalledWith(expect.objectContaining({
+      row: COMPLETION_RECEIPT_ROW,
+      rowIndex: 3,
+      receipt: expect.objectContaining({ kind: "terminal", processId: "p1" }),
+    }));
+    expect(renderBackgroundWorkRow).toHaveBeenCalledWith(expect.objectContaining({
+      row: BACKGROUND_WORK_ROW,
+      rowIndex: 4,
+      runningCount: 2,
+    }));
+  });
+
+  it("renders null for background-work rows when the surface omits the callbacks (e.g. cloud preview)", () => {
+    const { result } = renderHook(() => useChatTranscriptRowRenderer(baseRendererInput({})));
+
+    expect(result.current.renderRow(COMPLETION_RECEIPT_ROW, 0)).toBeNull();
+    expect(result.current.renderRow(BACKGROUND_WORK_ROW, 0)).toBeNull();
+  });
+});

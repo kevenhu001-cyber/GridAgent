@@ -1,0 +1,1087 @@
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+
+use super::activity::{ActivityProcess, ActivitySubagent};
+use super::goals::Goal;
+use super::interactions::{InteractionRequestedEvent, InteractionResolvedEvent};
+use super::loops::Loop;
+use super::SessionLiveConfigSnapshot;
+
+mod pending_prompts;
+pub use pending_prompts::*;
+mod runtime_metadata;
+pub use runtime_metadata::*;
+
+// ---------------------------------------------------------------------------
+// Envelope
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEventEnvelope {
+    pub session_id: String,
+    pub seq: i64,
+    pub timestamp: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub item_id: Option<String>,
+    pub event: SessionEvent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRawNotificationEnvelope {
+    pub session_id: String,
+    pub seq: i64,
+    pub timestamp: String,
+    pub notification_kind: String,
+    pub notification: serde_json::Value,
+}
+
+// ---------------------------------------------------------------------------
+// Normalized event union
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SessionEvent {
+    SessionStarted(SessionStartedEvent),
+    SessionEnded(SessionEndedEvent),
+    TurnStarted(TurnStartedEvent),
+    TurnEnded(TurnEndedEvent),
+    ItemStarted(ItemStartedEvent),
+    ItemDelta(ItemDeltaEvent),
+    ItemCompleted(ItemCompletedEvent),
+
+    AvailableCommandsUpdate(AvailableCommandsUpdatePayload),
+    CurrentModeUpdate(CurrentModeUpdatePayload),
+    ConfigOptionUpdate(ConfigOptionUpdatePayload),
+    SessionStateUpdate(SessionStateUpdatePayload),
+    SessionInfoUpdate(SessionInfoUpdatePayload),
+    WorkspacePinIntent(WorkspacePinIntentPayload),
+    SubagentTurnCompleted(SubagentTurnCompletedPayload),
+    SessionLinkTurnCompleted(SessionLinkTurnCompletedPayload),
+    ReviewRunUpdated(ReviewRunUpdatedPayload),
+    UsageUpdate(UsageUpdatePayload),
+    GoalUpdated(GoalUpdatedPayload),
+    GoalMet(GoalMetPayload),
+    GoalCleared(GoalClearedPayload),
+    LoopUpserted(LoopUpsertedPayload),
+    LoopRemoved(LoopRemovedPayload),
+    LoopFired(LoopFiredPayload),
+    // Renamed off the default snake_case of the variant name so the `"type"`
+    // tag matches the wire's tagged-chunk `transcriptEvent` vocabulary
+    // (`NON_TRANSCRIPT_CHUNK_EVENTS`) verbatim — same string as
+    // `event_type()` below.
+    #[serde(rename = "process_upserted")]
+    ActivityProcessUpserted(ActivityProcessUpsertedPayload),
+    #[serde(rename = "subagent_upserted")]
+    ActivitySubagentUpserted(ActivitySubagentUpsertedPayload),
+
+    PendingPromptAdded(PendingPromptAddedPayload),
+    PendingPromptUpdated(PendingPromptUpdatedPayload),
+    PendingPromptRemoved(PendingPromptRemovedPayload),
+    PendingPromptsReordered(PendingPromptsReorderedPayload),
+
+    #[serde(alias = "permission_requested")]
+    InteractionRequested(InteractionRequestedEvent),
+    #[serde(alias = "permission_resolved")]
+    InteractionResolved(InteractionResolvedEvent),
+    Error(ErrorEvent),
+}
+
+impl SessionEvent {
+    pub fn event_type(&self) -> &'static str {
+        match self {
+            Self::SessionStarted(_) => "session_started",
+            Self::SessionEnded(_) => "session_ended",
+            Self::TurnStarted(_) => "turn_started",
+            Self::TurnEnded(_) => "turn_ended",
+            Self::ItemStarted(_) => "item_started",
+            Self::ItemDelta(_) => "item_delta",
+            Self::ItemCompleted(_) => "item_completed",
+            Self::AvailableCommandsUpdate(_) => "available_commands_update",
+            Self::CurrentModeUpdate(_) => "current_mode_update",
+            Self::ConfigOptionUpdate(_) => "config_option_update",
+            Self::SessionStateUpdate(_) => "session_state_update",
+            Self::SessionInfoUpdate(_) => "session_info_update",
+            Self::WorkspacePinIntent(_) => "workspace_pin_intent",
+            Self::SubagentTurnCompleted(_) => "subagent_turn_completed",
+            Self::SessionLinkTurnCompleted(_) => "session_link_turn_completed",
+            Self::ReviewRunUpdated(_) => "review_run_updated",
+            Self::UsageUpdate(_) => "usage_update",
+            Self::GoalUpdated(_) => "goal_updated",
+            Self::GoalMet(_) => "goal_met",
+            Self::GoalCleared(_) => "goal_cleared",
+            Self::LoopUpserted(_) => "loop_upserted",
+            Self::LoopRemoved(_) => "loop_removed",
+            Self::LoopFired(_) => "loop_fired",
+            Self::ActivityProcessUpserted(_) => "process_upserted",
+            Self::ActivitySubagentUpserted(_) => "subagent_upserted",
+            Self::PendingPromptAdded(_) => "pending_prompt_added",
+            Self::PendingPromptUpdated(_) => "pending_prompt_updated",
+            Self::PendingPromptRemoved(_) => "pending_prompt_removed",
+            Self::PendingPromptsReordered(_) => "pending_prompts_reordered",
+            Self::InteractionRequested(_) => "interaction_requested",
+            Self::InteractionResolved(_) => "interaction_resolved",
+            Self::Error(_) => "error",
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Session / turn lifecycle
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionStartedEvent {
+    pub native_session_id: String,
+    pub source_agent_kind: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEndedEvent {
+    pub reason: SessionEndReason,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionEndReason {
+    Closed,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Default)]
+pub struct TurnStartedEvent {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnEndedEvent {
+    pub stop_reason: StopReason,
+}
+
+// ---------------------------------------------------------------------------
+// Transcript items
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemStartedEvent {
+    pub item: TranscriptItemPayload,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemDeltaEvent {
+    pub delta: TranscriptItemDeltaPayload,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemCompletedEvent {
+    pub item: TranscriptItemPayload,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptItemPayload {
+    pub kind: TranscriptItemKind,
+    pub status: TranscriptItemStatus,
+    pub source_agent_kind: String,
+    #[serde(default, rename = "isTransient", skip_serializing_if = "is_false")]
+    pub is_transient: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_tool_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_input: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_output: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub content_parts: Vec<ContentPart>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_provenance: Option<PromptProvenance>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum PromptProvenance {
+    AgentSession {
+        #[serde(rename = "sourceSessionId")]
+        source_session_id: String,
+        #[serde(rename = "sessionLinkId")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_link_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+    },
+    SubagentWake {
+        #[serde(rename = "sessionLinkId")]
+        session_link_id: String,
+        #[serde(rename = "completionId")]
+        completion_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+    },
+    LinkWake {
+        relation: String,
+        #[serde(rename = "sessionLinkId")]
+        session_link_id: String,
+        #[serde(rename = "completionId")]
+        completion_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+    },
+    ReviewFeedback {
+        #[serde(rename = "reviewRunId")]
+        review_run_id: String,
+        #[serde(rename = "reviewRoundId")]
+        review_round_id: String,
+        #[serde(rename = "feedbackJobId")]
+        feedback_job_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+    },
+    System {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TranscriptItemKind {
+    UserMessage,
+    AssistantMessage,
+    Reasoning,
+    ToolInvocation,
+    Plan,
+    ProposedPlan,
+    ErrorItem,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TranscriptItemStatus {
+    InProgress,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptItemDeltaPayload {
+    #[serde(rename = "isTransient")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_transient: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<TranscriptItemStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_tool_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_input: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_output: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub append_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub append_reasoning: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replace_content_parts: Option<Vec<ContentPart>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub append_content_parts: Option<Vec<ContentPart>>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ContentPart {
+    Text {
+        text: String,
+    },
+    Image {
+        #[serde(rename = "attachmentId")]
+        attachment_id: String,
+        #[serde(rename = "mimeType")]
+        mime_type: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        uri: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        size: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source: Option<super::PromptAttachmentSource>,
+    },
+    Resource {
+        #[serde(rename = "attachmentId")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        attachment_id: Option<String>,
+        uri: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(rename = "mimeType")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        mime_type: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        size: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        preview: Option<String>,
+        #[serde(rename = "previewTruncated")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        preview_truncated: Option<bool>,
+        #[serde(rename = "previewOriginalBytes")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        preview_original_bytes: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source: Option<super::PromptAttachmentSource>,
+    },
+    ResourceLink {
+        uri: String,
+        name: String,
+        #[serde(rename = "mimeType")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        mime_type: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        size: Option<u64>,
+    },
+    Reasoning {
+        text: String,
+        visibility: ReasoningVisibility,
+    },
+    ToolCall {
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        title: String,
+        #[serde(rename = "toolKind")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tool_kind: Option<String>,
+        #[serde(rename = "nativeToolName")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        native_tool_name: Option<String>,
+    },
+    TerminalOutput {
+        #[serde(rename = "terminalId")]
+        terminal_id: String,
+        event: TerminalLifecycleEvent,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        data: Option<String>,
+        #[serde(rename = "dataTruncated")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        data_truncated: Option<bool>,
+        #[serde(rename = "dataOriginalBytes")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        data_original_bytes: Option<u64>,
+        #[serde(rename = "exitCode")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        signal: Option<String>,
+    },
+    FileRead {
+        path: String,
+        #[serde(rename = "workspacePath")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        workspace_path: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        basename: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        line: Option<i64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        scope: Option<FileReadScope>,
+        #[serde(rename = "startLine")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        start_line: Option<i64>,
+        #[serde(rename = "endLine")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        end_line: Option<i64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        preview: Option<String>,
+        #[serde(rename = "previewTruncated")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        preview_truncated: Option<bool>,
+        #[serde(rename = "previewOriginalBytes")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        preview_original_bytes: Option<u64>,
+    },
+    FileChange {
+        operation: FileChangeOperation,
+        path: String,
+        #[serde(rename = "workspacePath")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        workspace_path: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        basename: Option<String>,
+        #[serde(rename = "newPath")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        new_path: Option<String>,
+        #[serde(rename = "newWorkspacePath")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        new_workspace_path: Option<String>,
+        #[serde(rename = "newBasename")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        new_basename: Option<String>,
+        #[serde(rename = "openTarget")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        open_target: Option<FileOpenTarget>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        additions: Option<i64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        deletions: Option<i64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        patch: Option<String>,
+        #[serde(rename = "patchTruncated")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        patch_truncated: Option<bool>,
+        #[serde(rename = "patchOriginalBytes")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        patch_original_bytes: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        preview: Option<String>,
+        #[serde(rename = "previewTruncated")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        preview_truncated: Option<bool>,
+        #[serde(rename = "previewOriginalBytes")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        preview_original_bytes: Option<u64>,
+        #[serde(rename = "nativeToolName")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        native_tool_name: Option<String>,
+    },
+    Plan {
+        entries: Vec<PlanEntry>,
+    },
+    ProposedPlan {
+        #[serde(rename = "planId")]
+        plan_id: String,
+        title: String,
+        #[serde(rename = "bodyMarkdown")]
+        body_markdown: String,
+        #[serde(rename = "snapshotHash")]
+        snapshot_hash: String,
+        #[serde(rename = "sourceSessionId")]
+        source_session_id: String,
+        #[serde(rename = "sourceTurnId")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_turn_id: Option<String>,
+        #[serde(rename = "sourceItemId")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_item_id: Option<String>,
+        #[serde(rename = "sourceKind")]
+        source_kind: String,
+        #[serde(rename = "sourceToolCallId")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_tool_call_id: Option<String>,
+    },
+    PlanReference {
+        #[serde(rename = "planId")]
+        plan_id: String,
+        title: String,
+        #[serde(rename = "bodyMarkdown")]
+        body_markdown: String,
+        #[serde(rename = "snapshotHash")]
+        snapshot_hash: String,
+        #[serde(rename = "sourceSessionId")]
+        source_session_id: String,
+        #[serde(rename = "sourceTurnId")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_turn_id: Option<String>,
+        #[serde(rename = "sourceItemId")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_item_id: Option<String>,
+        #[serde(rename = "sourceKind")]
+        source_kind: String,
+        #[serde(rename = "sourceToolCallId")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_tool_call_id: Option<String>,
+    },
+    ProposedPlanDecision {
+        #[serde(rename = "planId")]
+        plan_id: String,
+        #[serde(rename = "decisionState")]
+        decision_state: ProposedPlanDecisionState,
+        #[serde(rename = "nativeResolutionState")]
+        native_resolution_state: ProposedPlanNativeResolutionState,
+        #[serde(rename = "decisionVersion")]
+        decision_version: i64,
+        #[serde(rename = "errorMessage")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error_message: Option<String>,
+    },
+    ToolInputText {
+        text: String,
+        #[serde(rename = "textTruncated")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        text_truncated: Option<bool>,
+        #[serde(rename = "textOriginalBytes")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        text_original_bytes: Option<u64>,
+    },
+    ToolResultText {
+        text: String,
+        #[serde(rename = "textTruncated")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        text_truncated: Option<bool>,
+        #[serde(rename = "textOriginalBytes")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        text_original_bytes: Option<u64>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningVisibility {
+    Private,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalLifecycleEvent {
+    Start,
+    Output,
+    Exit,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum FileReadScope {
+    Full,
+    Line,
+    Range,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum FileOpenTarget {
+    File,
+    Diff,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum FileChangeOperation {
+    Create,
+    Edit,
+    Delete,
+    Move,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanEntry {
+    pub content: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProposedPlanDecisionState {
+    Pending,
+    Approved,
+    Rejected,
+    Superseded,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProposedPlanNativeResolutionState {
+    None,
+    PendingLink,
+    PendingResolution,
+    Finalized,
+    Failed,
+}
+
+// ---------------------------------------------------------------------------
+// Session metadata payloads
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailableCommandsUpdatePayload {
+    pub available_commands: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CurrentModeUpdatePayload {
+    pub current_mode_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigOptionUpdatePayload {
+    pub live_config: SessionLiveConfigSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionStateUpdatePayload {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_model_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_mode_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SubagentTurnOutcome {
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentTurnCompletedPayload {
+    pub completion_id: String,
+    pub session_link_id: String,
+    pub parent_session_id: String,
+    pub child_session_id: String,
+    pub child_turn_id: String,
+    pub child_last_event_seq: i64,
+    pub outcome: SubagentTurnOutcome,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionLinkTurnCompletedPayload {
+    pub relation: String,
+    pub completion_id: String,
+    pub session_link_id: String,
+    pub parent_session_id: String,
+    pub child_session_id: String,
+    pub child_turn_id: String,
+    pub child_last_event_seq: i64,
+    pub outcome: SubagentTurnOutcome,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewRunUpdatedPayload {
+    pub review_run_id: String,
+    pub parent_session_id: String,
+    pub kind: super::reviews::ReviewKind,
+    pub status: super::reviews::ReviewRunStatus,
+    pub current_round_number: u32,
+    pub max_rounds: u32,
+    pub auto_iterate: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_round_id: Option<String>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GoalUpdatedPayload {
+    pub goal: Goal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GoalMetPayload {
+    pub goal: Goal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GoalClearedPayload {
+    pub goal: Goal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LoopUpsertedPayload {
+    #[serde(rename = "loop")]
+    pub r#loop: Loop,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LoopRemovedPayload {
+    pub loop_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LoopFiredPayload {
+    #[serde(rename = "loop")]
+    pub r#loop: Loop,
+    pub fired_at_ms: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityProcessUpsertedPayload {
+    pub process: ActivityProcess,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivitySubagentUpsertedPayload {
+    pub agent: ActivitySubagent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageUpdatePayload {
+    pub used: u64,
+    pub size: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ErrorEvent {
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<ErrorEventDetails>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ErrorEventDetails {
+    #[serde(rename_all = "camelCase")]
+    ProviderRateLimit {
+        provider: String,
+        provider_model: String,
+        limit: u64,
+        unit: String,
+        fallback_model_id: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    NetworkConnection {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        provider: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StopReason {
+    EndTurn,
+    MaxTokens,
+    MaxTurnRequests,
+    Refusal,
+    Cancelled,
+}
+
+impl std::fmt::Display for StopReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EndTurn => write!(f, "end_turn"),
+            Self::MaxTokens => write!(f, "max_tokens"),
+            Self::MaxTurnRequests => write!(f, "max_turn_requests"),
+            Self::Refusal => write!(f, "refusal"),
+            Self::Cancelled => write!(f, "cancelled"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn content_part_plan_reference_round_trips() {
+        let part = ContentPart::PlanReference {
+            plan_id: "plan-123".to_string(),
+            title: "Implementation plan".to_string(),
+            body_markdown: "# Implementation plan\n\nDo it.".to_string(),
+            snapshot_hash: "hash-123".to_string(),
+            source_session_id: "session-123".to_string(),
+            source_turn_id: Some("turn-123".to_string()),
+            source_item_id: Some("item-123".to_string()),
+            source_kind: "codex_turn_plan".to_string(),
+            source_tool_call_id: Some("tool-123".to_string()),
+        };
+
+        let json = serde_json::to_value(&part).expect("serialize plan reference content part");
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "type": "plan_reference",
+                "planId": "plan-123",
+                "title": "Implementation plan",
+                "bodyMarkdown": "# Implementation plan\n\nDo it.",
+                "snapshotHash": "hash-123",
+                "sourceSessionId": "session-123",
+                "sourceTurnId": "turn-123",
+                "sourceItemId": "item-123",
+                "sourceKind": "codex_turn_plan",
+                "sourceToolCallId": "tool-123"
+            })
+        );
+
+        let round_tripped: ContentPart =
+            serde_json::from_value(json).expect("deserialize plan reference content part");
+        assert_eq!(round_tripped, part);
+    }
+
+    #[test]
+    fn subagent_turn_completed_event_round_trips() {
+        let event = SessionEvent::SubagentTurnCompleted(SubagentTurnCompletedPayload {
+            completion_id: "completion-1".to_string(),
+            session_link_id: "link-1".to_string(),
+            parent_session_id: "parent-1".to_string(),
+            child_session_id: "child-1".to_string(),
+            child_turn_id: "turn-child-1".to_string(),
+            child_last_event_seq: 42,
+            outcome: SubagentTurnOutcome::Completed,
+            label: Some("Reviewer".to_string()),
+        });
+
+        let json = serde_json::to_value(&event).expect("serialize subagent event");
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "type": "subagent_turn_completed",
+                "completionId": "completion-1",
+                "sessionLinkId": "link-1",
+                "parentSessionId": "parent-1",
+                "childSessionId": "child-1",
+                "childTurnId": "turn-child-1",
+                "childLastEventSeq": 42,
+                "outcome": "completed",
+                "label": "Reviewer"
+            })
+        );
+
+        let round_tripped: SessionEvent =
+            serde_json::from_value(json).expect("deserialize subagent event");
+        assert_eq!(round_tripped.event_type(), "subagent_turn_completed");
+        let SessionEvent::SubagentTurnCompleted(payload) = round_tripped else {
+            panic!("expected subagent turn completed event");
+        };
+        assert_eq!(payload.completion_id, "completion-1");
+        assert_eq!(payload.outcome, SubagentTurnOutcome::Completed);
+    }
+
+    #[test]
+    fn session_link_turn_completed_event_round_trips() {
+        let event = SessionEvent::SessionLinkTurnCompleted(SessionLinkTurnCompletedPayload {
+            relation: "cowork_coding_session".to_string(),
+            completion_id: "completion-1".to_string(),
+            session_link_id: "link-1".to_string(),
+            parent_session_id: "parent-1".to_string(),
+            child_session_id: "child-1".to_string(),
+            child_turn_id: "turn-child-1".to_string(),
+            child_last_event_seq: 42,
+            outcome: SubagentTurnOutcome::Failed,
+            label: Some("Fixer".to_string()),
+        });
+
+        let json = serde_json::to_value(&event).expect("serialize link event");
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "type": "session_link_turn_completed",
+                "relation": "cowork_coding_session",
+                "completionId": "completion-1",
+                "sessionLinkId": "link-1",
+                "parentSessionId": "parent-1",
+                "childSessionId": "child-1",
+                "childTurnId": "turn-child-1",
+                "childLastEventSeq": 42,
+                "outcome": "failed",
+                "label": "Fixer"
+            })
+        );
+
+        let round_tripped: SessionEvent =
+            serde_json::from_value(json).expect("deserialize link event");
+        assert_eq!(round_tripped.event_type(), "session_link_turn_completed");
+        let SessionEvent::SessionLinkTurnCompleted(payload) = round_tripped else {
+            panic!("expected session link turn completed event");
+        };
+        assert_eq!(payload.relation, "cowork_coding_session");
+        assert_eq!(payload.outcome, SubagentTurnOutcome::Failed);
+    }
+
+    #[test]
+    fn review_run_updated_event_round_trips() {
+        let event = SessionEvent::ReviewRunUpdated(ReviewRunUpdatedPayload {
+            review_run_id: "review-1".to_string(),
+            parent_session_id: "parent-1".to_string(),
+            kind: super::super::reviews::ReviewKind::Plan,
+            status: super::super::reviews::ReviewRunStatus::ParentRevising,
+            current_round_number: 1,
+            max_rounds: 2,
+            auto_iterate: true,
+            active_round_id: Some("round-1".to_string()),
+            updated_at: "2026-04-28T12:00:00Z".to_string(),
+        });
+
+        let json = serde_json::to_value(&event).expect("serialize review update event");
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "type": "review_run_updated",
+                "reviewRunId": "review-1",
+                "parentSessionId": "parent-1",
+                "kind": "plan",
+                "status": "parent_revising",
+                "currentRoundNumber": 1,
+                "maxRounds": 2,
+                "autoIterate": true,
+                "activeRoundId": "round-1",
+                "updatedAt": "2026-04-28T12:00:00Z"
+            })
+        );
+
+        let round_tripped: SessionEvent =
+            serde_json::from_value(json).expect("deserialize review update event");
+        assert_eq!(round_tripped.event_type(), "review_run_updated");
+        let SessionEvent::ReviewRunUpdated(payload) = round_tripped else {
+            panic!("expected review run updated event");
+        };
+        assert_eq!(payload.review_run_id, "review-1");
+        assert_eq!(
+            payload.status,
+            super::super::reviews::ReviewRunStatus::ParentRevising
+        );
+    }
+
+    fn sample_loop() -> super::super::loops::Loop {
+        use super::super::loops::{Loop, LoopSchedule, LoopScheduleKind, LoopStatus};
+        Loop {
+            loop_id: "cron-1".to_string(),
+            prompt: "ping".to_string(),
+            schedule: LoopSchedule {
+                kind: LoopScheduleKind::Cron,
+                expr: "*/1 * * * *".to_string(),
+            },
+            recurring: true,
+            status: LoopStatus::Active,
+            native: true,
+            last_fired_at_ms: None,
+            fire_count: 0,
+            updated_at_ms: 1,
+        }
+    }
+
+    #[test]
+    fn loop_upserted_event_round_trips_with_loop_tag() {
+        let event = SessionEvent::LoopUpserted(LoopUpsertedPayload {
+            r#loop: sample_loop(),
+        });
+        let json = serde_json::to_value(&event).expect("serialize loop upserted event");
+        assert_eq!(json["type"], "loop_upserted");
+        assert_eq!(json["loop"]["loopId"], "cron-1");
+
+        let round_tripped: SessionEvent =
+            serde_json::from_value(json).expect("deserialize loop upserted event");
+        assert_eq!(round_tripped.event_type(), "loop_upserted");
+    }
+
+    #[test]
+    fn loop_removed_and_fired_events_round_trip() {
+        let removed = SessionEvent::LoopRemoved(LoopRemovedPayload {
+            loop_id: "cron-1".to_string(),
+        });
+        assert_eq!(removed.event_type(), "loop_removed");
+        let json = serde_json::to_value(&removed).expect("serialize loop removed event");
+        assert_eq!(
+            json,
+            serde_json::json!({ "type": "loop_removed", "loopId": "cron-1" })
+        );
+
+        let fired = SessionEvent::LoopFired(LoopFiredPayload {
+            r#loop: sample_loop(),
+            fired_at_ms: 2,
+            turn_id: Some("turn-1".to_string()),
+        });
+        assert_eq!(fired.event_type(), "loop_fired");
+        let json = serde_json::to_value(&fired).expect("serialize loop fired event");
+        assert_eq!(json["type"], "loop_fired");
+        assert_eq!(json["firedAtMs"], 2);
+        assert_eq!(json["turnId"], "turn-1");
+    }
+
+    #[test]
+    fn activity_events_serialize_with_wire_matching_type_tags() {
+        use super::super::activity::{
+            ActivityProcess, ActivitySubagent, ProcessStatus, SubagentStatus,
+        };
+
+        let process_event = SessionEvent::ActivityProcessUpserted(ActivityProcessUpsertedPayload {
+            process: ActivityProcess {
+                id: "proc-1".to_string(),
+                command: "sleep 30 && echo OK > out.txt".to_string(),
+                cwd: None,
+                status: ProcessStatus::Running,
+                pid: None,
+                started_at: "2026-07-02T00:00:00Z".to_string(),
+                ended_at: None,
+                feed: None,
+            },
+        });
+        assert_eq!(process_event.event_type(), "process_upserted");
+        let json = serde_json::to_value(&process_event).expect("serialize process event");
+        assert_eq!(json["type"], "process_upserted");
+        let round_tripped: SessionEvent =
+            serde_json::from_value(json).expect("deserialize process event");
+        assert_eq!(round_tripped.event_type(), "process_upserted");
+
+        let subagent_event =
+            SessionEvent::ActivitySubagentUpserted(ActivitySubagentUpsertedPayload {
+                agent: ActivitySubagent {
+                    id: "agent-1".to_string(),
+                    agent_type: Some("reviewer".to_string()),
+                    description: None,
+                    model: None,
+                    background: true,
+                    status: SubagentStatus::Running,
+                    usage: None,
+                    feed: None,
+                },
+            });
+        assert_eq!(subagent_event.event_type(), "subagent_upserted");
+        let json = serde_json::to_value(&subagent_event).expect("serialize subagent event");
+        assert_eq!(json["type"], "subagent_upserted");
+        let round_tripped: SessionEvent =
+            serde_json::from_value(json).expect("deserialize subagent event");
+        assert_eq!(round_tripped.event_type(), "subagent_upserted");
+    }
+}

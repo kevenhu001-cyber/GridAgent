@@ -1,0 +1,161 @@
+// @vitest-environment jsdom
+
+import { beforeEach, describe, expect, it } from "vitest";
+import {
+  readDevUpdaterMock,
+  writeDevUpdaterMock,
+  type DevUpdaterMockState,
+} from "./updater-dev-mock";
+
+const DEV_UPDATER_MOCK_KEY = "proliferate.dev.updaterMock";
+
+function baseState(overrides: Partial<DevUpdaterMockState>): DevUpdaterMockState {
+  return {
+    phase: "available",
+    version: "0.1.42",
+    downloadProgress: null,
+    downloadReceivedBytes: null,
+    downloadTotalBytes: null,
+    restartPromptOpen: false,
+    restartWhenIdle: false,
+    lastCheckedAt: null,
+    errorMessage: null,
+    errorSource: null,
+    manualCheckCompletedAt: null,
+    lastProgressAt: null,
+    downloadRetryCount: 0,
+    downloadStartedAt: null,
+    restartCountdownStartedAt: null,
+    ...overrides,
+  };
+}
+
+describe("updater dev mock", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("round-trips the error phase with both error sources", () => {
+    writeDevUpdaterMock(
+      baseState({ phase: "error", errorMessage: "no feed", errorSource: "check" }),
+    );
+    expect(readDevUpdaterMock()).toMatchObject({
+      phase: "error",
+      errorMessage: "no feed",
+      errorSource: "check",
+    });
+
+    writeDevUpdaterMock(
+      baseState({ phase: "error", errorMessage: "disk full", errorSource: "download" }),
+    );
+    expect(readDevUpdaterMock()).toMatchObject({
+      phase: "error",
+      errorSource: "download",
+    });
+  });
+
+  it("round-trips the manual-check-current signal", () => {
+    writeDevUpdaterMock(baseState({ phase: "current", manualCheckCompletedAt: 1_234 }));
+
+    expect(readDevUpdaterMock()).toMatchObject({
+      phase: "current",
+      manualCheckCompletedAt: 1_234,
+    });
+  });
+
+  it("round-trips and normalizes an authored release title", () => {
+    writeDevUpdaterMock(baseState({ title: "  Introducing Grok  " }));
+
+    expect(readDevUpdaterMock()?.title).toBe("Introducing Grok");
+
+    writeDevUpdaterMock(baseState({ title: "line one\nline two" }));
+    expect(readDevUpdaterMock()?.title).toBeNull();
+  });
+
+  it("round-trips an armed restart only for the ready phase", () => {
+    writeDevUpdaterMock(baseState({ phase: "ready", restartWhenIdle: true }));
+    expect(readDevUpdaterMock()).toMatchObject({ phase: "ready", restartWhenIdle: true });
+
+    writeDevUpdaterMock(baseState({ phase: "available", restartWhenIdle: true }));
+    expect(readDevUpdaterMock()).toMatchObject({ phase: "available", restartWhenIdle: false });
+  });
+
+  it("keeps the figures a stall stalled at, in both stall shapes", () => {
+    // "Stalled at 38%, no data for 12 seconds, retried twice" is authored from
+    // these three numbers, so the phase has to carry all of them.
+    writeDevUpdaterMock(
+      baseState({
+        phase: "stalled",
+        downloadProgress: 38,
+        downloadTotalBytes: 125_000_000,
+        lastProgressAt: 1_000,
+        downloadRetryCount: 2,
+      }),
+    );
+    expect(readDevUpdaterMock()).toMatchObject({
+      phase: "stalled",
+      downloadProgress: 38,
+      lastProgressAt: 1_000,
+      downloadRetryCount: 2,
+    });
+
+    // The no-progress-bar shape: no advertised total, so no percentage to name.
+    writeDevUpdaterMock(
+      baseState({ phase: "stalled", downloadTotalBytes: null, lastProgressAt: 1_000 }),
+    );
+    expect(readDevUpdaterMock()).toMatchObject({
+      phase: "stalled",
+      downloadProgress: null,
+      downloadTotalBytes: null,
+      lastProgressAt: 1_000,
+    });
+  });
+
+  it("round-trips a running restart countdown only for the ready phase", () => {
+    writeDevUpdaterMock(
+      baseState({ phase: "ready", restartWhenIdle: true, restartCountdownStartedAt: 500 }),
+    );
+    expect(readDevUpdaterMock()).toMatchObject({ restartCountdownStartedAt: 500 });
+
+    // Nothing is counting down to a relaunch that hasn't been downloaded.
+    writeDevUpdaterMock(
+      baseState({ phase: "downloading", restartCountdownStartedAt: 500 }),
+    );
+    expect(readDevUpdaterMock()).toMatchObject({ restartCountdownStartedAt: null });
+  });
+
+  it("fills byte progress for a legacy downloading preview", () => {
+    window.localStorage.setItem(
+      DEV_UPDATER_MOCK_KEY,
+      JSON.stringify({
+        phase: "downloading",
+        version: "0.1.3",
+        downloadProgress: 40,
+      }),
+    );
+
+    expect(readDevUpdaterMock()).toMatchObject({
+      downloadProgress: 40,
+      downloadReceivedBytes: 50_000_000,
+      downloadTotalBytes: 125_000_000,
+    });
+  });
+
+  it("fills defaults when reading a legacy payload without the new fields", () => {
+    window.localStorage.setItem(
+      DEV_UPDATER_MOCK_KEY,
+      JSON.stringify({ phase: "error", version: "0.1.3" }),
+    );
+
+    expect(readDevUpdaterMock()).toMatchObject({
+      phase: "error",
+      errorSource: "check",
+      restartWhenIdle: false,
+      manualCheckCompletedAt: null,
+      lastProgressAt: null,
+      downloadRetryCount: 0,
+      restartCountdownStartedAt: null,
+    });
+    expect(readDevUpdaterMock()?.errorMessage).toEqual(expect.any(String));
+  });
+});

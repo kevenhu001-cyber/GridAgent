@@ -1,0 +1,397 @@
+import { HomeNextScreen } from "#product/components/home/screen/HomeNextScreen";
+import {
+  type CSSProperties,
+  useCallback,
+  useEffect,
+  useMemo,
+} from "react";
+import { PublishDialog } from "#product/components/workspace/git/PublishDialog";
+import { ChatView } from "#product/components/workspace/chat/ChatView";
+import { GlobalHeader } from "#product/components/workspace/shell/topbar/GlobalHeader";
+import { WorkspaceContentView } from "#product/components/workspace/shell/screen/WorkspaceContentView";
+import { WorkspaceShellShortcuts } from "#product/components/workspace/shell/screen/WorkspaceShellShortcuts";
+import { WorkspaceResizeSeparator } from "#product/components/workspace/shell/screen/WorkspaceResizeSeparator";
+import {
+  WorkspaceHeaderTabsViewModelProvider,
+} from "#product/components/workspace/shell/providers/WorkspaceHeaderTabsViewModelContext";
+import { WorkspaceShellActionsProvider } from "#product/components/workspace/shell/providers/WorkspaceShellActionsContext";
+import { WorkspaceCommandPalette } from "#product/components/workspace/shell/command-palette/WorkspaceCommandPalette";
+import { WorkspaceShellRightRail } from "#product/components/workspace/shell/screen/WorkspaceShellRightRail";
+import { WorkspaceShellRightPanelToggle } from "#product/components/workspace/shell/screen/WorkspaceShellRightPanelToggle";
+import { WorkspaceShellSidebar } from "#product/components/workspace/shell/sidebar/WorkspaceShellSidebar";
+import { ContentSearchPill } from "#product/components/workspace/search/ContentSearchPill";
+import { DebugProfiler } from "#product/components/diagnostics/DebugProfiler";
+import { OfflineIndicator } from "#product/components/app/OfflineIndicator";
+import { useMainScreenState } from "#product/hooks/main/facade/use-main-screen-state";
+import { useMainScreenShortcuts } from "#product/hooks/main/lifecycle/use-main-screen-shortcuts";
+import { useMainScreenActions } from "#product/hooks/main/workflows/use-main-screen-actions";
+import { useGlassChromeCanvas } from "#product/hooks/theme/derived/use-glass-chrome-canvas";
+import { useTransparentChromeEnabled } from "#product/hooks/theme/derived/use-transparent-chrome";
+import { useDebugRenderCount } from "#product/hooks/ui/debug/use-debug-render-count";
+import { useHasMacWindowControls } from "#product/hooks/ui/layout/use-mac-window-controls";
+import { useWorkspaceShellGeometry } from "#product/hooks/workspaces/ui/use-workspace-shell-geometry";
+import { useRunWorkspaceCommand } from "#product/hooks/workspaces/workflows/use-run-workspace-command";
+import { useWorkspaceOpenInWebActions } from "#product/hooks/workspaces/workflows/remote-access/use-workspace-open-in-web-actions";
+import { useWorkspaceRemoteAccessActions } from "#product/hooks/workspaces/workflows/remote-access/use-workspace-remote-access-actions";
+import { useWorkspaceRuntimeBlock } from "#product/hooks/workspaces/derived/use-workspace-runtime-block";
+import { useWorkspaceActivityAcknowledgement } from "#product/hooks/workspaces/lifecycle/use-workspace-activity-acknowledgement";
+import {
+  resolveStandardWorkspaceChromeClasses,
+} from "#product/lib/domain/preferences/workspace-chrome";
+import { useRepoPreferencesStore } from "#product/stores/preferences/repo-preferences-store";
+import { useSessionSelectionStore } from "#product/stores/sessions/session-selection-store";
+import { useAttendedPendingWorkspaceEntry } from "#product/hooks/workspaces/derived/use-pending-workspace-entries";
+import {
+  buildSettingsHref,
+  resolveWorkspaceRepoSettingsHref,
+} from "#product/lib/domain/settings/navigation";
+import type { WorkspaceRenderSurface } from "#product/lib/domain/workspaces/tabs/shell-activation";
+import { resolvePendingWorkspacePath } from "#product/lib/domain/workspaces/creation/pending-entry";
+
+const CHAT_SHELL_RENDER_SURFACE: WorkspaceRenderSurface = { kind: "chat-shell" };
+
+export function StandardWorkspaceShell({ visible = true }: { visible?: boolean }) {
+  useDebugRenderCount("workspace-shell");
+  // Workspace activity is a shell-level read receipt: if the selected workspace
+  // is visible, activity in any shell tab is considered consumed. Session error
+  // acknowledgement intentionally stays in ChatView because errors are
+  // transcript-scoped and need the chat surface for context.
+  useWorkspaceActivityAcknowledgement({ enabled: visible });
+  const pendingWorkspaceEntry = useAttendedPendingWorkspaceEntry();
+  const pendingWorkspacePath = resolvePendingWorkspacePath(pendingWorkspaceEntry);
+  const selectedLogicalWorkspaceId = useSessionSelectionStore(
+    (state) => state.selectedLogicalWorkspaceId,
+  );
+  // Stable qualification hook (attributes only): exposes the active session id
+  // on the shell root so the local-world smoke driver can extract/reopen the
+  // exact session without a private API. No behavior change.
+  const activeSessionId = useSessionSelectionStore((state) => state.activeSessionId);
+  const { layout, data } = useMainScreenState();
+  const actions = useMainScreenActions({
+    layout,
+    existingPr: data.existingPr,
+  });
+  const {
+    hasRuntimeReadyWorkspace,
+    shouldKeepRuntimePanelsVisible,
+    hasWorkspaceShell,
+    hasLaunchIntentOnlyShell,
+    isCloudWorkspaceSelected,
+    workspaceUiKey,
+    selectedWorkspaceId,
+    selectedWorkspace,
+    selectedRepoRoot,
+    selectedCloudWorkspace,
+  } = data;
+  const {
+    sidebarOpen,
+    sidebarWidth,
+    sidebarResizing,
+    rightPanelOpen,
+    rightPanelState,
+    rightPanelWidth,
+    rightPanelResizing,
+    rightPanelFocusRequestToken,
+    terminalActivationRequest,
+    publishDialog,
+    commandPaletteOpen,
+    onLeftSeparatorDown,
+    onRightSeparatorDown,
+  } = layout;
+  const transparentChromeEnabled = useTransparentChromeEnabled();
+  const hasMacWindowControls = useHasMacWindowControls();
+  useGlassChromeCanvas(transparentChromeEnabled && hasMacWindowControls);
+  const workspaceGeometry = useWorkspaceShellGeometry({
+    leftWidth: sidebarOpen ? sidebarWidth : 0,
+    rightWidth: hasWorkspaceShell && !hasLaunchIntentOnlyShell && rightPanelOpen
+      ? rightPanelWidth
+      : 0,
+    snapLeft: sidebarResizing,
+    onToggleLeft: actions.onToggleSidebar,
+  });
+  const chromeClasses = useMemo(
+    () => resolveStandardWorkspaceChromeClasses({
+      transparent: transparentChromeEnabled,
+      sidebarOpen,
+      showHeaderDivider: hasWorkspaceShell && !hasLaunchIntentOnlyShell,
+      showContentTopBorder: hasWorkspaceShell && !hasLaunchIntentOnlyShell,
+    }),
+    [hasLaunchIntentOnlyShell, hasWorkspaceShell, sidebarOpen, transparentChromeEnabled],
+  );
+  const activePublishWorkspaceId = selectedWorkspaceId;
+  const publishSourceRootPath = publishDialog.open
+    ? selectedRepoRoot?.path?.trim() || selectedWorkspace?.path?.trim() || null
+    : null;
+  const publishRepoDefaultBranch = useRepoPreferencesStore((state) => (
+    publishSourceRootPath
+      ? state.repoConfigs[publishSourceRootPath]?.defaultBranch ?? null
+      : null
+  ));
+  const runCommand = useRunWorkspaceCommand({
+    selectedWorkspaceId,
+    selectedWorkspace,
+    selectedRepoRoot,
+    selectedCloudWorkspace,
+    isRuntimeReady: hasRuntimeReadyWorkspace,
+    openTerminalPanel: actions.openTerminalPanel,
+  });
+  const workspaceWebActions = useWorkspaceOpenInWebActions();
+  const workspaceRemoteAccessActions = useWorkspaceRemoteAccessActions();
+  const { getWorkspaceRuntimeBlockReason } = useWorkspaceRuntimeBlock();
+  const runtimeBlockedReason = getWorkspaceRuntimeBlockReason(selectedWorkspaceId);
+  const ensureRightPanelWidth = useCallback(
+    (minRailWidth: number) => {
+      layout.setRightPanelWidth((current) => Math.max(current, minRailWidth));
+    },
+    [layout.setRightPanelWidth],
+  );
+  const shellActions = useMemo(() => ({
+    openTerminalPanel: actions.openTerminalPanel,
+    openRightPanelTool: actions.onSetRightPanelTool,
+    openPublishDialog: actions.openPublishDialog,
+    openPullRequest: data.existingPr
+      ? () => actions.handleViewPr(data.existingPr)
+      : actions.handlePrOpen,
+    workspaceWebActions,
+    workspaceRemoteAccessActions,
+    ensureRightPanelWidth,
+  }), [
+    actions.handlePrOpen,
+    actions.handleViewPr,
+    actions.onSetRightPanelTool,
+    actions.openPublishDialog,
+    actions.openTerminalPanel,
+    data.existingPr,
+    ensureRightPanelWidth,
+    workspaceRemoteAccessActions,
+    workspaceWebActions,
+  ]);
+  const repoSettingsHref = useMemo(() => resolveWorkspaceRepoSettingsHref({
+    cloudRepoOwner: selectedCloudWorkspace?.repo?.owner,
+    cloudRepoName: selectedCloudWorkspace?.repo?.name,
+    repoRootPath: selectedRepoRoot?.path,
+    workspacePath: selectedWorkspace?.path,
+  }), [
+    selectedCloudWorkspace?.repo?.name,
+    selectedCloudWorkspace?.repo?.owner,
+    selectedRepoRoot?.path,
+    selectedWorkspace?.path,
+  ]);
+  const canOpenRepositorySettings = repoSettingsHref !== null;
+  const repositorySettingsDisabledReason = canOpenRepositorySettings
+    ? null
+    : "Repository settings are unavailable.";
+  const handleTerminalActivationRequestHandled = useCallback(
+    (request: NonNullable<typeof terminalActivationRequest>) => {
+      layout.setTerminalActivationRequest((current) =>
+        current?.workspaceId === request.workspaceId
+        && current.token === request.token
+          ? null
+          : current
+      );
+    },
+    [layout.setTerminalActivationRequest],
+  );
+
+  useMainScreenShortcuts({
+    enabled: visible,
+    canOpenCommandPalette: hasWorkspaceShell,
+    onOpenCommandPalette: actions.handleCommandPaletteOpen,
+    onOpenWorkspaceInWeb: workspaceWebActions.openCurrentWorkspaceInWeb,
+    onOpenTerminal: actions.openTerminalPanel,
+    onSyncWorkspaceToWeb: workspaceRemoteAccessActions.syncToWeb,
+    onToggleLeftSidebar: workspaceGeometry.toggleLeft,
+    onToggleRightPanel: actions.toggleRightPanel,
+  });
+
+  useEffect(() => {
+    if (!publishDialog.open) {
+      return;
+    }
+    if (
+      !hasRuntimeReadyWorkspace
+      || !activePublishWorkspaceId
+      || publishDialog.workspaceId !== activePublishWorkspaceId
+    ) {
+      actions.closePublishDialog();
+    }
+  }, [
+    actions,
+    activePublishWorkspaceId,
+    hasRuntimeReadyWorkspace,
+    publishDialog.open,
+    publishDialog.workspaceId,
+  ]);
+
+  return (
+    <DebugProfiler id="workspace-shell">
+      <WorkspaceShellActionsProvider value={shellActions}>
+        <WorkspaceHeaderTabsViewModelProvider
+          enabled={hasWorkspaceShell && !hasLaunchIntentOnlyShell}
+        >
+            {hasWorkspaceShell && !hasLaunchIntentOnlyShell ? (
+              <WorkspaceShellShortcuts enabled={visible} />
+            ) : null}
+            <div
+              // relative: the collapsed sidebar's hover peek is an overlay
+              // anchored to this shell box, so it never displaces content.
+              className={`standard-workspace-shell relative h-screen flex overflow-hidden ${chromeClasses.root}`}
+              style={{
+                ...workspaceGeometry.style,
+                // Match the pre-animation collapsed header geometry exactly:
+                // controls inset + 24px toggle + 8px trailing space + the
+                // header's former 8px leading padding.
+                "--workspace-left-header-dwell": hasMacWindowControls ? "122px" : "40px",
+              } as CSSProperties}
+              data-snap-left-geometry={workspaceGeometry.snapLeft ? "true" : "false"}
+              data-snap-right-geometry={rightPanelResizing ? "true" : "false"}
+              data-workspace-shell
+              data-workspace-ui-key={selectedLogicalWorkspaceId ?? selectedWorkspaceId ?? ""}
+              data-workspace-session-id={activeSessionId ?? ""}
+              data-pending-workspace={pendingWorkspaceEntry ? "true" : "false"}
+              data-pending-workspace-attempt-id={pendingWorkspaceEntry?.attemptId ?? undefined}
+              data-telemetry-block
+            >
+              <WorkspaceShellSidebar
+                open={sidebarOpen}
+                width={sidebarWidth}
+                // Vibrancy only exists behind the window on macOS Desktop
+                // (apply_vibrancy in src-tauri/src/lib.rs); elsewhere a
+                // translucent sidebar would expose the bare window fill.
+                glassBackground={transparentChromeEnabled && hasMacWindowControls}
+                showAnimatedDivider={transparentChromeEnabled}
+                snapGeometry={workspaceGeometry.snapLeft}
+                onToggleSidebar={workspaceGeometry.toggleLeft}
+              />
+
+              {hasWorkspaceShell && !hasLaunchIntentOnlyShell ? (
+                <WorkspaceShellRightPanelToggle
+                  open={rightPanelOpen}
+                  onTogglePanel={actions.toggleRightPanel}
+                />
+              ) : null}
+
+              {sidebarOpen && (
+                <WorkspaceResizeSeparator
+                  edge="left"
+                  ariaControls="main-sidebar"
+                  onMouseDown={onLeftSeparatorDown}
+                />
+              )}
+
+              <div
+                className="flex min-w-0 flex-1 overflow-hidden bg-sidebar"
+              >
+                <div
+                  className={`flex min-w-0 flex-1 flex-col overflow-hidden ${chromeClasses.contentShell}`}
+                >
+                  <div
+                    className={chromeClasses.header}
+                    data-tauri-drag-region="true"
+                  >
+                    <DebugProfiler id="workspace-header-frame">
+                      <>
+                        {hasWorkspaceShell && !hasLaunchIntentOnlyShell && (
+                          <GlobalHeader
+                            selectedWorkspace={selectedWorkspace}
+                            displayWorkspacePath={selectedWorkspace?.path ?? pendingWorkspacePath}
+                            runDisabled={!runCommand.canRun}
+                            runLoading={runCommand.isLaunching}
+                            runLabel={runCommand.runLabel}
+                            runTitle={runCommand.runTitle}
+                            onRun={runCommand.onRun}
+                          />
+                        )}
+                      </>
+                    </DebugProfiler>
+                  </div>
+
+                  <OfflineIndicator />
+                  <div className="flex min-h-0 flex-1 overflow-hidden bg-sidebar-background">
+                    {hasLaunchIntentOnlyShell ? (
+                      <DebugProfiler id="workspace-content-frame">
+                        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                          <ChatView shellRenderSurface={CHAT_SHELL_RENDER_SURFACE} />
+                        </div>
+                      </DebugProfiler>
+                    ) : hasWorkspaceShell ? (
+                      <>
+                        <DebugProfiler id="workspace-content-frame">
+                          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                            <WorkspaceContentView visible={visible} />
+                          </div>
+                        </DebugProfiler>
+
+                        <DebugProfiler id="workspace-command-palette">
+                          <WorkspaceCommandPalette
+                            open={commandPaletteOpen}
+                            onClose={actions.onCommandPaletteClose}
+                            hasWorkspaceShell={hasWorkspaceShell}
+                            selectedWorkspaceId={selectedWorkspaceId}
+                            hasRuntimeReadyWorkspace={hasRuntimeReadyWorkspace}
+                            runtimeBlockedReason={runtimeBlockedReason}
+                            repoSettingsHref={repoSettingsHref}
+                            canOpenRepositorySettings={canOpenRepositorySettings}
+                            repositorySettingsDisabledReason={repositorySettingsDisabledReason}
+                            runCommand={runCommand}
+                            workspaceWebActions={workspaceWebActions}
+                            workspaceRemoteAccessActions={workspaceRemoteAccessActions}
+                            openTerminalPanel={actions.openTerminalPanel}
+                            onToggleLeftSidebar={workspaceGeometry.toggleLeft}
+                            onToggleRightPanel={actions.toggleRightPanel}
+                          />
+                        </DebugProfiler>
+
+                        {hasRuntimeReadyWorkspace && (
+                          <PublishDialog
+                            open={publishDialog.open}
+                            workspaceId={publishDialog.workspaceId}
+                            initialIntent={publishDialog.initialIntent}
+                            runtimeBlockedReason={runtimeBlockedReason}
+                            repoDefaultBranch={publishRepoDefaultBranch}
+                            onClose={actions.closePublishDialog}
+                            onIntentChange={actions.openPublishDialog}
+                            onViewPr={actions.handlePublishDialogViewPr}
+                          />
+                        )}
+                      </>
+                    ) : (
+                      <HomeNextScreen />
+                    )}
+                  </div>
+                </div>
+
+                <WorkspaceShellRightRail
+                  visible={hasWorkspaceShell && !hasLaunchIntentOnlyShell}
+                  open={rightPanelOpen}
+                  width={rightPanelWidth}
+                  onSeparatorMouseDown={onRightSeparatorDown}
+                  workspaceId={selectedWorkspaceId}
+                  workspaceUiKey={workspaceUiKey}
+                  isWorkspaceReady={hasRuntimeReadyWorkspace}
+                  shouldKeepContentVisible={shouldKeepRuntimePanelsVisible}
+                  isCloudWorkspaceSelected={isCloudWorkspaceSelected}
+                  state={rightPanelState}
+                  repoSettingsHref={repoSettingsHref ?? buildSettingsHref({
+                    section: "repo",
+                    repo: null,
+                  })}
+                  onStateChange={layout.setRightPanelState}
+                  terminalActivationRequest={terminalActivationRequest}
+                  focusRequestToken={rightPanelFocusRequestToken}
+                  onTerminalActivationRequestHandled={handleTerminalActivationRequestHandled}
+                />
+              </div>
+
+              {hasWorkspaceShell && !hasLaunchIntentOnlyShell ? (
+                <ContentSearchPill
+                  rightPanelOpen={rightPanelOpen}
+                  rightPanelWidth={rightPanelWidth}
+                />
+              ) : null}
+            </div>
+        </WorkspaceHeaderTabsViewModelProvider>
+      </WorkspaceShellActionsProvider>
+    </DebugProfiler>
+  );
+}

@@ -1,0 +1,362 @@
+import {
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
+import type { PendingPromptEntry, TranscriptState } from "@anyharness/sdk";
+import { Button } from "#product/primitives/Button";
+import { AgentOriginPromptReceipt } from "#product/components/workspace/chat/transcript/AgentOriginPromptReceipt";
+import { UserMessage } from "#product/components/workspace/chat/transcript/UserMessage";
+import {
+  TURN_ITEM_GAP_CLASS,
+  TurnAssistantActionRow,
+  TurnShell,
+} from "#product/components/workspace/chat/transcript/TranscriptTurnChrome";
+import {
+  isAgentSessionProvenance,
+  isSubagentWakeProvenance,
+} from "#product/domain/chats/subagents/provenance";
+import {
+  resolveOptimisticPromptActionTime,
+} from "#product/domain/chats/transcript/transcript-action-time";
+import {
+  resolvePendingPromptTrailingStatus,
+} from "#product/components/workspace/chat/transcript/TranscriptTurnChrome";
+import { isReceiptPendingEntry } from "#product/lib/domain/workspaces/creation/creation-receipt";
+import { useAttendedPendingWorkspaceEntry } from "#product/hooks/workspaces/derived/use-pending-workspace-entries";
+import type { PromptOutboxEntry } from "#product/domain/sessions/intents/session-intent-model";
+import type { SessionViewState } from "#product/domain/sessions/activity";
+
+const OUTBOX_ACCEPTED_RUNNING_ECHO_GRACE_MS = 15_000;
+
+interface OutboxActionHandlers {
+  retryPrompt: (clientPromptId: string) => void;
+  dismissPrompt: (clientPromptId: string) => void;
+}
+
+export function TranscriptPendingPromptRow({
+  activeSessionId,
+  transcript,
+  workspaceId,
+  rowIndex,
+  prompt,
+  outboxEntry,
+  optimisticTrailingStatus,
+  outboxActions,
+  sessionViewState,
+  workspaceReceipt = null,
+}: {
+  activeSessionId: string;
+  transcript: TranscriptState;
+  workspaceId: string | null;
+  rowIndex: number;
+  prompt: PendingPromptEntry;
+  outboxEntry: PromptOutboxEntry | null;
+  optimisticTrailingStatus: ReactNode;
+  outboxActions: OutboxActionHandlers;
+  sessionViewState: SessionViewState;
+  /**
+   * The workspace-creation receipt, when this row hosts it (no turn exists
+   * yet to host it inline — see `hostsWorkspaceReceipt` on the row model).
+   * While the workspace is still being created, "Thinking"/"Sending…" are
+   * false claims (no session exists yet to think or send), so the receipt —
+   * with its own spinner and failure states — owns the frontier slot alone.
+   * Once creation settles, the working status renders below the receipt: a
+   * session now exists and the prompt is genuinely in flight.
+   */
+  workspaceReceipt?: ReactNode;
+}) {
+  // While the creation itself is in flight the receipt (with its own spinner)
+  // is the only honest frontier content. Once the workspace materializes the
+  // receipt settles into a static "Worktree created" line, yet it keeps this
+  // frontier slot until the first turn lands — through worktree setup, agent
+  // boot, and prompt dispatch. Without the working status below it, that
+  // whole window reads as a dead session (PRO-119).
+  const creationInFlight = isReceiptPendingEntry(useAttendedPendingWorkspaceEntry());
+  if (outboxEntry?.deliveryState === "failed_before_dispatch") {
+    return (
+      <TurnShell isFirst={rowIndex === 0}>
+        <OutboxPromptFailureLine
+          entry={outboxEntry}
+          outboxActions={outboxActions}
+        />
+      </TurnShell>
+    );
+  }
+
+  const workingStatus = outboxEntry
+    ? <OutboxPromptTrailingStatus entry={outboxEntry} sessionViewState={sessionViewState} />
+    : optimisticTrailingStatus;
+  const trailingStatus = workspaceReceipt
+    ? (
+      <>
+        {workspaceReceipt}
+        {!creationInFlight && workingStatus}
+      </>
+    )
+    : workingStatus;
+  const outboxControls = outboxEntry
+    ? renderOutboxPromptControls(outboxEntry, outboxActions)
+    : null;
+
+  return (
+    <TurnShell isFirst={rowIndex === 0}>
+      {/* Keep in sync with TranscriptTurnRow's turn column gap so the
+          pending-prompt → turn handoff does not shift content. */}
+      <div className={`flex flex-col ${TURN_ITEM_GAP_CLASS}`}>
+        <PendingPromptBody
+          activeSessionId={activeSessionId}
+          prompt={prompt}
+          transcript={transcript}
+          workspaceId={workspaceId}
+        />
+        {/* Recovery controls are completion-adjacent UI. Keep them above the
+            frontier so their disappearance cannot move the frontier/footer. */}
+        {outboxControls}
+        {trailingStatus && (
+          <div data-pending-frontier>{trailingStatus}</div>
+        )}
+        {/* The frontier above owns Thinking just as it later owns a live tool
+            or prose. This fixed footer remains empty until it can swap to the
+            completed copy/timestamp controls without moving the frontier. */}
+        <TurnAssistantActionRow content={null} reserveSlot />
+      </div>
+    </TurnShell>
+  );
+}
+
+function PendingPromptBody({
+  activeSessionId,
+  prompt,
+  transcript,
+  workspaceId,
+}: {
+  activeSessionId: string;
+  prompt: PendingPromptEntry;
+  transcript: TranscriptState;
+  workspaceId: string | null;
+}) {
+  if (
+    isSubagentWakeProvenance(prompt.promptProvenance)
+    || isAgentSessionProvenance(prompt.promptProvenance)
+  ) {
+    return (
+      <AgentOriginPromptReceipt
+        provenance={prompt.promptProvenance}
+        exactMessage={prompt.text}
+        transcript={transcript}
+        parentSessionId={activeSessionId}
+        workspaceId={workspaceId}
+      />
+    );
+  }
+  return (
+    <UserMessage
+      sessionId={activeSessionId}
+      content={prompt.text}
+      contentParts={prompt.contentParts}
+      showCopyButton
+      timestampLabel={resolveOptimisticPromptActionTime(prompt)}
+    />
+  );
+}
+
+function OutboxPromptTrailingStatus({
+  entry,
+  sessionViewState,
+}: {
+  entry: PromptOutboxEntry | null;
+  sessionViewState: SessionViewState;
+}) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (entry?.deliveryState !== "accepted_running" || sessionViewState !== "working") {
+      return;
+    }
+    const acceptedAtMs = resolveOutboxAcceptedRunningReferenceMs(entry);
+    const remainingMs = OUTBOX_ACCEPTED_RUNNING_ECHO_GRACE_MS - (Date.now() - acceptedAtMs);
+    if (remainingMs <= 0) {
+      setNowMs(Date.now());
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      setNowMs(Date.now());
+    }, remainingMs + 50);
+    return () => window.clearTimeout(timeout);
+  }, [
+    entry?.acceptedAt,
+    entry?.clientPromptId,
+    entry?.createdAt,
+    entry?.deliveryState,
+    entry?.dispatchedAt,
+    sessionViewState,
+  ]);
+
+  return <>{resolveOutboxPromptTrailingStatus(entry, sessionViewState, nowMs)}</>;
+}
+
+function resolveOutboxPromptTrailingStatus(
+  entry: PromptOutboxEntry | null,
+  sessionViewState: SessionViewState,
+  nowMs = Date.now(),
+): ReactNode {
+  if (!entry) {
+    return null;
+  }
+  switch (entry.deliveryState) {
+    case "failed_before_dispatch":
+      return formatOutboxPromptFailureLabel(entry);
+    case "unknown_after_dispatch":
+      return (
+        <OutboxPromptPlainStatus
+          label="Waiting for confirmation…"
+          detail={entry.errorMessage}
+        />
+      );
+    case "preparing":
+    case "dispatching":
+    case "waiting_for_session":
+      return resolvePendingPromptTrailingStatus(entry.createdAt, "working", true);
+    case "accepted_running":
+      if (sessionViewState === "needs_input") {
+        return resolvePendingPromptTrailingStatus(entry.createdAt, sessionViewState, false);
+      }
+      if (sessionViewState !== "working") {
+        return <OutboxPromptPlainStatus label="Waiting for transcript…" />;
+      }
+      if (hasAcceptedRunningOutboxEntryExceededEchoGrace(entry, nowMs)) {
+        return <OutboxPromptPlainStatus label="Waiting for transcript…" />;
+      }
+      return resolvePendingPromptTrailingStatus(entry.createdAt, sessionViewState, false);
+    default:
+      return null;
+  }
+}
+
+function OutboxPromptPlainStatus({
+  label,
+  detail,
+}: {
+  label: string;
+  detail?: string | null;
+}) {
+  return (
+    <div className="flex min-h-5 items-end py-1 text-chat font-normal text-muted-foreground">
+      <span className="min-w-0 truncate" title={detail ?? undefined}>
+        {label}
+        {detail ? <span className="text-muted-foreground/70"> · {detail}</span> : null}
+      </span>
+    </div>
+  );
+}
+
+function OutboxPromptFailureLine({
+  entry,
+  outboxActions,
+}: {
+  entry: PromptOutboxEntry;
+  outboxActions: OutboxActionHandlers;
+}) {
+  const canRetry = !isSessionClosedFailure(entry.errorMessage);
+
+  return (
+    <div className="flex justify-end">
+      <div
+        data-chat-transcript-ignore
+        className="inline-flex max-w-[77%] items-center gap-2 overflow-hidden whitespace-nowrap text-chat font-normal text-muted-foreground/80"
+      >
+        <span className="min-w-0 truncate" title={formatOutboxPromptFailureLabel(entry)}>
+          <span className="text-destructive/80">Not sent</span>
+          {entry.errorMessage ? (
+            <span>: {entry.errorMessage}</span>
+          ) : null}
+        </span>
+        <span className="inline-flex shrink-0 items-center gap-1">
+          {canRetry && (
+            <OutboxTextActionButton
+              label="Retry"
+              onClick={() => outboxActions.retryPrompt(entry.clientPromptId)}
+            />
+          )}
+          <OutboxTextActionButton
+            label="Dismiss"
+            onClick={() => outboxActions.dismissPrompt(entry.clientPromptId)}
+          />
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// The single retry/dismiss affordance grammar for outbox rows: quiet inline
+// text buttons (text-ui-sm chrome) that underline on focus — no outline
+// buttons, no second style in the same file.
+function OutboxTextActionButton({
+  label,
+  onClick,
+}: {
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      data-chat-transcript-ignore
+      className="h-auto rounded-none px-1 py-0 text-chat font-normal text-muted-foreground hover:bg-transparent active:bg-transparent hover:text-foreground focus-visible:ring-0 focus-visible:underline"
+      onClick={onClick}
+    >
+      {label}
+    </Button>
+  );
+}
+
+function formatOutboxPromptFailureLabel(entry: PromptOutboxEntry): string {
+  return entry.errorMessage ? `Not sent: ${entry.errorMessage}` : "Not sent";
+}
+
+function isSessionClosedFailure(message: string | null): boolean {
+  return message
+    ?.replace(/\s+/gu, " ")
+    .trim()
+    .toLowerCase() === "session is closed";
+}
+
+function hasAcceptedRunningOutboxEntryExceededEchoGrace(
+  entry: PromptOutboxEntry,
+  nowMs: number,
+): boolean {
+  return nowMs - resolveOutboxAcceptedRunningReferenceMs(entry)
+    >= OUTBOX_ACCEPTED_RUNNING_ECHO_GRACE_MS;
+}
+
+function resolveOutboxAcceptedRunningReferenceMs(entry: PromptOutboxEntry): number {
+  const parsed = Date.parse(entry.acceptedAt ?? entry.dispatchedAt ?? entry.createdAt);
+  return Number.isFinite(parsed) ? parsed : Date.now();
+}
+
+function renderOutboxPromptControls(
+  entry: PromptOutboxEntry,
+  actions: OutboxActionHandlers,
+): ReactNode {
+  // failed_before_dispatch never reaches here — TranscriptPendingPromptRow
+  // returns the compact OutboxPromptFailureLine (with its own inline retry/
+  // dismiss) before rendering the prompt body + controls.
+  if (entry.deliveryState !== "unknown_after_dispatch") {
+    return null;
+  }
+  return (
+    <div className="flex justify-end gap-2">
+      <OutboxTextActionButton
+        label="Retry"
+        onClick={() => actions.retryPrompt(entry.clientPromptId)}
+      />
+      <OutboxTextActionButton
+        label="Dismiss"
+        onClick={() => actions.dismissPrompt(entry.clientPromptId)}
+      />
+    </div>
+  );
+}

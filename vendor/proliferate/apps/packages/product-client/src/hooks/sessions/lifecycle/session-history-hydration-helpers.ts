@@ -1,0 +1,298 @@
+import type {
+  SessionEventEnvelope,
+  TranscriptState,
+} from "@anyharness/sdk";
+import { resolveSessionStatus } from "#product/domain/sessions/activity";
+import {
+  finishOrCancelMeasurementOperation,
+  logLatency,
+  markOperationForNextCommit,
+  recordMeasurementMetric,
+  recordMeasurementWorkflowStep,
+} from "#product/lib/infra/measurement/measurement-port";
+import { fetchSessionHistory } from "#product/lib/access/anyharness/session-runtime";
+import { recordSessionHistoryRehydrateFailure } from "#product/lib/infra/diagnostics/renderer-diagnostic-migrations";
+import { safeRendererErrorName } from "#product/lib/infra/diagnostics/renderer-diagnostic-values";
+import type {
+  MeasurementOperationId,
+  MeasurementOperationKind,
+  MeasurementSurface,
+  MeasurementWorkflowStep,
+} from "#product/lib/domain/telemetry/debug-measurement-catalog";
+import { scheduleAfterNextPaint } from "#product/lib/infra/scheduling/schedule-after-next-paint";
+import { batchSessionStoreWrites } from "#product/lib/infra/scheduling/react-batching";
+import { activityFromTranscript } from "#product/lib/domain/sessions/directory/directory-activity";
+import { buildSessionStreamBatchPatch } from "#product/lib/domain/sessions/stream-patch";
+import { useSessionDirectoryStore } from "#product/stores/sessions/session-directory-store";
+import { useSessionIngestStore } from "#product/stores/sessions/session-ingest-store";
+import { useSessionIntentStore } from "#product/stores/sessions/session-intent-store";
+import { useSessionTranscriptStore } from "#product/stores/sessions/session-transcript-store";
+import type { SessionRuntimeRecord } from "#product/stores/sessions/session-types";
+
+export const SESSION_APPLY_MEASUREMENT_SURFACES: readonly MeasurementSurface[] = [
+  "session-transcript-pane",
+  "transcript-list",
+  "chat-surface",
+  "header-tabs",
+  "workspace-sidebar",
+  "global-header",
+  "chat-composer-dock",
+];
+export const SESSION_HISTORY_APPLY_MAX_DURATION_MS = 30_000;
+
+type FetchSessionHistoryArgs = Parameters<typeof fetchSessionHistory>[1];
+
+export interface SessionHistoryHydrationOptions {
+  afterSeq?: number;
+  beforeSeq?: number;
+  limit?: number;
+  turnLimit?: number;
+  replace?: boolean;
+  requestHeaders?: HeadersInit;
+  measurementOperationId?: MeasurementOperationId | null;
+  timeoutMs?: number;
+  isCurrent?: () => boolean;
+}
+
+/**
+ * Assembles the `fetchSessionHistory` request options. Only the fields the
+ * caller actually supplied are included so a bare open still sends just the
+ * connection handles.
+ */
+export function buildSessionHistoryFetchArgs(params: {
+  afterSeq?: number;
+  beforeSeq?: number;
+  limit?: number;
+  turnLimit?: number;
+  requestHeaders?: HeadersInit;
+  measurementOperationId?: MeasurementOperationId | null;
+  timeoutMs?: number;
+  cloudClient: NonNullable<FetchSessionHistoryArgs>["cloudClient"];
+}): FetchSessionHistoryArgs {
+  const { afterSeq, beforeSeq, limit, turnLimit, requestHeaders } = params;
+  const { measurementOperationId, timeoutMs, cloudClient } = params;
+  if (
+    afterSeq == null && beforeSeq == null && limit == null && turnLimit == null
+    && !requestHeaders && !measurementOperationId && timeoutMs == null
+  ) {
+    return { cloudClient };
+  }
+  return {
+    ...(afterSeq != null ? { afterSeq } : {}),
+    ...(beforeSeq != null ? { beforeSeq } : {}),
+    ...(limit != null ? { limit } : {}),
+    ...(turnLimit != null ? { turnLimit } : {}),
+    ...(requestHeaders ? { requestHeaders } : {}),
+    ...(measurementOperationId ? { measurementOperationId } : {}),
+    ...(timeoutMs != null ? { timeoutMs } : {}),
+    cloudClient,
+  };
+}
+
+export function isSessionHistoryTimeoutAbort(error: unknown): boolean {
+  return error instanceof Error
+    && error.name === "AbortError"
+    && error.message === "Session history request timed out";
+}
+
+// A failed rehydrate reports to three places at once: the renderer diagnostics
+// port, the latency log, and (in dev only) the console. Timeout aborts are
+// expected under slow networks, so they stay out of the console.
+export function reportSessionHistoryRehydrateFailure(input: {
+  error: unknown;
+  sessionId: string;
+  operationId?: MeasurementOperationId | null;
+  afterSeq?: number | null;
+  beforeSeq?: number | null;
+  limit?: number | null;
+  turnLimit?: number | null;
+  timeoutMs?: number | null;
+  elapsedMs: number;
+}): void {
+  const errorName = safeRendererErrorName(input.error);
+  const timeoutAbort = isSessionHistoryTimeoutAbort(input.error);
+  recordSessionHistoryRehydrateFailure({
+    sessionId: input.sessionId,
+    operationId: input.operationId ?? undefined,
+    errorName,
+    timeoutAbort,
+  });
+  if (import.meta.env.DEV && !timeoutAbort) {
+    console.debug("[session-runtime] session history rehydrate failed", input.error);
+  }
+  logLatency("session.history.rehydrate.failed", {
+    sessionId: input.sessionId,
+    afterSeq: input.afterSeq ?? null,
+    beforeSeq: input.beforeSeq ?? null,
+    limit: input.limit ?? null,
+    turnLimit: input.turnLimit ?? null,
+    timeoutMs: input.timeoutMs ?? null,
+    elapsedMs: input.elapsedMs,
+    errorName,
+  });
+}
+
+export function resolveHistoryApplyOperationKind(input: {
+  afterSeq?: number;
+  beforeSeq?: number;
+}): MeasurementOperationKind {
+  if (input.beforeSeq != null) {
+    return "session_history_older_chunk";
+  }
+  if (input.afterSeq != null) {
+    return "session_history_tail_reconcile";
+  }
+  return "session_history_initial_hydrate";
+}
+
+export function finishStandaloneApplyOperation(
+  operationId: MeasurementOperationId | null,
+  reason: "completed" | "aborted" | "error_sanitized",
+  waitForPaint = false,
+): void {
+  if (!operationId) {
+    return;
+  }
+  const finish = () => finishOrCancelMeasurementOperation(operationId, reason);
+  if (waitForPaint) {
+    scheduleAfterNextPaint(finish);
+    return;
+  }
+  finish();
+}
+
+export function markSessionApplyForNextCommit(operationId: MeasurementOperationId | null | undefined): void {
+  if (!operationId) {
+    return;
+  }
+  markOperationForNextCommit(operationId, SESSION_APPLY_MEASUREMENT_SURFACES);
+}
+
+export function applyHistoryStateToStores(
+  sessionId: string,
+  currentRecord: SessionRuntimeRecord,
+  nextState: {
+    events: SessionEventEnvelope[];
+    transcript: TranscriptState;
+    /**
+     * Envelopes this apply introduced (fetched tail/page or full replacement).
+     * The outbox reconciles against them so prompt echoes applied through the
+     * history path still tombstone their intents — without this, an intent
+     * whose echo arrives via rehydrate stays `accepted_running` and wrongly
+     * queues every later prompt.
+     */
+    reconcileEnvelopes: readonly SessionEventEnvelope[];
+  },
+): void {
+  const appendedEnvelopes = nextState.events
+    .filter((envelope) => envelope.seq > currentRecord.transcript.lastSeq)
+    .sort((left, right) => left.seq - right.seq);
+  const historyTransitionPatch = buildSessionStreamBatchPatch({
+    slot: currentRecord,
+    nextTranscript: nextState.transcript,
+    envelopes: appendedEnvelopes,
+  });
+  const executionSummary = historyTransitionPatch.executionSummary !== undefined
+    ? historyTransitionPatch.executionSummary
+    : currentRecord.executionSummary;
+  const status = historyTransitionPatch.status ?? resolveSessionStatus(currentRecord.status, {
+    executionSummary,
+    streamConnectionState: currentRecord.streamConnectionState,
+    transcript: nextState.transcript,
+  });
+  batchSessionStoreWrites(() => {
+    useSessionTranscriptStore.getState().patchEntry(sessionId, {
+      events: nextState.events,
+      transcript: nextState.transcript,
+    });
+    useSessionIntentStore.getState().reconcileFromEnvelopes(
+      sessionId,
+      nextState.reconcileEnvelopes,
+      nextState.transcript,
+    );
+    useSessionDirectoryStore.getState().patchEntry(sessionId, {
+      status,
+      executionSummary,
+      modeId: nextState.transcript.currentModeId ?? currentRecord.modeId,
+      activity: activityFromTranscript(nextState.transcript, {
+        status,
+        executionSummary,
+      }),
+    });
+    // Without this write, a gap refill applied through the history path leaves
+    // the ingest store stale/gapped forever (markCurrentIfContiguous no-ops
+    // while gapAfterSeq is set), forcing a redundant full refetch on every
+    // reopen.
+    useSessionIngestStore.getState().applyHistoryHydration(
+      sessionId,
+      nextState.transcript.lastSeq,
+    );
+  });
+}
+
+export function recordHistoryStateCounts(
+  operationId: MeasurementOperationId | null | undefined,
+  phase: "before" | "after",
+  events: readonly SessionEventEnvelope[],
+  transcript: TranscriptState,
+): void {
+  if (!operationId) {
+    return;
+  }
+  const isBefore = phase === "before";
+  recordMeasurementMetric({
+    type: "state_count",
+    operationId,
+    target: isBefore ? "session.history.events_before" : "session.history.events_after",
+    count: events.length,
+  });
+  recordMeasurementMetric({
+    type: "state_count",
+    operationId,
+    target: isBefore ? "session.history.turns_before" : "session.history.turns_after",
+    count: transcript.turnOrder.length,
+  });
+  recordMeasurementMetric({
+    type: "state_count",
+    operationId,
+    target: isBefore ? "session.history.items_before" : "session.history.items_after",
+    count: Object.keys(transcript.itemsById).length,
+  });
+}
+
+export function recordHistoryApplyStepMetrics(
+  operationIds: readonly MeasurementOperationId[],
+  input: {
+    phase: "replay" | "store" | "mount_subagents";
+    startedAt: number;
+    count?: number;
+  },
+): void {
+  for (const operationId of operationIds) {
+    if (input.phase === "replay") {
+      recordMeasurementMetric({
+        type: "reducer",
+        category: "session.events.list",
+        operationId,
+        durationMs: performance.now() - input.startedAt,
+        count: input.count ?? 0,
+      });
+    } else if (input.phase === "store") {
+      recordMeasurementMetric({
+        type: "store",
+        category: "session.events.list",
+        operationId,
+        durationMs: performance.now() - input.startedAt,
+      });
+    }
+    recordMeasurementWorkflowStep({
+      operationId,
+      step: `session.history.${input.phase}` as MeasurementWorkflowStep,
+      startedAt: input.startedAt,
+      ...(input.count !== undefined ? { count: input.count } : {}),
+    });
+    if (input.phase === "mount_subagents") {
+      markSessionApplyForNextCommit(operationId);
+    }
+  }
+}

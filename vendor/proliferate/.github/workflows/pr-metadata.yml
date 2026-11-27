@@ -1,0 +1,59 @@
+name: PR Metadata
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
+      - labeled
+      - unlabeled
+      - ready_for_review
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  validate-pr-metadata:
+    name: Validate PR title and labels
+    runs-on: ubuntu-latest
+    steps:
+      # pull_request_target runs with write-capable secrets, so only trusted
+      # base-revision code is checked out and executed. The untrusted PR head is
+      # never checked out; changed paths come from the GitHub API instead.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Collect changed paths
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require("node:fs");
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+            fs.writeFileSync(
+              "changed-files.json",
+              JSON.stringify(files.map((file) => file.filename)),
+            );
+            core.info(`Collected ${files.length} changed path(s).`);
+
+      - name: Validate metadata
+        run: >-
+          node scripts/ci-cd/validate-pr-metadata.mjs
+          --event "$GITHUB_EVENT_PATH"
+          --changed-files-json changed-files.json

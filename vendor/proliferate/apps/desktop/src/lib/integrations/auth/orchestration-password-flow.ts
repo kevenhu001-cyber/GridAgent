@@ -1,0 +1,62 @@
+import { isDevAuthBypassed } from "@proliferate/product-client/internal/lib/domain/auth/auth-mode";
+import type { AuthSignInSource, AuthTelemetryProvider } from "@proliferate/product-client/internal/lib/domain/telemetry/events";
+import { checkControlPlaneReachable } from "@proliferate/product-client/internal/lib/access/cloud/health";
+import { getProliferateApiBaseUrl } from "@/lib/infra/proliferate-api";
+import { AuthRequestError } from "@/lib/integrations/auth/proliferate-auth";
+import { signInWithDesktopPassword } from "@/lib/integrations/auth/proliferate-auth-password";
+import {
+  applyAuthenticatedState,
+  applyDevBypassState,
+  clearPublishedAuthIssue,
+  toError,
+  type AuthOrchestrationDeps,
+} from "./orchestration-effects";
+
+export interface PasswordSignInCredentials {
+  email: string;
+  password: string;
+}
+
+// Direct email/password sign-in. Unlike the browser-based provider flows there
+// is no PKCE handoff: the server returns the desktop token pair in one call.
+export async function signInWithPassword(
+  credentials: PasswordSignInCredentials,
+  deps: AuthOrchestrationDeps,
+): Promise<{
+  provider: AuthTelemetryProvider;
+  source: AuthSignInSource;
+}> {
+  // A retry after a failed attempt must not leave the previous attempt's
+  // published issue rendered underneath the new one.
+  clearPublishedAuthIssue(deps);
+
+  if (isDevAuthBypassed()) {
+    applyDevBypassState(deps);
+    return {
+      provider: "dev_bypass",
+      source: "dev_bypass",
+    };
+  }
+
+  const controlPlaneReachable = await checkControlPlaneReachable(getProliferateApiBaseUrl());
+  if (!controlPlaneReachable) {
+    throw new AuthRequestError(
+      "Signing in requires a reachable control plane.",
+      503,
+    );
+  }
+
+  try {
+    const session = await signInWithDesktopPassword(
+      credentials.email,
+      credentials.password,
+    );
+    await applyAuthenticatedState(deps, session);
+    return {
+      provider: "password",
+      source: "password_form",
+    };
+  } catch (error) {
+    throw toError(error, "Sign-in failed");
+  }
+}

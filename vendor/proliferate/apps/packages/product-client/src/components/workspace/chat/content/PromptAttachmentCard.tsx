@@ -1,0 +1,275 @@
+import { FileIcon } from "#product/primitives/icons/workspace";
+import { Link2, X } from "#product/primitives/icons/core";
+import { Spinner } from "#product/primitives/Spinner";
+import { Button } from "#product/primitives/Button";
+import type { PromptDisplayAttachmentPart } from "#product/domain/chats/composer/prompt-display-parts";
+import { FileTreeEntryIcon } from "#product/components/workspace/files/file-icons";
+import { PlanReferenceAttachmentCard } from "#product/components/workspace/chat/content/PlanReferenceAttachmentCard";
+import { usePromptAttachmentUrl } from "#product/hooks/access/anyharness/sessions/use-prompt-attachment-url";
+import "./PromptAttachmentCard.css";
+
+type PromptAttachmentCardVariant = "transcript" | "compact" | "draft";
+type NonPlanPromptAttachmentPart = Exclude<
+  PromptDisplayAttachmentPart,
+  { type: "plan_reference" }
+>;
+
+export function PromptAttachmentCard({
+  sessionId,
+  part,
+  variant,
+  onRemove,
+  onOpenAttachment,
+}: {
+  sessionId: string | null;
+  part: PromptDisplayAttachmentPart;
+  variant: PromptAttachmentCardVariant;
+  onRemove?: (id: string) => void;
+  onOpenAttachment?: (part: Exclude<
+    PromptDisplayAttachmentPart,
+    { type: "link" | "plan_reference" }
+  >) => void;
+}) {
+  if (part.type === "plan_reference") {
+    return (
+      <PlanReferenceAttachmentCard
+        plan={part}
+        variant={variant}
+        onRemove={onRemove}
+      />
+    );
+  }
+
+  const isDraft = variant === "draft";
+  const isCompact = variant === "compact";
+  const isImage = part.type === "image";
+  // Local path references carry no uploaded bytes, so there is nothing to preview.
+  const canPreview = (part.type === "image" || part.type === "file") && !part.pathKind;
+  const metadata = [attachmentTypeLabel(part), part.sizeLabel]
+    .filter(Boolean)
+    .join(" · ");
+  const title = [part.name, metadata, part.type === "link" ? part.uri : null]
+    .filter(Boolean)
+    .join("\n");
+  const className = promptAttachmentCardClassName({ isCompact, isDraft, isImage });
+
+  return (
+    <div className={className} data-telemetry-mask title={title}>
+      {canPreview && onOpenAttachment ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          data-chat-transcript-ignore
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenAttachment(part);
+          }}
+          className="absolute inset-0 z-0 h-full w-full rounded-inherit bg-transparent p-0 hover:bg-hover focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
+          aria-label={`Preview ${part.name}`}
+        />
+      ) : null}
+      <div className={isImage
+        ? "pointer-events-none relative z-10 size-full overflow-hidden rounded-inherit"
+        : "pointer-events-none relative z-10 flex size-full min-w-0 items-center gap-2 p-2 pr-7"}
+      >
+        <PromptAttachmentPreview
+          sessionId={sessionId}
+          part={part}
+          variant={variant}
+        />
+        {!isImage ? (
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-chat font-medium text-foreground">
+              {part.name}
+            </div>
+            {metadata ? (
+              <div className="truncate text-ui-sm leading-4 text-muted-foreground">
+                {metadata}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+      {isDraft && onRemove && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          data-chat-transcript-ignore
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onRemove(part.id);
+          }}
+          // The disc floats over arbitrary thumbnail content, so every state
+          // keeps an opaque background-colored fill: the ghost variant's
+          // translucent hover/active washes would let a light image bleed
+          // through behind the glyph. Hover feedback comes from the rim.
+          className="prompt-card-remove pointer-events-none absolute top-1 right-1 z-20 size-5 rounded-full border border-border bg-background/95 p-0 text-foreground opacity-0 shadow-popover transition-opacity hover:bg-background hover:border-foreground/30 active:bg-background"
+          aria-label={`Remove ${part.name}`}
+        >
+          <X className="icon-compact" />
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function PromptAttachmentPreview({
+  sessionId,
+  part,
+  variant,
+}: {
+  sessionId: string | null;
+  part: NonPlanPromptAttachmentPart;
+  variant: PromptAttachmentCardVariant;
+}) {
+  if (part.type === "image") {
+    return (
+      <PromptImagePreview
+        sessionId={sessionId}
+        attachmentId={part.attachmentId}
+        objectUrl={part.objectUrl}
+        name={part.name}
+        variant={variant}
+      />
+    );
+  }
+
+  return (
+    <div className={previewFrameClassName(variant)}>
+      {part.type === "link" && !part.pathKind ? (
+        <Link2 className="icon-paired text-muted-foreground" />
+      ) : (
+        <FileTreeEntryIcon
+          name={part.name}
+          path={part.uri ?? part.name}
+          kind={part.pathKind ?? "file"}
+          className="icon-paired text-muted-foreground [font-size:var(--text-chat)]"
+        />
+      )}
+    </div>
+  );
+}
+
+function PromptImagePreview({
+  sessionId,
+  attachmentId,
+  objectUrl,
+  name,
+  variant,
+}: {
+  sessionId: string | null;
+  attachmentId?: string;
+  objectUrl?: string | null;
+  name: string;
+  variant: PromptAttachmentCardVariant;
+}) {
+  const image = usePromptAttachmentUrl(
+    objectUrl ? null : sessionId,
+    objectUrl ? null : attachmentId,
+  );
+  const src = objectUrl ?? image.data ?? null;
+
+  if (src) {
+    return (
+      <img
+        src={src}
+        alt={name}
+        className={imageClassName(variant)}
+      />
+    );
+  }
+
+  return (
+    <div
+      className={previewFrameClassName(variant)}
+      title={image.isError ? "Image unavailable" : "Loading image"}
+    >
+      {image.isLoading ? (
+        <Spinner className="icon-paired text-muted-foreground" />
+      ) : (
+        <FileIcon className="icon-paired text-muted-foreground [font-size:var(--text-chat)]" />
+      )}
+    </div>
+  );
+}
+
+function previewFrameClassName(variant: PromptAttachmentCardVariant): string {
+  return variant === "compact"
+    ? "flex size-7 shrink-0 items-center justify-center rounded-md bg-muted/70"
+    : "flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted/70";
+}
+
+function imageClassName(variant: PromptAttachmentCardVariant): string {
+  return variant === "compact"
+    ? "size-full object-cover opacity-90"
+    : "size-full object-cover";
+}
+
+function attachmentTypeLabel(part: PromptDisplayAttachmentPart): string {
+  switch (part.type) {
+    case "image":
+      return "Image";
+    case "file":
+      if (part.pathKind === "directory") {
+        return "Folder";
+      }
+      if (part.source === "paste") {
+        return "Pasted text";
+      }
+      return attachmentExtension(part.name)
+        ?? (part.pathKind === "file" ? "File" : "Text file");
+    case "link":
+      if (part.pathKind === "directory") {
+        return "Folder";
+      }
+      if (part.pathKind === "file") {
+        return attachmentExtension(part.name) ?? "File";
+      }
+      return "Link";
+    case "plan_reference":
+      return "Plan";
+  }
+}
+
+function attachmentExtension(name: string): string | null {
+  const extension = name.split(".").pop();
+  return extension && extension !== name ? extension.toUpperCase() : null;
+}
+
+function promptAttachmentCardClassName(args: {
+  isCompact: boolean;
+  isDraft: boolean;
+  isImage: boolean;
+}): string {
+  // Recorded exclusion (DESIGN_SYSTEM.md § UI-conformance review, check 1) for
+  // the four shells in this function: `Card` clips its children
+  // (`overflow-clip`, load-bearing for its sticky header) and these cards
+  // deliberately overflow — the remove affordance and the drag ghost sit
+  // outside the frame, which is why every string carries `overflow-visible`.
+  // Its two fills also cannot express the /70 and /80 alphas the compact and
+  // default tones use. Folding these in needs a review ruling on `Card`, not a
+  // call-site override of its clipping.
+  if (args.isImage) {
+    const size = args.isDraft
+      ? "prompt-card-image-draft"
+      : args.isCompact
+        ? "size-10"
+        : "size-14";
+    const border = args.isDraft ? "border-border" : "border-border/60";
+    return `prompt-card relative inline-flex ${size} shrink-0 overflow-visible rounded-lg border ${border} bg-card text-foreground`;
+  }
+  if (args.isDraft) {
+    return "prompt-card prompt-card-file relative inline-flex max-w-full shrink-0 overflow-visible rounded-lg border border-border bg-card text-foreground";
+  }
+  if (args.isCompact) {
+    return "prompt-card relative inline-flex h-10 w-44 max-w-full shrink-0 overflow-visible rounded-lg border border-border/50 bg-card/70 text-foreground";
+  }
+  return "prompt-card relative inline-flex h-11 w-48 max-w-full shrink-0 overflow-visible rounded-lg border border-border/60 bg-card/80 text-foreground";
+}

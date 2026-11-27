@@ -1,0 +1,40 @@
+{
+  "name": "@proliferate/web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:built": "pnpm --filter @proliferate/product-client build && vite",
+    "build": "pnpm --filter @proliferate/product-client build && tsc -p tsconfig.json && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "pnpm --filter @proliferate/product-client build && tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@proliferate/cloud-sdk": "workspace:*",
+    "@proliferate/cloud-sdk-react": "workspace:*",
+    "@proliferate/design": "workspace:*",
+    "@proliferate/product-client": "workspace:*",
+    "@sentry/react": "^10.70.0",
+    "@tanstack/react-query": "^5.101.4",
+    "posthog-js": "1.386.8",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "react-router-dom": "^7"
+  },
+  "devDependencies": {
+    "@sentry/vite-plugin": "^5.4.0",
+    "@tailwindcss/vite": "^4",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "~19.2.18",
+    "@types/react-dom": "~19.2.4",
+    "@vitejs/plugin-react": "^4",
+    "jsdom": "^29.1.1",
+    "tailwindcss": "^4",
+    "typescript": "^5.7",
+    "vite": "^6",
+    "vitest": "^3.2.7"
+  }
+}

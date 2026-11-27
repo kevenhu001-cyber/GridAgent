@@ -1,0 +1,168 @@
+import { useMemo } from "react";
+import type { RepoEnvironmentResponse } from "@proliferate/cloud-sdk";
+import {
+  buildCoreCloudEnvironmentSaveRequest,
+  cloudEnvironmentStatusPresentation,
+  type CloudEnvironmentStatusPresentation,
+} from "#product/domain/environments/cloud-environments";
+import {
+  useCloudEnvironmentDraft,
+  type CloudEnvironmentDraft,
+} from "#product/hooks/settings/workflows/use-cloud-environment-draft";
+import { useCloudEnvironmentAccess } from "#product/hooks/access/cloud/use-cloud-environment-access";
+import { useCloudRepoBranches } from "#product/hooks/access/cloud/use-cloud-repo-branches";
+import {
+  isCloudRepository,
+  type CloudSettingsRepositoryEntry,
+  type SettingsRepositoryEntry,
+} from "#product/lib/domain/settings/repositories";
+import { useRepoPreferencesStore } from "#product/stores/preferences/repo-preferences-store";
+import { useAppCapabilities } from "#product/hooks/capabilities/derived/use-app-capabilities";
+import { useProductAuthStatus } from "#product/hooks/auth/facade/use-product-auth";
+
+export interface CloudRepoEnvironmentEditor {
+  /** Non-null when the repository is GitHub-backed (cloud-capable). */
+  cloudRepository: CloudSettingsRepositoryEntry | null;
+  /** Saved cloud environment config, null while unconfigured. */
+  cloudEnvironment: RepoEnvironmentResponse | null;
+  draft: CloudEnvironmentDraft;
+  status: CloudEnvironmentStatusPresentation;
+  saving: boolean;
+  saveError: string | null;
+  repoConfigsLoading: boolean;
+  authority: ReturnType<typeof useCloudEnvironmentAccess>["authority"];
+  branches: {
+    defaultBranch: string | null;
+    names: readonly string[];
+    loading: boolean;
+    error: string | null;
+  };
+  save: () => Promise<void>;
+  /** The same PUT the add flow uses, seeded from local prefs. */
+  setUp: () => Promise<void>;
+}
+
+/**
+ * Shared Cloud-context plumbing for the repo-scope settings pages: saved
+ * environment lookup, GitHub App authority, branch list, the shared draft
+ * state machine, and the save/set-up mutations.
+ */
+export function useCloudRepoEnvironmentEditor({
+  repository,
+  cloudActive,
+}: {
+  repository: SettingsRepositoryEntry;
+  cloudActive: boolean;
+}): CloudRepoEnvironmentEditor {
+  const cloudRepository = isCloudRepository(repository) ? repository : null;
+  const capabilities = useAppCapabilities();
+  const signedIn = useProductAuthStatus() === "authenticated";
+  const operatorReady =
+    capabilities.githubRepositoryAccessStatus === "ready"
+    && capabilities.managedCloudStatus === "ready";
+  const cloudQueryEnabled = cloudActive && signedIn && operatorReady && cloudRepository !== null;
+  const {
+    repositoryConfigs: repoConfigs,
+    authority,
+    saveEnvironment,
+  } = useCloudEnvironmentAccess({
+    repositoryConfigsEnabled: cloudQueryEnabled,
+    repository: {
+      gitOwner: cloudRepository?.gitOwner,
+      gitRepoName: cloudRepository?.gitRepoName,
+    },
+    authorityEnabled: cloudQueryEnabled,
+  });
+  const branchesQuery = useCloudRepoBranches(
+    cloudRepository?.gitOwner ?? "",
+    cloudRepository?.gitRepoName ?? "",
+    cloudQueryEnabled,
+  );
+  const localSetupScript = useRepoPreferencesStore(
+    (state) => state.repoConfigs[repository.sourceRoot]?.setupScript ?? "",
+  );
+  const localRunCommand = useRepoPreferencesStore(
+    (state) => state.repoConfigs[repository.sourceRoot]?.runCommand ?? "",
+  );
+  const seed = useMemo(
+    () => ({ setupScript: localSetupScript, runCommand: localRunCommand }),
+    [localRunCommand, localSetupScript],
+  );
+
+  const cloudEnvironment = useMemo(() => {
+    if (!cloudRepository) {
+      return null;
+    }
+    const repo = repoConfigs.data?.repositories.find((candidate) =>
+      candidate.gitProvider === "github"
+      && candidate.gitOwner === cloudRepository.gitOwner
+      && candidate.gitRepoName === cloudRepository.gitRepoName
+    );
+    return repo?.environments.find((environment) => environment.kind === "cloud") ?? null;
+  }, [cloudRepository, repoConfigs.data?.repositories]);
+
+  const draft = useCloudEnvironmentDraft({
+    environment: cloudEnvironment,
+    sourceKey: repository.sourceRoot,
+    seed,
+  });
+  // TODO(cull-trail): the server-side materialization ledger is deleted, so
+  // saved environments no longer carry a materialization status; the domain
+  // presentation keeps the parameter for the environments list plumbing.
+  const status = cloudEnvironmentStatusPresentation({
+    configured: cloudEnvironment !== null,
+    dirty: draft.dirty,
+    materializationStatus: null,
+  });
+
+  async function save() {
+    if (!cloudRepository) {
+      return;
+    }
+    const response = await saveEnvironment.mutateAsync({
+      gitOwner: cloudRepository.gitOwner,
+      gitRepoName: cloudRepository.gitRepoName,
+      body: buildCoreCloudEnvironmentSaveRequest({
+        defaultBranch: draft.defaultBranch,
+        setupScript: draft.setupScript,
+        runCommand: draft.runCommand,
+      }),
+    });
+    draft.reset(response);
+  }
+
+  async function setUp() {
+    if (!cloudRepository) {
+      return;
+    }
+    await saveEnvironment.mutateAsync({
+      gitOwner: cloudRepository.gitOwner,
+      gitRepoName: cloudRepository.gitRepoName,
+      body: buildCoreCloudEnvironmentSaveRequest({
+        defaultBranch: null,
+        setupScript: seed.setupScript,
+        runCommand: seed.runCommand,
+      }),
+    });
+    void repoConfigs.refetch();
+  }
+
+  return {
+    cloudRepository,
+    cloudEnvironment,
+    draft,
+    status,
+    saving: saveEnvironment.isPending,
+    saveError: saveEnvironment.error?.message ?? null,
+    repoConfigsLoading: repoConfigs.isLoading,
+    authority,
+    branches: {
+      defaultBranch: branchesQuery.data?.defaultBranch ?? null,
+      names: branchesQuery.data?.branches ?? [],
+      loading: branchesQuery.isLoading,
+      error: branchesQuery.error instanceof Error ? branchesQuery.error.message : null,
+    },
+    save,
+    setUp,
+  };
+}

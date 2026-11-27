@@ -1,0 +1,48 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { CSSProperties } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+import { SkeletonBlock } from "#product/primitives/Skeleton";
+
+const testDir = dirname(fileURLToPath(import.meta.url));
+const productCss = readFileSync(
+  resolve(testDir, "../../../../../packages/design/src/css/product.css"),
+  "utf8",
+);
+
+describe("SkeletonBlock", () => {
+  it("renders the shared shimmer block instead of the opacity pulse", () => {
+    const html = renderToStaticMarkup(<SkeletonBlock className="h-2 w-24" />);
+
+    expect(html).toContain("skeleton-shimmer");
+    expect(html).not.toContain("animate-pulse");
+    expect(html).toContain("h-2 w-24");
+    expect(html).toContain('aria-hidden="true"');
+  });
+
+  it("supports --shimmer-delay row staggering via style", () => {
+    const html = renderToStaticMarkup(
+      <SkeletonBlock style={{ "--shimmer-delay": "120ms" } as CSSProperties} />,
+    );
+
+    expect(html).toContain("--shimmer-delay:120ms");
+  });
+});
+
+describe("skeleton shimmer css contract", () => {
+  it("sweeps via transform with a per-row delay knob (compositor-only)", () => {
+    const start = productCss.indexOf("@keyframes skeleton-shimmer-sweep");
+    expect(start).toBeGreaterThan(-1);
+    const section = productCss.slice(start, productCss.indexOf("}", productCss.indexOf(".skeleton-shimmer::before")));
+
+    expect(productCss).toContain(".skeleton-shimmer::before");
+    expect(section).toContain("transform: translateX(-100%)");
+    expect(section).toContain("transform: translateX(100%)");
+    /* activity-motion */
+    expect(section).toContain("animation-delay: var(--shimmer-delay, 0s)");
+    expect(section).not.toContain("background-position");
+    expect(section).not.toContain("steps(");
+  });
+});

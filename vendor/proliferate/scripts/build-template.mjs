@@ -1,0 +1,682 @@
+#!/usr/bin/env node
+
+import { Template, defaultBuildLogger, waitForTimeout } from "e2b";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+const REPO_ROOT = path.join(import.meta.dirname, "..");
+const RUNTIME_SDK_PACKAGE_JSON = path.join(REPO_ROOT, "anyharness", "sdk", "package.json");
+// A release version segment: semver, optionally with a pre-release suffix.
+const RUNTIME_VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+// Versions that indicate an unstamped/degraded build; a production runtime
+// bundle must never carry any of these.
+const PLACEHOLDER_VERSIONS = new Set(["0.0.0", "0.0.0-dev", "0.1.0"]);
+const FULL_GIT_SHA_RE = /^[0-9a-f]{40}$/;
+const DEFAULT_BUILD_TARGET = "x86_64-unknown-linux-musl";
+const DEV_TEMPLATE_CPU_COUNT = 4;
+const DEV_TEMPLATE_MEMORY_MB = 8192;
+const DEFAULT_BINARY_PATH = path.join(
+  REPO_ROOT,
+  "target",
+  DEFAULT_BUILD_TARGET,
+  "release",
+  "anyharness"
+);
+const DEFAULT_WORKER_BINARY_PATH = path.join(
+  REPO_ROOT,
+  "target",
+  DEFAULT_BUILD_TARGET,
+  "release",
+  "proliferate-worker"
+);
+const DEFAULT_SUPERVISOR_BINARY_PATH = path.join(
+  REPO_ROOT,
+  "target",
+  DEFAULT_BUILD_TARGET,
+  "release",
+  "proliferate-supervisor"
+);
+const GIT_CREDENTIAL_HELPER_PATH = path.join(
+  REPO_ROOT,
+  "install",
+  "proliferate-git-credential-helper"
+);
+// Keep this aligned with the cloud-supported agent set in server/proliferate/constants/cloud.py.
+const TEMPLATE_AGENT_KINDS = ["claude", "codex"];
+
+function printUsage() {
+  console.log(`Build a runtime-ready E2B dev template for local Proliferate development.
+
+Usage:
+  node scripts/build-template.mjs [--alias <name>] [--name <template-family>] [--tag <tag>] [--publish] [--binary <path>] [--worker-binary <path>] [--supervisor-binary <path>] [--rebuild-runtime]
+
+Options:
+  --alias <name>         Override the local template alias.
+  --name <family>        Override the template family name. Accepts bare names
+                         like proliferate-runtime-cloud or public refs like
+                         team-slug/proliferate-runtime-cloud.
+  --tag <tag>            Assign a tag to the built template. Repeatable.
+  --publish              Publish the template family after a successful build.
+                         Requires E2B_TEAM_ID and the E2B CLI on PATH.
+  --binary <path>        Use an existing Linux AnyHarness binary.
+  --worker-binary <path> Use an existing Linux Proliferate Worker binary.
+  --supervisor-binary <path>
+                         Use an existing Linux Proliferate Supervisor binary.
+  --rebuild-runtime      Rebuild the Linux runtime bundle before template build.
+  --help                 Show this help text.
+
+Examples:
+  node scripts/build-template.mjs
+  node scripts/build-template.mjs --rebuild-runtime
+  node scripts/build-template.mjs --alias proliferate-runtime-dev-pablo
+  node scripts/build-template.mjs --name team-slug/proliferate-runtime-cloud --tag sha-1234567 --publish
+  node scripts/build-template.mjs --binary target/x86_64-unknown-linux-musl/release/anyharness --worker-binary target/x86_64-unknown-linux-musl/release/proliferate-worker --supervisor-binary target/x86_64-unknown-linux-musl/release/proliferate-supervisor
+`);
+}
+
+function parseArgs(argv) {
+  let alias;
+  let name;
+  let binary;
+  let workerBinary;
+  let supervisorBinary;
+  const tags = [];
+  let publish = false;
+  let rebuildRuntime = false;
+  let help = false;
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    switch (arg) {
+      case "--alias":
+        alias = argv[i + 1];
+        i += 1;
+        break;
+      case "--name":
+        name = argv[i + 1];
+        i += 1;
+        break;
+      case "--tag":
+        tags.push(argv[i + 1]);
+        i += 1;
+        break;
+      case "--publish":
+        publish = true;
+        break;
+      case "--binary":
+        binary = argv[i + 1];
+        i += 1;
+        break;
+      case "--worker-binary":
+        workerBinary = argv[i + 1];
+        i += 1;
+        break;
+      case "--supervisor-binary":
+        supervisorBinary = argv[i + 1];
+        i += 1;
+        break;
+      case "--rebuild-runtime":
+        rebuildRuntime = true;
+        break;
+      case "--help":
+      case "-h":
+        help = true;
+        break;
+      default:
+        throw new Error(`Unknown argument: ${arg}`);
+    }
+  }
+
+  if (alias && name) {
+    throw new Error("Use either --alias or --name, not both.");
+  }
+  if (rebuildRuntime && binary) {
+    throw new Error("Use either --binary or --rebuild-runtime, not both.");
+  }
+  if (rebuildRuntime && (workerBinary || supervisorBinary)) {
+    throw new Error("Use either explicit bundle binaries or --rebuild-runtime, not both.");
+  }
+  if (publish && !name) {
+    throw new Error("--publish requires --name so the shared template family is explicit.");
+  }
+
+  return { alias, name, binary, workerBinary, supervisorBinary, tags, publish, rebuildRuntime, help };
+}
+
+function sanitizeUsername(value) {
+  const sanitized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return sanitized || "user";
+}
+
+function defaultAlias() {
+  const username = process.env.USER || os.userInfo().username || "user";
+  return `proliferate-runtime-dev-${sanitizeUsername(username)}`;
+}
+
+function normalizeTemplateFamily(input) {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    throw new Error("Template name cannot be empty.");
+  }
+
+  const [familyPart, inlineTag] = trimmed.split(":");
+  if (!familyPart) {
+    throw new Error(`Invalid template name: ${input}`);
+  }
+
+  const segments = familyPart.split("/");
+  const bareName = segments.at(-1);
+  if (!bareName) {
+    throw new Error(`Invalid template name: ${input}`);
+  }
+  if (!/^[a-z0-9_-]+$/.test(bareName)) {
+    throw new Error(
+      `Template family must contain only lowercase letters, numbers, dashes, or underscores: ${bareName}`
+    );
+  }
+
+  const publicFamily = segments.length > 1 ? familyPart : null;
+  return {
+    bareName,
+    inlineTag: inlineTag?.trim() || null,
+    publicFamily,
+  };
+}
+
+function candidateBinaryPaths({ binaryName, envNames, defaultPath }) {
+  const envOverride =
+    envNames.map((name) => process.env[name]).find(Boolean) || "";
+  const candidates = [];
+  if (envOverride) {
+    candidates.push(path.resolve(envOverride));
+  }
+  candidates.push(
+    defaultPath,
+    path.join(REPO_ROOT, "target", "x86_64-unknown-linux-gnu", "release", binaryName)
+  );
+  if (process.platform === "linux") {
+    candidates.push(path.join(REPO_ROOT, "target", "release", binaryName));
+  }
+  return candidates;
+}
+
+function resolveBinaryPath({ explicitBinaryPath, binaryName, displayName, envNames, defaultPath }) {
+  if (explicitBinaryPath) {
+    const resolved = path.resolve(explicitBinaryPath);
+    if (!fs.existsSync(resolved)) {
+      throw new Error(`Binary not found at ${resolved}`);
+    }
+    return resolved;
+  }
+
+  const candidates = candidateBinaryPaths({ binaryName, envNames, defaultPath });
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  throw new Error(
+    [
+      `${displayName} Linux binary was not found.`,
+      `Expected one of: ${candidates.join(", ")}`,
+      `Build it first with \`make cloud-runtime-build\` or \`cargo zigbuild --release --target x86_64-unknown-linux-musl -p ${binaryName}\``,
+      "or rerun this script with --rebuild-runtime.",
+    ].join(" ")
+  );
+}
+
+/**
+ * The canonical runtime version, read from `anyharness/sdk/package.json`. This
+ * is the single source the immutable-template build stamps into all three
+ * binaries; a missing or placeholder version is rejected so a production build
+ * can never fall back to a crate's stale `0.1.0`.
+ */
+function readCanonicalRuntimeVersion() {
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(RUNTIME_SDK_PACKAGE_JSON, "utf8"));
+  } catch (error) {
+    throw new Error(
+      `Failed to read runtime version from ${RUNTIME_SDK_PACKAGE_JSON}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+  const version = typeof parsed.version === "string" ? parsed.version.trim() : "";
+  if (!RUNTIME_VERSION_RE.test(version) || PLACEHOLDER_VERSIONS.has(version)) {
+    throw new Error(
+      `anyharness/sdk/package.json version is missing or non-release: ${JSON.stringify(parsed.version)}`
+    );
+  }
+  return version;
+}
+
+/**
+ * The full 40-character SHA of the exact checked-out revision. Prefers an
+ * explicit `PROLIFERATE_BUILD_SHA`/`GIT_SHA` (set by the deploy workflow), else
+ * resolves `git rev-parse HEAD`. A missing or malformed SHA is rejected so the
+ * stamped Sentry release always carries a deterministic commit.
+ */
+function resolveBuildSha() {
+  const explicit = (process.env.PROLIFERATE_BUILD_SHA || process.env.GIT_SHA || "")
+    .trim()
+    .toLowerCase();
+  let resolved = explicit;
+  if (!resolved) {
+    const gitResult = spawnSync("git", ["rev-parse", "HEAD"], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+    });
+    resolved = (gitResult.stdout || "").trim().toLowerCase();
+  }
+  if (!FULL_GIT_SHA_RE.test(resolved)) {
+    throw new Error(
+      `Could not resolve a full 40-character git SHA for the runtime build (got ${JSON.stringify(resolved)}).`
+    );
+  }
+  return resolved;
+}
+
+function rebuildRuntimeBundle() {
+  const buildVersion = readCanonicalRuntimeVersion();
+  const buildSha = resolveBuildSha();
+  console.log(
+    `Rebuilding Linux runtime bundle artifacts (version ${buildVersion}, sha ${buildSha.slice(0, 12)})...`
+  );
+  const result = spawnSync(
+    "cargo",
+    [
+      "zigbuild",
+      "--release",
+      "--target",
+      DEFAULT_BUILD_TARGET,
+      "-p",
+      "anyharness",
+      "-p",
+      "proliferate-worker",
+      "-p",
+      "proliferate-supervisor",
+    ],
+    {
+      cwd: REPO_ROOT,
+      stdio: "inherit",
+      // Stamp the exact version + SHA into all three binaries in this single
+      // build (build.rs reads these and fails closed on a malformed SHA).
+      env: {
+        ...process.env,
+        PROLIFERATE_BUILD_VERSION: buildVersion,
+        PROLIFERATE_BUILD_SHA: buildSha,
+      },
+    }
+  );
+
+  if (result.error) {
+    throw new Error(`Failed to start cargo zigbuild: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    throw new Error(`cargo zigbuild failed with exit code ${result.status}`);
+  }
+  for (const expectedPath of [
+    DEFAULT_BINARY_PATH,
+    DEFAULT_WORKER_BINARY_PATH,
+    DEFAULT_SUPERVISOR_BINARY_PATH,
+  ]) {
+    if (!fs.existsSync(expectedPath)) {
+      throw new Error(`Expected rebuilt binary at ${expectedPath}`);
+    }
+  }
+  return {
+    anyharness: DEFAULT_BINARY_PATH,
+    worker: DEFAULT_WORKER_BINARY_PATH,
+    supervisor: DEFAULT_SUPERVISOR_BINARY_PATH,
+  };
+}
+
+function prepareTemplateContext(bundlePaths) {
+  const contextDir = fs.mkdtempSync(path.join(os.tmpdir(), "proliferate-e2b-template-"));
+  fs.copyFileSync(bundlePaths.anyharness, path.join(contextDir, "anyharness"));
+  fs.copyFileSync(bundlePaths.worker, path.join(contextDir, "proliferate-worker"));
+  fs.copyFileSync(bundlePaths.supervisor, path.join(contextDir, "proliferate-supervisor"));
+  fs.copyFileSync(
+    GIT_CREDENTIAL_HELPER_PATH,
+    path.join(contextDir, "proliferate-git-credential-helper")
+  );
+  return contextDir;
+}
+
+// The AnyHarness runtime home the serving runtime resolves at launch time:
+// the launch script exports HOME=/home/user (SandboxRuntimeContext.base_env,
+// integrations/sandbox/e2b.py) and `serve` receives no --runtime-home, so it
+// resolves default_runtime_home() = $HOME/.proliferate/anyharness. The bake
+// must install agents into this exact home — a Docker/E2B build-stage
+// `USER user` does NOT update $HOME, so an unpinned bake-time install-agents
+// can resolve a different default home, leaving agents where the serving
+// runtime never looks (readiness reports InstallRequired and
+// GET /v1/agents/{kind}/launch-options returns no observed options → empty
+// composer picker in fresh cloud sandboxes).
+const ANYHARNESS_RUNTIME_HOME = "/home/user/.proliferate/anyharness";
+
+function buildAgentInstallCommand(agentKinds) {
+  const agentArgs = agentKinds.map((agentKind) => `--agent ${agentKind}`).join(" ");
+  return [
+    "set -eu",
+    `echo "Preinstalling agents: ${agentKinds.join(", ")}"`,
+    "export HOME=/home/user",
+    `/home/user/anyharness install-agents --runtime-home ${ANYHARNESS_RUNTIME_HOME} ${agentArgs}`,
+  ].join(" && ");
+}
+
+function buildTemplateDefinition() {
+  let template = Template({ fileContextPath: "." })
+    .fromBaseImage()
+    .setUser("root")
+    .aptInstall(
+      [
+        "bash",
+        "build-essential",
+        "ca-certificates",
+        "curl",
+        "git",
+        "libssl-dev",
+        "pkg-config",
+        "xz-utils",
+      ],
+      { noInstallRecommends: true }
+    )
+    .runCmd('bash -lc "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -"')
+    .aptInstall("nodejs", { noInstallRecommends: true })
+    .runCmd(
+      [
+        "rm -f /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx",
+        "ln -sf /usr/bin/node /usr/local/bin/node",
+        "ln -sf /usr/bin/npm /usr/local/bin/npm",
+        "ln -sf /usr/bin/npx /usr/local/bin/npx",
+      ],
+      { user: "root" }
+    )
+    .setUser("user")
+    .runCmd(
+      'bash -lc "curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal"'
+    )
+    .setUser("root")
+    .runCmd(
+      [
+        "ln -sf /home/user/.cargo/bin/cargo /usr/local/bin/cargo",
+        "ln -sf /home/user/.cargo/bin/rustc /usr/local/bin/rustc",
+        "ln -sf /home/user/.cargo/bin/rustup /usr/local/bin/rustup",
+      ],
+      { user: "root" }
+    )
+    .copy("anyharness", "/home/user/anyharness", { mode: 0o755 })
+    .makeDir("/home/user/.proliferate/bin", { mode: 0o755, user: "user" })
+    .copy("proliferate-worker", "/home/user/.proliferate/bin/proliferate-worker", {
+      mode: 0o755,
+    })
+    .copy("proliferate-supervisor", "/home/user/.proliferate/bin/proliferate-supervisor", {
+      mode: 0o755,
+    })
+    .copy(
+      "proliferate-git-credential-helper",
+      "/home/user/.proliferate/bin/proliferate-git-credential-helper",
+      {
+        mode: 0o700,
+      }
+    )
+    .runCmd(
+      "chown user:user /home/user/.proliferate/bin/proliferate-git-credential-helper && chmod 700 /home/user/.proliferate/bin/proliferate-git-credential-helper",
+      { user: "root" }
+    )
+    .makeDir("/home/user/workspace", { mode: 0o755, user: "user" })
+    .setUser("user")
+    .runCmd(
+      [
+        "node --version",
+        "npm --version",
+        "cargo --version",
+        "git --version",
+        "/home/user/anyharness --version",
+        "/home/user/.proliferate/bin/proliferate-worker --version",
+        "/home/user/.proliferate/bin/proliferate-supervisor --version",
+      ].join(" && ")
+    );
+
+  template = template.runCmd(buildAgentInstallCommand(TEMPLATE_AGENT_KINDS));
+
+  return template
+    .runCmd(
+      [
+        "rm -rf /home/user/.cargo/git /home/user/.cargo/registry /home/user/.npm/_cacache",
+        "rm -rf /home/user/.proliferate/anyharness/agents/codex/agent_process/source-build-target",
+      ].join(" && ")
+    )
+    .setWorkdir("/home/user/workspace")
+    .setReadyCmd(waitForTimeout(0));
+}
+
+function runCommandOrThrow(command, args, options = {}) {
+  const result = spawnSync(command, args, {
+    ...options,
+    env: options.env || process.env,
+    encoding: "utf8",
+  });
+
+  if (result.error) {
+    throw new Error(`Failed to start ${command}: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    const stderr = result.stderr?.trim();
+    const stdout = result.stdout?.trim();
+    const detail = [stderr, stdout].filter(Boolean).join("\n");
+    throw new Error(
+      `${command} ${args.join(" ")} failed with exit code ${result.status}${detail ? `:\n${detail}` : ""}`
+    );
+  }
+  return result.stdout ?? "";
+}
+
+function listTemplates({ apiKey, teamId }) {
+  const args = ["template", "list", "--format", "json"];
+  if (teamId) {
+    args.push("--team", teamId);
+  }
+  const output = runCommandOrThrow("e2b", args, {
+    env: { ...process.env, E2B_API_KEY: apiKey },
+  });
+  return JSON.parse(output);
+}
+
+function findTemplateRecord(records, bareName) {
+  return records.find((record) => {
+    const aliases = Array.isArray(record.aliases) ? record.aliases : [];
+    const names = Array.isArray(record.names) ? record.names : [];
+    return (
+      aliases.includes(bareName) ||
+      names.includes(bareName) ||
+      names.some((name) => name.endsWith(`/${bareName}`))
+    );
+  });
+}
+
+function resolvePublicFamily(record, bareName, fallbackPublicFamily) {
+  const names = Array.isArray(record?.names) ? record.names : [];
+  return (
+    names.find((name) => name.endsWith(`/${bareName}`)) ||
+    fallbackPublicFamily ||
+    bareName
+  );
+}
+
+function ensureTemplatePublished({ bareName, publicFamily, apiKey, teamId }) {
+  if (!teamId) {
+    throw new Error("E2B_TEAM_ID is required when using --publish.");
+  }
+
+  const beforePublish = findTemplateRecord(listTemplates({ apiKey, teamId }), bareName);
+  if (!beforePublish?.public) {
+    const args = ["template", "publish", bareName, "--yes", "--team", teamId];
+    runCommandOrThrow("e2b", args, {
+      env: { ...process.env, E2B_API_KEY: apiKey },
+      stdio: "inherit",
+    });
+  }
+
+  const publishedRecord = findTemplateRecord(listTemplates({ apiKey, teamId }), bareName);
+  if (!publishedRecord?.public) {
+    throw new Error(`Template family ${bareName} did not become public after publish.`);
+  }
+
+  return resolvePublicFamily(publishedRecord, bareName, publicFamily);
+}
+
+async function main() {
+  let parsed;
+  try {
+    parsed = parseArgs(process.argv.slice(2));
+  } catch (error) {
+    console.error(`ERROR: ${error.message}`);
+    console.error("");
+    printUsage();
+    process.exit(1);
+  }
+
+  if (parsed.help) {
+    printUsage();
+    return;
+  }
+
+  const apiKey = process.env.E2B_API_KEY;
+  if (!apiKey) {
+    console.error("ERROR: E2B_API_KEY environment variable is required");
+    process.exit(1);
+  }
+
+  const explicitName = parsed.name || parsed.alias;
+  const normalizedName = explicitName ? normalizeTemplateFamily(explicitName) : null;
+  const templateName = normalizedName?.bareName || defaultAlias();
+  const buildTags = [...new Set([normalizedName?.inlineTag, ...parsed.tags].filter(Boolean))];
+  const teamId = process.env.E2B_TEAM_ID || "";
+  const bundlePaths = parsed.rebuildRuntime
+    ? rebuildRuntimeBundle()
+    : {
+        anyharness: resolveBinaryPath({
+          explicitBinaryPath: parsed.binary,
+          binaryName: "anyharness",
+          displayName: "AnyHarness",
+          envNames: ["CLOUD_RUNTIME_SOURCE_BINARY_PATH", "E2B_RUNTIME_SOURCE_BINARY_PATH"],
+          defaultPath: DEFAULT_BINARY_PATH,
+        }),
+        worker: resolveBinaryPath({
+          explicitBinaryPath: parsed.workerBinary,
+          binaryName: "proliferate-worker",
+          displayName: "Proliferate Worker",
+          envNames: ["CLOUD_WORKER_SOURCE_BINARY_PATH"],
+          defaultPath: DEFAULT_WORKER_BINARY_PATH,
+        }),
+        supervisor: resolveBinaryPath({
+          explicitBinaryPath: parsed.supervisorBinary,
+          binaryName: "proliferate-supervisor",
+          displayName: "Proliferate Supervisor",
+          envNames: ["CLOUD_SUPERVISOR_SOURCE_BINARY_PATH"],
+          defaultPath: DEFAULT_SUPERVISOR_BINARY_PATH,
+        }),
+      };
+  const binaryStats = Object.fromEntries(
+    Object.entries(bundlePaths).map(([name, binaryPath]) => [name, fs.statSync(binaryPath)])
+  );
+
+  console.log("=== Proliferate E2B Dev Template Builder ===");
+  console.log(`Template name: ${templateName}`);
+  if (buildTags.length > 0) {
+    console.log(`Tags: ${buildTags.join(", ")}`);
+  }
+  for (const [name, binaryPath] of Object.entries(bundlePaths)) {
+    console.log(
+      `${name} binary: ${binaryPath} (${(binaryStats[name].size / 1024 / 1024).toFixed(1)} MB)`
+    );
+  }
+  console.log(
+    `Template resources: ${DEV_TEMPLATE_CPU_COUNT} CPU / ${DEV_TEMPLATE_MEMORY_MB} MB`
+  );
+  if (parsed.publish) {
+    console.log(`Publish: yes (team ${teamId || "MISSING"})`);
+  }
+  console.log("");
+  console.log("Building template...");
+
+  const contextDir = prepareTemplateContext(bundlePaths);
+  try {
+    const previousCwd = process.cwd();
+    process.chdir(contextDir);
+    try {
+      const template = buildTemplateDefinition();
+      const buildInfo = await Template.build(template, templateName, {
+        apiKey,
+        cpuCount: DEV_TEMPLATE_CPU_COUNT,
+        memoryMB: DEV_TEMPLATE_MEMORY_MB,
+        tags: buildTags,
+        onBuildLogs: defaultBuildLogger(),
+      });
+
+      let publicFamily = null;
+      if (parsed.publish) {
+        publicFamily = ensureTemplatePublished({
+          bareName: templateName,
+          publicFamily: normalizedName?.publicFamily || null,
+          apiKey,
+          teamId,
+        });
+      }
+
+      console.log("");
+      console.log("Template build completed.");
+      console.log(`Template: ${buildInfo.name}`);
+      console.log(`Template ID: ${buildInfo.templateId}`);
+      console.log(`Build ID: ${buildInfo.buildId}`);
+      if (buildInfo.tags.length > 0) {
+        console.log(`Built tags: ${buildInfo.tags.join(", ")}`);
+      }
+      console.log("");
+
+      const privateRefs = buildInfo.tags.length > 0
+        ? buildInfo.tags.map((tag) => `${templateName}:${tag}`)
+        : [templateName];
+      console.log("Built template refs:");
+      for (const ref of privateRefs) {
+        console.log(`- ${ref}`);
+      }
+
+      if (publicFamily) {
+        console.log("");
+        console.log("Published public template refs:");
+        const publicRefs = buildInfo.tags.length > 0
+          ? buildInfo.tags.map((tag) => `${publicFamily}:${tag}`)
+          : [publicFamily];
+        for (const ref of publicRefs) {
+          console.log(`- ${ref}`);
+        }
+      }
+
+      if (!parsed.name) {
+        console.log("");
+        console.log("Set this in your local server env before creating a cloud workspace:");
+        console.log(`E2B_TEMPLATE_NAME=${privateRefs[0]}`);
+      }
+    } finally {
+      process.chdir(previousCwd);
+    }
+  } finally {
+    fs.rmSync(contextDir, { recursive: true, force: true });
+  }
+}
+
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+});

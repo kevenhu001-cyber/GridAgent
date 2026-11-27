@@ -1,0 +1,617 @@
+{
+  "schemaVersion": 1,
+  "registryVersion": "2026-08-20.1",
+  "generatedAt": "2026-07-17T03:08:00Z",
+  "agents": [
+    {
+      "kind": "claude",
+      "authCardinality": "single",
+      "displayName": "Claude",
+      "description": "Claude Code through claude-agent-acp.",
+      "native": {
+        "install": {
+          "kind": "direct_binary",
+          "latestVersionUrl": "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest",
+          "binaryUrlTemplate": "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/{version}/{platform}/{binary}",
+          "platformMap": {
+            "macos_arm64": "darwin-arm64",
+            "macos_x64": "darwin-x64",
+            "linux_x64": "linux-x64",
+            "linux_arm64": "linux-arm64",
+            "windows_x64": "win32-x64",
+            "windows_arm64": "win32-arm64"
+          },
+          "binaryNameMap": {
+            "macos_arm64": "claude",
+            "macos_x64": "claude",
+            "linux_x64": "claude",
+            "linux_arm64": "claude",
+            "windows_x64": "claude.exe",
+            "windows_arm64": "claude.exe"
+          }
+        }
+      },
+      "agentProcess": {
+        "install": {
+          "kind": "managed_npm_package",
+          "package": "git+https://github.com/proliferate-ai/claude-agent-acp.git#65f6205329daea4a521ee0f0c042722b0feb306a",
+          "packageSubdir": null,
+          "sourceBuildBinaryName": null,
+          "executableRelpath": "node_modules/.bin/claude-agent-acp"
+        }
+      },
+      "launch": {
+        "executableName": "claude-agent-acp",
+        "defaultArgs": []
+      },
+      "auth": {
+        "readinessPolicy": "any_required_slot",
+        "slots": [
+          {
+            "id": "anthropic",
+            "label": "Anthropic",
+            "credentialProviderIds": [
+              "anthropic"
+            ],
+            "requiredForReadiness": true,
+            "envVars": [
+              "ANTHROPIC_AUTH_TOKEN",
+              "ANTHROPIC_API_KEY",
+              {
+                "name": "CLAUDE_CODE_USE_BEDROCK",
+                "kind": "flag"
+              },
+              "AWS_BEARER_TOKEN_BEDROCK"
+            ],
+            "discovery": "claude",
+            "materialization": {
+              "gatewayEnv": {
+                "protocolFacade": "anthropic",
+                "protectedEnvKeys": [
+                  "ANTHROPIC_AUTH_TOKEN",
+                  "ANTHROPIC_BASE_URL",
+                  "ANTHROPIC_CUSTOM_HEADERS",
+                  "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"
+                ],
+                "supportEnvKeys": []
+              },
+              "syncedFiles": {
+                "protectedEnvKeys": [],
+                "allowedFilePaths": [
+                  ".claude/.credentials.json",
+                  ".claude.json"
+                ],
+                "cleanupFilePaths": [
+                  ".claude/.credentials.json",
+                  ".claude.json"
+                ]
+              }
+            },
+            "login": {
+              "label": "Log in with Claude",
+              "command": {
+                "program": "claude",
+                "args": [
+                  "/login"
+                ]
+              },
+              "reusesUserState": true,
+              "message": null
+            },
+            "discoveryKinds": [
+              "claude-config-api-key",
+              "claude-oauth-creds",
+              "claude-keychain",
+              "claude-oauth-account",
+              "aws-credential-chain"
+            ]
+          },
+          {
+            "id": "gateway",
+            "label": "Proliferate Gateway",
+            "credentialProviderIds": [],
+            "requiredForReadiness": false,
+            "envVars": [],
+            "discovery": "none",
+            "materialization": {}
+          }
+        ]
+      },
+      "docsUrl": "https://code.claude.com/docs",
+      "providerConfig": [
+        {
+          "kind": "aws_bedrock",
+          "label": "AWS Bedrock",
+          "envVars": [
+            {
+              "name": "CLAUDE_CODE_USE_BEDROCK",
+              "kind": "flag"
+            },
+            "AWS_BEARER_TOKEN_BEDROCK",
+            "AWS_REGION"
+          ]
+        },
+        {
+          "kind": "azure_openai",
+          "label": "Azure AI Foundry",
+          "envVars": [
+            {
+              "name": "CLAUDE_CODE_USE_FOUNDRY",
+              "kind": "flag"
+            },
+            "ANTHROPIC_FOUNDRY_RESOURCE",
+            "ANTHROPIC_FOUNDRY_BASE_URL",
+            "ANTHROPIC_FOUNDRY_API_KEY",
+            "ANTHROPIC_FOUNDRY_AUTH_TOKEN"
+          ],
+          "pending": true,
+          "pendingReason": "Foundry translation built but live-unverified: the renderer's endpoint->ANTHROPIC_FOUNDRY_RESOURCE derivation and API_KEY/AUTH_TOKEN alternative are unverified judgment calls awaiting a Gate 4 live claude x azure_openai run (R5/R11: the cell stays excluded from supported kinds until then)."
+        }
+      ],
+      "selfUpdateNeutralization": {
+        "mechanism": "env",
+        "detail": "claude-code's native auto-updater is disabled by the DISABLE_AUTOUPDATER=1 env var, injected into the managed launcher so the managed lane is the only version authority.",
+        "env": [
+          {
+            "name": "DISABLE_AUTOUPDATER",
+            "value": "1"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "codex",
+      "authCardinality": "single",
+      "displayName": "Codex",
+      "description": "OpenAI Codex through codex-acp.",
+      "native": {
+        "install": {
+          "kind": "tarball_release",
+          "latestUrlTemplate": "https://github.com/openai/codex/releases/latest/download/codex-{target}.tar.gz",
+          "versionedUrlTemplate": "https://github.com/openai/codex/releases/download/{version}/codex-{target}.tar.gz",
+          "expectedBinaryTemplate": "codex-{target}",
+          "platformMap": {
+            "macos_arm64": "aarch64-apple-darwin",
+            "macos_x64": "x86_64-apple-darwin",
+            "linux_x64": "x86_64-unknown-linux-musl",
+            "linux_arm64": "aarch64-unknown-linux-musl",
+            "windows_x64": "x86_64-pc-windows-msvc.exe",
+            "windows_arm64": "aarch64-pc-windows-msvc.exe"
+          }
+        }
+      },
+      "agentProcess": {
+        "install": {
+          "kind": "managed_npm_package",
+          "package": "git+https://github.com/proliferate-ai/codex-acp.git#219738c9dd4205d3c70ab950f5f22cc3b28103c4",
+          "packageSubdir": null,
+          "sourceBuildBinaryName": null,
+          "executableRelpath": "node_modules/.bin/codex-acp"
+        }
+      },
+      "launch": {
+        "executableName": "codex-acp",
+        "defaultArgs": [
+          "-c",
+          "features.plugins=false",
+          "-c",
+          "features.tool_suggest=false",
+          "-c",
+          "plugins={}",
+          "-c",
+          "marketplaces={}",
+          "-c",
+          "mcp_servers={}"
+        ]
+      },
+      "auth": {
+        "readinessPolicy": "any_required_slot",
+        "slots": [
+          {
+            "id": "openai",
+            "label": "OpenAI",
+            "credentialProviderIds": [
+              "openai"
+            ],
+            "requiredForReadiness": true,
+            "envVars": [
+              "OPENAI_API_KEY",
+              "CODEX_API_KEY"
+            ],
+            "discovery": "codex",
+            "materialization": {
+              "gatewayEnv": {
+                "protocolFacade": "openai",
+                "protectedEnvKeys": [
+                  "CODEX_API_KEY",
+                  "OPENAI_API_KEY",
+                  "CODEX_HOME"
+                ],
+                "supportEnvKeys": []
+              },
+              "syncedFiles": {
+                "protectedEnvKeys": [],
+                "allowedFilePaths": [
+                  ".codex/auth.json"
+                ],
+                "cleanupFilePaths": [
+                  ".codex/auth.json"
+                ]
+              }
+            },
+            "login": {
+              "label": "Log in with Codex",
+              "command": {
+                "program": "codex",
+                "args": [
+                  "login"
+                ]
+              },
+              "reusesUserState": true,
+              "message": null
+            },
+            "discoveryKinds": [
+              "codex-auth-json-api-key",
+              "codex-auth-json-oauth",
+              "codex-keychain"
+            ]
+          },
+          {
+            "id": "gateway",
+            "label": "Proliferate Gateway",
+            "credentialProviderIds": [],
+            "requiredForReadiness": false,
+            "envVars": [],
+            "discovery": "none",
+            "materialization": {}
+          }
+        ]
+      },
+      "docsUrl": "https://developers.openai.com/codex/cli/",
+      "providerConfig": [
+        {
+          "kind": "aws_bedrock",
+          "label": "AWS Bedrock",
+          "envVars": [
+            "AWS_BEARER_TOKEN_BEDROCK",
+            "AWS_REGION"
+          ]
+        },
+        {
+          "kind": "azure_openai",
+          "label": "Azure OpenAI",
+          "envVars": [
+            "AZURE_OPENAI_API_KEY"
+          ],
+          "pending": true,
+          "pendingReason": "config.toml injection built, live-unverified: nobody has exercised codex against real Azure OpenAI yet (D3 brief §5/§6 Gate 4), and the registry only declares AZURE_OPENAI_API_KEY today — not yet the endpoint/deployment vars the render arm also needs."
+        }
+      ],
+      "selfUpdateNeutralization": {
+        "mechanism": "none_found",
+        "detail": "Static analysis of the @proliferate-ai/codex-acp adapter found no self-update path invoked by the ACP process; the wrapped codex binary is version-pinned by the managed install and performs no background self-update in ACP mode.",
+        "env": []
+      }
+    },
+    {
+      "kind": "cursor",
+      "authCardinality": "single",
+      "displayName": "Cursor",
+      "description": "Cursor Agent CLI through ACP.",
+      "native": null,
+      "agentProcess": {
+        "install": {
+          "kind": "registry_backed",
+          "registryId": "cursor",
+          "fallback": {
+            "kind": "binary_hint",
+            "candidateBinaries": [
+              "cursor-agent"
+            ],
+            "args": [
+              "acp"
+            ]
+          }
+        }
+      },
+      "launch": {
+        "executableName": "cursor-agent",
+        "defaultArgs": []
+      },
+      "auth": {
+        "readinessPolicy": "any_required_slot",
+        "slots": [
+          {
+            "id": "cursor",
+            "label": "Cursor",
+            "credentialProviderIds": [
+              "cursor"
+            ],
+            "requiredForReadiness": true,
+            "envVars": [
+              "CURSOR_API_KEY"
+            ],
+            "discovery": "cursor",
+            "materialization": {
+              "syncedFiles": {
+                "protectedEnvKeys": [],
+                "allowedFilePaths": [
+                  ".cursor/cli-config.json"
+                ],
+                "cleanupFilePaths": [
+                  ".cursor/cli-config.json"
+                ]
+              }
+            },
+            "login": {
+              "label": "Log in with Cursor",
+              "command": {
+                "program": "cursor-agent",
+                "args": [
+                  "login"
+                ]
+              },
+              "reusesUserState": true,
+              "message": null
+            },
+            "discoveryKinds": [
+              "cursor-keychain"
+            ]
+          }
+        ]
+      },
+      "docsUrl": "https://cursor.com/docs/cli",
+      "selfUpdateNeutralization": {
+        "mechanism": "none_found",
+        "detail": "Static analysis of the cursor-agent distribution found no self-updater invoked when run as the managed ACP adapter; the binary is materialized from a pinned archive.",
+        "env": []
+      }
+    },
+    {
+      "kind": "opencode",
+      "authCardinality": "multi",
+      "displayName": "OpenCode",
+      "description": "OpenCode through its ACP surface.",
+      "native": null,
+      "agentProcess": {
+        "install": {
+          "kind": "registry_backed",
+          "registryId": "opencode",
+          "fallback": {
+            "kind": "npm_package",
+            "package": "opencode-ai",
+            "packageSubdir": null,
+            "sourceBuildBinaryName": null,
+            "executableRelpath": "node_modules/.bin/opencode-ai"
+          }
+        }
+      },
+      "launch": {
+        "executableName": "opencode-ai",
+        "defaultArgs": []
+      },
+      "auth": {
+        "readinessPolicy": "provider_managed",
+        "slots": [
+          {
+            "id": "openai",
+            "label": "OpenAI",
+            "credentialProviderIds": [
+              "openai"
+            ],
+            "requiredForReadiness": false,
+            "envVars": [
+              "OPENAI_API_KEY"
+            ],
+            "discovery": "none",
+            "materialization": {
+              "gatewayEnv": {
+                "protocolFacade": "openai",
+                "protectedEnvKeys": [
+                  "OPENAI_API_KEY",
+                  "OPENAI_BASE_URL"
+                ],
+                "supportEnvKeys": []
+              },
+              "syncedFiles": {
+                "protectedEnvKeys": [],
+                "allowedFilePaths": [
+                  ".config/opencode/auth.json"
+                ],
+                "cleanupFilePaths": [
+                  ".config/opencode/auth.json"
+                ]
+              }
+            },
+            "discoveryKinds": [
+              "opencode-auth-json/openai"
+            ]
+          },
+          {
+            "id": "anthropic",
+            "label": "Anthropic",
+            "credentialProviderIds": [
+              "anthropic"
+            ],
+            "requiredForReadiness": false,
+            "envVars": [
+              "ANTHROPIC_API_KEY",
+              "ANTHROPIC_AUTH_TOKEN"
+            ],
+            "discovery": "none",
+            "materialization": {
+              "gatewayEnv": {
+                "protocolFacade": "anthropic",
+                "protectedEnvKeys": [
+                  "ANTHROPIC_API_KEY",
+                  "ANTHROPIC_AUTH_TOKEN",
+                  "ANTHROPIC_BASE_URL"
+                ],
+                "supportEnvKeys": []
+              }
+            },
+            "discoveryKinds": [
+              "opencode-auth-json/anthropic"
+            ]
+          },
+          {
+            "id": "gemini",
+            "label": "Gemini",
+            "credentialProviderIds": [
+              "gemini"
+            ],
+            "requiredForReadiness": false,
+            "envVars": [
+              "GEMINI_API_KEY",
+              "GOOGLE_API_KEY"
+            ],
+            "discovery": "none",
+            "materialization": {
+              "gatewayEnv": {
+                "protocolFacade": "genai",
+                "protectedEnvKeys": [
+                  "GEMINI_API_KEY",
+                  "GOOGLE_GEMINI_BASE_URL"
+                ],
+                "supportEnvKeys": []
+              }
+            },
+            "discoveryKinds": [
+              "opencode-auth-json/google",
+              "opencode-auth-json/gemini"
+            ]
+          },
+          {
+            "id": "opencode-zen",
+            "label": "OpenCode Zen",
+            "credentialProviderIds": [],
+            "requiredForReadiness": false,
+            "envVars": [],
+            "discovery": "opencode",
+            "discoveryKinds": [
+              "opencode-auth-json/opencode"
+            ]
+          },
+          {
+            "id": "gateway",
+            "label": "Proliferate Gateway",
+            "credentialProviderIds": [],
+            "requiredForReadiness": false,
+            "envVars": [],
+            "discovery": "none",
+            "materialization": {}
+          }
+        ]
+      },
+      "docsUrl": "https://opencode.ai/docs/",
+      "providerConfig": [
+        {
+          "kind": "aws_bedrock",
+          "label": "AWS Bedrock",
+          "envVars": [
+            "AWS_BEARER_TOKEN_BEDROCK",
+            "AWS_REGION"
+          ]
+        },
+        {
+          "kind": "azure_openai",
+          "label": "Azure OpenAI",
+          "envVars": [
+            "AZURE_RESOURCE_NAME",
+            "AZURE_API_KEY"
+          ]
+        }
+      ],
+      "selfUpdateNeutralization": {
+        "mechanism": "none_found",
+        "detail": "opencode exposes its ACP surface via a native subcommand and static analysis found no self-update invocation on that path.",
+        "env": []
+      }
+    },
+    {
+      "kind": "grok",
+      "authCardinality": "single",
+      "displayName": "Grok",
+      "description": "xAI's Grok Build coding agent through its native ACP surface.",
+      "native": null,
+      "agentProcess": {
+        "install": {
+          "kind": "registry_backed",
+          "registryId": "grok-build",
+          "fallback": {
+            "kind": "binary_hint",
+            "candidateBinaries": [
+              "grok"
+            ],
+            "args": [
+              "agent",
+              "stdio"
+            ]
+          }
+        }
+      },
+      "launch": {
+        "executableName": "grok",
+        "defaultArgs": []
+      },
+      "auth": {
+        "readinessPolicy": "any_required_slot",
+        "slots": [
+          {
+            "id": "xai",
+            "label": "xAI",
+            "credentialProviderIds": [
+              "xai"
+            ],
+            "requiredForReadiness": true,
+            "envVars": [
+              "XAI_API_KEY",
+              "GROK_API_KEY"
+            ],
+            "discovery": "grok",
+            "discoveryKinds": [
+              "grok-auth-json-oauth"
+            ],
+            "materialization": {
+              "syncedFiles": {
+                "protectedEnvKeys": [],
+                "allowedFilePaths": [
+                  ".grok/auth.json"
+                ],
+                "cleanupFilePaths": [
+                  ".grok/auth.json"
+                ]
+              }
+            },
+            "login": {
+              "label": "Log in with Grok",
+              "command": {
+                "program": "grok",
+                "args": [
+                  "login"
+                ]
+              },
+              "reusesUserState": true,
+              "message": null
+            }
+          },
+          {
+            "id": "gateway",
+            "label": "Proliferate Gateway",
+            "credentialProviderIds": [],
+            "requiredForReadiness": false,
+            "envVars": [],
+            "discovery": "none",
+            "materialization": {}
+          }
+        ]
+      },
+      "docsUrl": "https://docs.x.ai/docs",
+      "selfUpdateNeutralization": {
+        "mechanism": "none_found",
+        "detail": "Static analysis of the grok ACP adapter found no self-updater invocation on the managed launch path.",
+        "env": []
+      }
+    }
+  ]
+}

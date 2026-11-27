@@ -1,0 +1,204 @@
+"""allow multiple auth identities per provider per user
+
+Revision ID: f8a9b0c1d2e3
+Revises: f7a8b9c0d1e2
+Create Date: 2026-05-19 00:00:00.000000
+
+"""
+
+from __future__ import annotations
+
+import json
+import uuid
+from collections.abc import Sequence
+from datetime import UTC, datetime
+
+import sqlalchemy as sa
+
+from alembic import op
+from proliferate.config import settings
+from proliferate.lib.infra.encryption.fernet import encrypt_text
+
+# revision identifiers, used by Alembic.
+revision: str = "f8a9b0c1d2e3"
+down_revision: str | Sequence[str] | None = "f7a8b9c0d1e2"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+LEGACY_GITHUB_OAUTH_SCOPES = ["repo", "user", "user:email"]
+
+
+def _has_table(table_name: str) -> bool:
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    return table_name in inspector.get_table_names()
+
+
+def _has_constraint(table_name: str, constraint_name: str) -> bool:
+    if not _has_table(table_name):
+        return False
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    return constraint_name in {
+        constraint["name"] for constraint in inspector.get_unique_constraints(table_name)
+    }
+
+
+def _has_index(table_name: str, index_name: str) -> bool:
+    if not _has_table(table_name):
+        return False
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    return index_name in {index["name"] for index in inspector.get_indexes(table_name)}
+
+
+def _drop_constraint_once(constraint_name: str, table_name: str, *, type_: str) -> None:
+    if _has_constraint(table_name, constraint_name):
+        op.drop_constraint(constraint_name, table_name, type_=type_)
+
+
+def _create_index_once(
+    index_name: str,
+    table_name: str,
+    columns: list[str],
+    *,
+    unique: bool = False,
+) -> None:
+    if not _has_index(table_name, index_name):
+        op.create_index(index_name, table_name, columns, unique=unique)
+
+
+def _drop_index_once(index_name: str, table_name: str) -> None:
+    if _has_index(table_name, index_name):
+        op.drop_index(index_name, table_name=table_name)
+
+
+def upgrade() -> None:
+    """Upgrade schema."""
+    _drop_constraint_once(
+        "uq_auth_identity_user_provider",
+        "auth_identity",
+        type_="unique",
+    )
+    _create_index_once(
+        "ix_auth_identity_user_provider",
+        "auth_identity",
+        ["user_id", "provider"],
+    )
+    _backfill_additional_oauth_accounts()
+
+
+def _backfill_additional_oauth_accounts() -> None:
+    bind = op.get_bind()
+    now = datetime.now(UTC)
+    rows = bind.execute(
+        sa.text(
+            """
+            SELECT user_id, oauth_name, account_id, account_email, access_token,
+                   refresh_token, expires_at
+            FROM oauth_account
+            WHERE oauth_name IN ('github', 'google')
+            """
+        )
+    ).mappings()
+
+    for row in rows:
+        identity_id = bind.execute(
+            sa.text(
+                """
+                SELECT id FROM auth_identity
+                WHERE provider = :provider AND provider_subject = :provider_subject
+                """
+            ),
+            {"provider": row["oauth_name"], "provider_subject": row["account_id"]},
+        ).scalar_one_or_none()
+        if identity_id is None:
+            identity_id = uuid.uuid4()
+            bind.execute(
+                sa.text(
+                    """
+                    INSERT INTO auth_identity (
+                        id, user_id, provider, provider_subject, email, email_verified,
+                        linked_at, last_login_at, created_at, updated_at
+                    )
+                    VALUES (
+                        :id, :user_id, :provider, :provider_subject, :email, true,
+                        :now, :now, :now, :now
+                    )
+                    """
+                ),
+                {
+                    "id": identity_id,
+                    "user_id": row["user_id"],
+                    "provider": row["oauth_name"],
+                    "provider_subject": row["account_id"],
+                    "email": row["account_email"],
+                    "now": now,
+                },
+            )
+
+        grant_exists = bind.execute(
+            sa.text(
+                """
+                SELECT 1 FROM provider_grant
+                WHERE auth_identity_id = :auth_identity_id AND provider = :provider
+                """
+            ),
+            {"auth_identity_id": identity_id, "provider": row["oauth_name"]},
+        ).scalar_one_or_none()
+        if grant_exists is not None:
+            continue
+
+        scopes: list[str] = LEGACY_GITHUB_OAUTH_SCOPES if row["oauth_name"] == "github" else []
+        expires_at = (
+            datetime.fromtimestamp(row["expires_at"], tz=UTC)
+            if row["expires_at"] is not None
+            else None
+        )
+        status = "expired" if expires_at is not None and expires_at <= now else "ready"
+        bind.execute(
+            sa.text(
+                """
+                INSERT INTO provider_grant (
+                    id, user_id, auth_identity_id, provider, access_token_ciphertext,
+                    refresh_token_ciphertext, scopes_json, expires_at, status,
+                    last_verified_at, created_at, updated_at
+                )
+                VALUES (
+                    :id, :user_id, :auth_identity_id, :provider, :access_token_ciphertext,
+                    :refresh_token_ciphertext, :scopes_json, :expires_at, :status,
+                    :now, :now, :now
+                )
+                """
+            ),
+            {
+                "id": uuid.uuid4(),
+                "user_id": row["user_id"],
+                "auth_identity_id": identity_id,
+                "provider": row["oauth_name"],
+                "access_token_ciphertext": (
+                    encrypt_text(row["access_token"], secret=settings.cloud_secret_key)
+                    if row["access_token"]
+                    else None
+                ),
+                "refresh_token_ciphertext": (
+                    encrypt_text(row["refresh_token"], secret=settings.cloud_secret_key)
+                    if row["refresh_token"]
+                    else None
+                ),
+                "scopes_json": json.dumps(scopes),
+                "expires_at": expires_at,
+                "status": status,
+                "now": now,
+            },
+        )
+
+
+def downgrade() -> None:
+    """Downgrade schema."""
+    _drop_index_once("ix_auth_identity_user_provider", "auth_identity")
+    op.create_unique_constraint(
+        "uq_auth_identity_user_provider",
+        "auth_identity",
+        ["user_id", "provider"],
+    )

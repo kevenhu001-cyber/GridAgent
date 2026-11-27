@@ -1,0 +1,332 @@
+import type {
+  HealthResponse,
+  PruneOrphanWorktreeRequest,
+  RuntimeResourcePressure,
+  WorkspacePurgeResponse,
+  WorktreeInventoryRow,
+} from "@anyharness/sdk";
+import { useCallback, useMemo } from "react";
+import { useWorktreeTargetHealth } from "#product/hooks/access/anyharness/worktrees/use-worktree-target-health";
+import { useSelectedLogicalWorkspace } from "#product/hooks/workspaces/derived/use-selected-logical-workspace";
+import { useWorktreeSettingsTargets } from "#product/hooks/workspaces/facade/use-worktree-settings-targets";
+import {
+  WORKTREE_AUTO_DELETE_LIMIT_DEFAULT,
+} from "#product/lib/domain/preferences/user/worktree-auto-delete";
+import type { WorktreeSettingsTarget } from "#product/lib/domain/workspaces/worktrees/worktree-settings-target";
+import { useToastStore } from "#product/stores/toast/toast-store";
+import { useUserPreferencesStore } from "#product/stores/preferences/user-preferences-store";
+import {
+  cloudPressureLimitPercent,
+  pressureProgressPercent,
+  pressureTone,
+  type RuntimePressureTone,
+} from "./runtime-pressure-threshold";
+
+export interface RuntimePressureTargetState {
+  target: WorktreeSettingsTarget;
+  inventory: WorktreeInventoryRow[];
+  isLoading: boolean;
+  error: Error | null;
+  inventoryLoading: boolean;
+  inventoryError: Error | null;
+  healthLoading: boolean;
+  healthError: Error | null;
+  worktreeCount: number;
+  totalWorktreeCount: number;
+  pressureRepoLabel: string | null;
+  idealWorktreeCount: number;
+  pressurePercent: number | null;
+  pressureLimitPercent: number;
+  ringProgressPercent: number | null;
+  pressureLabel: string;
+  detailLines: string[];
+  tone: RuntimePressureTone;
+  resourcePressure: RuntimeResourcePressure | null;
+}
+
+export interface RuntimePressureControlState {
+  visible: boolean;
+  indicator: RuntimePressureTargetState | null;
+  targets: RuntimePressureTargetState[];
+  isDiscovering: boolean;
+  actions: {
+    pruneOrphan: (target: WorktreeSettingsTarget, input: PruneOrphanWorktreeRequest) => void;
+    purgeWorkspace: (target: WorktreeSettingsTarget, workspaceId: string) => void;
+  };
+}
+
+const EMPTY_ROWS: WorktreeInventoryRow[] = [];
+
+export function useRuntimePressureControlState(): RuntimePressureControlState {
+  const settings = useWorktreeSettingsTargets();
+  return useRuntimePressureControlStateFromSettings(settings);
+}
+
+type RuntimePressureSettingsState = ReturnType<typeof useWorktreeSettingsTargets>;
+
+export function useRuntimePressureControlStateFromSettings(
+  settings: RuntimePressureSettingsState,
+): RuntimePressureControlState {
+  const selected = useSelectedLogicalWorkspace();
+  const idealWorktreeCount = useUserPreferencesStore(
+    (state) => state.worktreeAutoDeleteLimit ?? WORKTREE_AUTO_DELETE_LIMIT_DEFAULT,
+  );
+  const showToast = useToastStore((state) => state.show);
+  const targetStates = settings.targets;
+  const targets = useMemo(
+    () => targetStates.map((targetState) => targetState.target),
+    [targetStates],
+  );
+  const healthStates = useWorktreeTargetHealth(targets);
+  const healthByKey = useMemo(() => new Map(
+    healthStates.map((state) => [state.target.key, state]),
+  ), [healthStates]);
+
+  const combinedTargets = useMemo<RuntimePressureTargetState[]>(() => (
+    targetStates.map((targetState) => {
+      const healthState = healthByKey.get(targetState.target.key) ?? null;
+      return pressureTargetState({
+        target: targetState.target,
+        inventory: targetState.inventory?.rows ?? EMPTY_ROWS,
+        inventoryLoading: targetState.isLoading,
+        inventoryError: targetState.error,
+        health: healthState?.health ?? null,
+        healthLoading: healthState?.isLoading ?? false,
+        healthError: healthState?.error ?? null,
+        idealWorktreeCount,
+      });
+    })
+  ), [healthByKey, idealWorktreeCount, targetStates]);
+
+  const indicator = useMemo(() => {
+    const selectedEnvironmentId =
+      selected.selectedLogicalWorkspace?.cloudWorkspace?.runtime?.environmentId ?? null;
+    if (selected.selectedLogicalWorkspace?.effectiveOwner === "cloud") {
+      const cloudTarget = combinedTargets.find((target) => (
+        target.target.location === "cloud"
+        && (
+          (selectedEnvironmentId && target.target.environmentId === selectedEnvironmentId)
+          || (!selectedEnvironmentId && target.target.location === "cloud")
+        )
+      ));
+      if (cloudTarget) {
+        return cloudTarget;
+      }
+    }
+    return combinedTargets.find((target) => target.target.location === "local")
+      ?? combinedTargets[0]
+      ?? null;
+  }, [combinedTargets, selected.selectedLogicalWorkspace]);
+
+  // Both actions resolve only on success now: purge answers
+  // `{ outcome: "deleted", alreadyDeleted }` or throws, and prune-orphan
+  // resolves void or throws. The retire-era success-shaped failure results
+  // (`blocked`, `cleanup_failed`, `cleanupMessage`, `preflight.blockers`) are
+  // gone with the preflight and the tombstone, so the catch path is the only
+  // failure path left.
+  const runAction = useCallback(<TResult,>(
+    operation: () => Promise<TResult>,
+    success: string | ((result: TResult) => string),
+  ) => {
+    void operation().then((result) => {
+      showToast(typeof success === "function" ? success(result) : success);
+    }).catch((error) => {
+      showToast(error instanceof Error ? error.message : String(error));
+    });
+  }, [showToast]);
+
+  const pruneOrphan = useCallback((
+    target: WorktreeSettingsTarget,
+    input: PruneOrphanWorktreeRequest,
+  ) => {
+    runAction(
+      () => settings.pruneOrphan(target, input),
+      "Worktree checkout removed.",
+    );
+  }, [runAction, settings]);
+
+  const purgeWorkspace = useCallback((target: WorktreeSettingsTarget, workspaceId: string) => {
+    runAction<WorkspacePurgeResponse>(
+      () => settings.purgeWorkspace(target, workspaceId),
+      "Runtime workspace history deleted.",
+    );
+  }, [runAction, settings]);
+
+  return {
+    visible: combinedTargets.length > 0,
+    indicator,
+    targets: combinedTargets,
+    isDiscovering: settings.isDiscovering,
+    actions: {
+      pruneOrphan,
+      purgeWorkspace,
+    },
+  };
+}
+
+function pressureTargetState({
+  target,
+  inventory,
+  inventoryLoading,
+  inventoryError,
+  health,
+  healthLoading,
+  healthError,
+  idealWorktreeCount,
+}: {
+  target: WorktreeSettingsTarget;
+  inventory: WorktreeInventoryRow[];
+  inventoryLoading: boolean;
+  inventoryError: Error | null;
+  health: HealthResponse | null;
+  healthLoading: boolean;
+  healthError: Error | null;
+  idealWorktreeCount: number;
+}): RuntimePressureTargetState {
+  const worktreeStats = materializedWorktreeStats(inventory);
+  const worktreeCount = target.location === "local"
+    ? worktreeStats.maxRepoCount
+    : worktreeStats.totalCount;
+  const worktreePercent = idealWorktreeCount > 0
+    ? (worktreeCount / idealWorktreeCount) * 100
+    : null;
+  const resourcePressure = health?.resourcePressure ?? null;
+  const cloudPressurePercent = target.location === "cloud"
+    ? resourcePressure?.pressurePercent ?? null
+    : null;
+  const pressurePercent = target.location === "cloud"
+    ? cloudPressurePercent
+    : worktreePercent;
+  const pressureLimitPercent = target.location === "cloud"
+    ? cloudPressureLimitPercent(resourcePressure)
+    : 100;
+  const ringProgressPercent = pressureProgressPercent(pressurePercent, pressureLimitPercent);
+  const tone = pressureTone(pressurePercent, pressureLimitPercent);
+  const pressureLabel = target.location === "cloud"
+    ? cloudPressurePercent === null
+      ? "Pressure unavailable"
+      : `${formatPercent(cloudPressurePercent)} pressure`
+    : `${worktreeCount}/${idealWorktreeCount} worktrees`;
+  const detailLines = target.location === "cloud"
+    ? cloudDetailLines(resourcePressure, worktreeStats.totalCount)
+    : localDetailLines(
+      worktreeCount,
+      worktreeStats.totalCount,
+      worktreeStats.maxRepoLabel,
+      idealWorktreeCount,
+      worktreePercent,
+    );
+
+  return {
+    target,
+    inventory,
+    isLoading: inventoryLoading || healthLoading,
+    error: inventoryError ?? healthError,
+    inventoryLoading,
+    inventoryError,
+    healthLoading,
+    healthError,
+    worktreeCount,
+    totalWorktreeCount: worktreeStats.totalCount,
+    pressureRepoLabel: worktreeStats.maxRepoLabel,
+    idealWorktreeCount,
+    pressurePercent,
+    pressureLimitPercent,
+    ringProgressPercent,
+    pressureLabel,
+    detailLines,
+    tone,
+    resourcePressure,
+  };
+}
+
+function materializedWorktreeStats(inventory: WorktreeInventoryRow[]): {
+  totalCount: number;
+  maxRepoCount: number;
+  maxRepoLabel: string | null;
+} {
+  const byRepo = new Map<string, { count: number; label: string }>();
+  let totalCount = 0;
+
+  for (const row of inventory) {
+    if (!row.materialized || row.associatedWorkspaces.length === 0) {
+      continue;
+    }
+    totalCount += 1;
+    const repoKey = row.repoRootId ?? row.repoRootName ?? row.path;
+    const repoLabel = worktreeRepoLabel(row);
+    const current = byRepo.get(repoKey);
+    byRepo.set(repoKey, {
+      count: (current?.count ?? 0) + 1,
+      label: current?.label ?? repoLabel,
+    });
+  }
+
+  let maxRepoCount = 0;
+  let maxRepoLabel: string | null = null;
+  for (const repo of byRepo.values()) {
+    if (repo.count > maxRepoCount) {
+      maxRepoCount = repo.count;
+      maxRepoLabel = repo.label;
+    }
+  }
+
+  return { totalCount, maxRepoCount, maxRepoLabel };
+}
+
+function worktreeRepoLabel(row: WorktreeInventoryRow): string {
+  if (row.repoRootName) {
+    return row.repoRootName;
+  }
+  const normalizedPath = row.path.replaceAll("\\", "/");
+  const parts = normalizedPath.split("/").filter(Boolean);
+  return parts[parts.length - 1] ?? "Unknown repo";
+}
+
+function localDetailLines(
+  worktreeCount: number,
+  totalWorktreeCount: number,
+  repoLabel: string | null,
+  idealWorktreeCount: number,
+  worktreePercent: number | null,
+): string[] {
+  return [
+    repoLabel
+      ? `${worktreeCount} materialized worktrees in ${repoLabel}`
+      : `${worktreeCount} materialized worktrees`,
+    `${totalWorktreeCount} materialized worktrees total`,
+    `Ideal max ${idealWorktreeCount}`,
+    worktreePercent === null ? "No percentage available" : `${formatPercent(worktreePercent)} of ideal`,
+  ];
+}
+
+function cloudDetailLines(
+  pressure: RuntimeResourcePressure | null,
+  totalWorktreeCount: number,
+): string[] {
+  if (!pressure) {
+    return [
+      "Runtime pressure unavailable",
+      `${totalWorktreeCount} materialized worktrees`,
+    ];
+  }
+  const lines = [
+    pressure.cpu
+      ? `CPU ${formatPercent(pressure.cpu.normalizedPercent)} of ${formatPercent(pressure.cpu.idealMaxPercent)} ideal`
+      : "CPU unavailable",
+    pressure.memory
+      ? `RAM ${formatPercent(pressure.memory.percent)} of ${formatPercent(pressure.memory.idealMaxPercent)} ideal`
+      : "RAM unavailable",
+  ];
+  if (pressure.disk) {
+    lines.push(
+      `Disk ${formatPercent(pressure.disk.percent)} of ${formatPercent(pressure.disk.idealMaxPercent)} ideal`,
+    );
+  }
+  lines.push(`${totalWorktreeCount} materialized worktrees`);
+  return lines;
+}
+
+function formatPercent(value: number): string {
+  return `${Math.round(value)}%`;
+}

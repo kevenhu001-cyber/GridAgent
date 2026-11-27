@@ -1,0 +1,78 @@
+{
+  "probedAt": "2026-07-17T05:35:08.879897+00:00",
+  "agentKind": "grok",
+  "authContext": "xai-api",
+  "attestation": null,
+  "modelSource": "initMetaModelState",
+  "nativeCli": null,
+  "trials": [],
+  "currentModelId": "grok-4.20-0309-non-reasoning",
+  "currentModeId": null,
+  "modes": null,
+  "baselineConfigOptions": null,
+  "models": [
+    {
+      "modelId": "grok-4.20-0309-non-reasoning",
+      "name": "grok-4.20-0309-non-reasoning",
+      "description": null,
+      "configOptions": null
+    },
+    {
+      "modelId": "grok-4.20-0309-reasoning",
+      "name": "grok-4.20-0309-reasoning",
+      "description": null,
+      "configOptions": null
+    },
+    {
+      "modelId": "grok-4.20-multi-agent-0309",
+      "name": "grok-4.20-multi-agent-0309",
+      "description": null,
+      "configOptions": null
+    },
+    {
+      "modelId": "grok-4.3",
+      "name": "grok-4.3",
+      "description": null,
+      "configOptions": null
+    },
+    {
+      "modelId": "grok-4.5",
+      "name": "grok-4.5",
+      "description": null,
+      "configOptions": null
+    },
+    {
+      "modelId": "grok-build-0.1",
+      "name": "grok-build-0.1",
+      "description": null,
+      "configOptions": null
+    },
+    {
+      "modelId": "grok-imagine-image",
+      "name": "grok-imagine-image",
+      "description": null,
+      "configOptions": null
+    },
+    {
+      "modelId": "grok-imagine-image-quality",
+      "name": "grok-imagine-image-quality",
+      "description": null,
+      "configOptions": null
+    },
+    {
+      "modelId": "grok-imagine-video",
+      "name": "grok-imagine-video",
+      "description": null,
+      "configOptions": null
+    },
+    {
+      "modelId": "grok-imagine-video-1.5",
+      "name": "grok-imagine-video-1.5",
+      "description": null,
+      "configOptions": null
+    }
+  ],
+  "warnings": [
+    "agent did not report agent_info at initialize"
+  ]
+}

@@ -1,0 +1,376 @@
+use std::time::Instant;
+use std::collections::BTreeMap;
+
+use anyharness_contract::v1::SessionMcpBindingSummary;
+
+use crate::domains::sessions::mcp_bindings::assembly::join_system_prompt_append;
+use crate::domains::sessions::mcp_bindings::crypto::{encrypt_bindings, SessionMcpBindingsError};
+use crate::domains::sessions::mcp_bindings::model::SessionMcpServer;
+use crate::domains::sessions::mcp_bindings::summaries::{
+    serialize_binding_summaries, SessionMcpSummaryError,
+};
+use crate::domains::sessions::model::{SessionMcpBindingPolicy, SessionRecord};
+use crate::domains::sessions::service::CreateSessionOutcome;
+use crate::domains::workspaces::access_gate::WorkspaceAccessError;
+use crate::origin::OriginContext;
+
+use super::{CreateAndStartSessionError, SessionRuntime};
+
+/// Typed input for an internal (system-owned) durable session creation. Kept
+/// generic: nothing here is workflow-specific.
+pub(crate) struct InternalSessionCreateInput {
+    pub workspace_id: String,
+    pub agent_kind: String,
+    pub model_id: Option<String>,
+    pub control_values: BTreeMap<String, String>,
+    pub origin: OriginContext,
+    /// Ruling 2b-1: the workflow executor preselects the id so it can reserve
+    /// the session's mutation gate before this row exists. `None` keeps the
+    /// ordinary mint-at-create behavior.
+    pub preselected_session_id: Option<String>,
+}
+
+/// Typed failure for the internal creation seam. Access-gate refusals stay
+/// typed (never stringified) so callers can classify a retired, mutation-
+/// blocked, or missing workspace distinctly from a creation failure.
+#[derive(Debug)]
+pub(crate) enum InternalSessionCreateError {
+    /// The supplied workspace refused mutation: missing, retired, or
+    /// mutation-blocked by its runtime access mode.
+    WorkspaceUnavailable(WorkspaceAccessError),
+    /// Durable session creation itself failed.
+    Create(CreateAndStartSessionError),
+}
+
+impl SessionRuntime {
+    #[tracing::instrument(skip_all, fields(workspace_id = %workspace_id, agent_kind = %agent_kind))]
+    pub async fn create_and_start_session(
+        &self,
+        workspace_id: &str,
+        agent_kind: &str,
+        model_id: Option<&str>,
+        control_values: &BTreeMap<String, String>,
+        system_prompt_append: Option<Vec<String>>,
+        mcp_servers: Vec<SessionMcpServer>,
+        mcp_binding_summaries: Option<Vec<SessionMcpBindingSummary>>,
+        subagents_enabled: bool,
+        origin: OriginContext,
+    ) -> Result<SessionRecord, CreateAndStartSessionError> {
+        self.create_and_start_session_with_id(
+            workspace_id,
+            agent_kind,
+            None,
+            model_id,
+            control_values,
+            system_prompt_append,
+            mcp_servers,
+            mcp_binding_summaries,
+            subagents_enabled,
+            origin,
+        )
+        .await
+    }
+
+    /// Creates or resumes the exact session selected by the caller. The
+    /// caller must serialize requests for `preselected_session_id` across the
+    /// full create/start operation.
+    pub async fn create_and_start_session_with_id(
+        &self,
+        workspace_id: &str,
+        agent_kind: &str,
+        preselected_session_id: Option<&str>,
+        model_id: Option<&str>,
+        control_values: &BTreeMap<String, String>,
+        system_prompt_append: Option<Vec<String>>,
+        mcp_servers: Vec<SessionMcpServer>,
+        mcp_binding_summaries: Option<Vec<SessionMcpBindingSummary>>,
+        subagents_enabled: bool,
+        origin: OriginContext,
+    ) -> Result<SessionRecord, CreateAndStartSessionError> {
+        self.access_gate
+            .assert_can_mutate_for_workspace(workspace_id)
+            .map_err(|error| CreateAndStartSessionError::Invalid(error.to_string()))?;
+        self.assert_workspace_checkout_present(workspace_id)?;
+        let started = Instant::now();
+        let system_prompt_append_count = system_prompt_append
+            .as_ref()
+            .map(|entries| entries.len())
+            .unwrap_or(0);
+        tracing::info!(
+            workspace_id = %workspace_id,
+            agent_kind = %agent_kind,
+            model_id = ?model_id,
+            control_ids = ?control_values.keys().collect::<Vec<_>>(),
+            system_prompt_append_count,
+            "[workspace-latency] session.runtime.create_and_start.start"
+        );
+        let durable_create_started = Instant::now();
+        let outcome = self.create_durable_session_outcome(
+            workspace_id,
+            agent_kind,
+            preselected_session_id,
+            preselected_session_id.is_some(),
+            model_id,
+            control_values,
+            system_prompt_append,
+            mcp_servers,
+            mcp_binding_summaries,
+            SessionMcpBindingPolicy::InheritWorkspace,
+            subagents_enabled,
+            origin,
+        )?;
+        let (mut record, created) = match outcome {
+            CreateSessionOutcome::Created(record) => (record, true),
+            CreateSessionOutcome::Existing(record) => (record, false),
+        };
+        tracing::info!(
+            workspace_id = %workspace_id,
+            session_id = %record.id,
+            elapsed_ms = durable_create_started.elapsed().as_millis(),
+            "[workspace-latency] session.runtime.durable_session_created"
+        );
+        record = if created {
+            self.start_persisted_session(&record).await?
+        } else {
+            self.ensure_live_session_handle(&record, None)
+                .await
+                .map_err(super::startup_errors::map_start_session_error_to_create)?;
+            self.session_service
+                .get_session(&record.id)
+                .map_err(CreateAndStartSessionError::Internal)?
+                .unwrap_or(record)
+        };
+        tracing::info!(
+            workspace_id = %workspace_id,
+            session_id = %record.id,
+            native_session_id = %record.native_session_id.as_deref().unwrap_or_default(),
+            total_elapsed_ms = started.elapsed().as_millis(),
+            "[workspace-latency] session.runtime.create_and_start.completed"
+        );
+
+        Ok(record)
+    }
+
+    pub fn create_durable_session(
+        &self,
+        workspace_id: &str,
+        agent_kind: &str,
+        preselected_session_id: Option<&str>,
+        model_id: Option<&str>,
+        control_values: &BTreeMap<String, String>,
+        system_prompt_append: Option<Vec<String>>,
+        mcp_servers: Vec<SessionMcpServer>,
+        mcp_binding_summaries: Option<Vec<SessionMcpBindingSummary>>,
+        mcp_binding_policy: SessionMcpBindingPolicy,
+        subagents_enabled: bool,
+        origin: OriginContext,
+    ) -> Result<SessionRecord, CreateAndStartSessionError> {
+        self.create_durable_session_outcome(
+            workspace_id,
+            agent_kind,
+            preselected_session_id,
+            false,
+            model_id,
+            control_values,
+            system_prompt_append,
+            mcp_servers,
+            mcp_binding_summaries,
+            mcp_binding_policy,
+            subagents_enabled,
+            origin,
+        )
+        .map(CreateSessionOutcome::into_record)
+    }
+
+    fn create_durable_session_outcome(
+        &self,
+        workspace_id: &str,
+        agent_kind: &str,
+        preselected_session_id: Option<&str>,
+        reuse_existing: bool,
+        model_id: Option<&str>,
+        control_values: &BTreeMap<String, String>,
+        system_prompt_append: Option<Vec<String>>,
+        mcp_servers: Vec<SessionMcpServer>,
+        mcp_binding_summaries: Option<Vec<SessionMcpBindingSummary>>,
+        mcp_binding_policy: SessionMcpBindingPolicy,
+        subagents_enabled: bool,
+        origin: OriginContext,
+    ) -> Result<CreateSessionOutcome, CreateAndStartSessionError> {
+        let system_prompt_append = join_system_prompt_append(system_prompt_append);
+        let mcp_bindings_ciphertext =
+            encrypt_bindings(self.session_data_cipher.as_ref(), &mcp_servers)
+                .map_err(map_encrypt_bindings_error_to_create)?;
+        let mcp_binding_summaries_json = serialize_binding_summaries(mcp_binding_summaries)
+            .map_err(map_mcp_summary_error_to_create)?;
+        self.session_service
+            .create_session(
+                workspace_id,
+                agent_kind,
+                preselected_session_id,
+                reuse_existing,
+                model_id,
+                control_values,
+                mcp_bindings_ciphertext,
+                mcp_binding_summaries_json,
+                mcp_binding_policy,
+                system_prompt_append,
+                subagents_enabled,
+                origin,
+            )
+            .map_err(map_create_session_service_error)
+    }
+
+    pub async fn has_live_session(&self, session_id: &str) -> bool {
+        self.acp_manager.get_handle(session_id).await.is_some()
+    }
+
+    /// Shared checkout admission for every session-start seam. Loads the
+    /// workspace and, if it is a local checkout whose directory is *proven*
+    /// deleted (see `WorkspaceRecord::checkout_directory_missing`), returns its
+    /// path so the caller can raise its own typed `WorkspaceDirectoryMissing`
+    /// error. Remote/cloud-style workspaces and ambiguous filesystem states
+    /// (permission denied, transient I/O) are never blocked here. A workspace
+    /// that cannot be found returns `Ok(None)` — create/start classify
+    /// not-found separately.
+    ///
+    /// Races: the directory can still vanish between this pre-flight and spawn;
+    /// spawn-time `validate_spawn_cwd` remains the backstop, so this check is an
+    /// early, friendly refusal rather than a correctness guarantee.
+    pub(crate) fn workspace_checkout_missing_path(
+        &self,
+        workspace_id: &str,
+    ) -> anyhow::Result<Option<String>> {
+        Ok(self
+            .workspace_runtime
+            .get_workspace(workspace_id)?
+            .filter(|workspace| workspace.checkout_directory_missing())
+            .map(|workspace| workspace.path))
+    }
+
+    /// Pre-flight the workspace's local checkout before touching durable state.
+    /// A deleted checkout would otherwise only surface once the session
+    /// subprocess spawns, by which point an empty errored session row exists.
+    /// The common live-start seam (`start_live_session`) re-checks the same
+    /// predicate; this pre-durable-create guard specifically prevents the empty
+    /// session row.
+    pub(crate) fn assert_workspace_checkout_present(
+        &self,
+        workspace_id: &str,
+    ) -> Result<(), CreateAndStartSessionError> {
+        if let Some(path) = self
+            .workspace_checkout_missing_path(workspace_id)
+            .map_err(CreateAndStartSessionError::Internal)?
+        {
+            return Err(CreateAndStartSessionError::WorkspaceDirectoryMissing { path });
+        }
+        Ok(())
+    }
+
+    /// Checked, crate-visible internal-session creation seam: assert workspace
+    /// access, then create (but do not start) an InternalOnly,
+    /// subagents-disabled durable session. Preserving `session_id` before
+    /// startup requires this create/start split; the combined
+    /// `create_and_start_session` path cannot checkpoint on startup failure.
+    pub(crate) fn create_persisted_internal_session(
+        &self,
+        input: InternalSessionCreateInput,
+    ) -> Result<SessionRecord, InternalSessionCreateError> {
+        self.access_gate
+            .assert_can_mutate_for_workspace(&input.workspace_id)
+            .map_err(InternalSessionCreateError::WorkspaceUnavailable)?;
+        // Same pre-durable-create checkout admission as the interactive create
+        // path: a workflow run against a deleted checkout must not insert a
+        // durable session row. Dispatch classifies this as WorkspaceUnavailable.
+        if let Some(path) = self
+            .workspace_checkout_missing_path(&input.workspace_id)
+            .map_err(|error| {
+                InternalSessionCreateError::Create(CreateAndStartSessionError::Internal(error))
+            })?
+        {
+            return Err(InternalSessionCreateError::Create(
+                CreateAndStartSessionError::WorkspaceDirectoryMissing { path },
+            ));
+        }
+        self.create_durable_session(
+            &input.workspace_id,
+            &input.agent_kind,
+            input.preselected_session_id.as_deref(),
+            input.model_id.as_deref(),
+            &input.control_values,
+            None,   // no system-prompt append
+            vec![], // no supplied MCP servers
+            None,   // no binding summaries
+            SessionMcpBindingPolicy::InternalOnly,
+            false, // subagents disabled
+            input.origin,
+        )
+        .map_err(InternalSessionCreateError::Create)
+    }
+}
+
+pub(super) fn map_encrypt_bindings_error_to_create(
+    error: SessionMcpBindingsError,
+) -> CreateAndStartSessionError {
+    match error {
+        SessionMcpBindingsError::MissingDataKey => CreateAndStartSessionError::MissingDataKey,
+        SessionMcpBindingsError::Encrypt(error) | SessionMcpBindingsError::Decrypt(error) => {
+            CreateAndStartSessionError::Internal(error)
+        }
+    }
+}
+
+fn map_mcp_summary_error_to_create(error: SessionMcpSummaryError) -> CreateAndStartSessionError {
+    match error {
+        SessionMcpSummaryError::Invalid(detail) => CreateAndStartSessionError::Invalid(detail),
+        SessionMcpSummaryError::Serialize(error) => CreateAndStartSessionError::Internal(error),
+    }
+}
+
+pub(super) fn map_create_session_service_error(
+    error: crate::domains::sessions::service::CreateSessionError,
+) -> CreateAndStartSessionError {
+    match error {
+        crate::domains::sessions::service::CreateSessionError::WorkspaceNotFound(_) => {
+            CreateAndStartSessionError::WorkspaceNotFound
+        }
+        crate::domains::sessions::service::CreateSessionError::WorkspaceSingleSession {
+            session_id,
+            ..
+        } => CreateAndStartSessionError::WorkspaceSingleSession { session_id },
+        crate::domains::sessions::service::CreateSessionError::SessionIdConflict { session_id } => {
+            CreateAndStartSessionError::SessionIdConflict { session_id }
+        }
+        crate::domains::sessions::service::CreateSessionError::LaunchOptionsUnavailable {
+            agent_kind,
+            state,
+        } => CreateAndStartSessionError::LaunchOptionsUnavailable { agent_kind, state },
+        crate::domains::sessions::service::CreateSessionError::LaunchValueUnsupported {
+            agent_kind,
+            key,
+            value,
+            state,
+        } => CreateAndStartSessionError::LaunchValueUnsupported {
+            agent_kind,
+            key,
+            value,
+            state,
+        },
+        crate::domains::sessions::service::CreateSessionError::AgentEnvOverrideUnsupported {
+            agent_kind,
+            env_var_name,
+        } => CreateAndStartSessionError::AgentEnvOverrideUnsupported {
+            agent_kind,
+            env_var_name,
+        },
+        crate::domains::sessions::service::CreateSessionError::RouteAuth(error) => {
+            CreateAndStartSessionError::RouteAuth(error)
+        }
+        crate::domains::sessions::service::CreateSessionError::Invalid(detail) => {
+            CreateAndStartSessionError::Invalid(detail)
+        }
+        crate::domains::sessions::service::CreateSessionError::Internal(error) => {
+            CreateAndStartSessionError::Internal(error)
+        }
+    }
+}

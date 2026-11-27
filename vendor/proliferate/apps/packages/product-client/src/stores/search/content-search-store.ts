@@ -1,0 +1,235 @@
+import { create } from "zustand";
+import { normalizeContentSearchQuery } from "#product/lib/domain/content-search/content-search";
+
+import type { ContentSearchSurface } from "#product/lib/domain/content-search/content-search-placement";
+
+export type { ContentSearchSurface };
+
+export interface ContentSearchUnitRegistration {
+  unitId: string;
+  surface?: ContentSearchSurface;
+  query: string;
+  matchIds: readonly string[];
+  orderKey?: number;
+}
+
+interface ContentSearchUnit {
+  unitId: string;
+  surface: ContentSearchSurface;
+  query: string;
+  matchIds: string[];
+  order: number;
+  orderKey: number | null;
+}
+
+interface ContentSearchSurfaceAvailability {
+  file: boolean;
+  review: boolean;
+}
+
+interface ContentSearchState {
+  open: boolean;
+  query: string;
+  surface: ContentSearchSurface;
+  activeMatchIndex: number;
+  activeMatchId: string | null;
+  unitsById: Record<string, ContentSearchUnit>;
+  nextUnitOrder: number;
+  surfaceAvailability: ContentSearchSurfaceAvailability;
+  // Session-only suppression token: incremented each time a close should not
+  // restore focus (e.g. target activation dismissing a stale search). The
+  // pill consumes it for that one close only. Never holds a DOM node.
+  closeSuppressRestoreToken: number;
+  openSearch: (surface?: ContentSearchSurface) => void;
+  closeSearch: (options?: { restoreFocus?: boolean }) => void;
+  setQuery: (query: string) => void;
+  goToNextMatch: () => void;
+  goToPreviousMatch: () => void;
+  registerUnit: (registration: ContentSearchUnitRegistration) => void;
+  unregisterUnit: (unitId: string) => void;
+  setSurfaceAvailability: (surface: "file" | "review", available: boolean) => void;
+}
+
+export const useContentSearchStore = create<ContentSearchState>((set) => ({
+  open: false,
+  query: "",
+  surface: "chat",
+  activeMatchIndex: 0,
+  activeMatchId: null,
+  unitsById: {},
+  nextUnitOrder: 0,
+  surfaceAvailability: { file: false, review: false },
+  closeSuppressRestoreToken: 0,
+
+  openSearch: (surface = "chat") => {
+    set((state) => resolveActiveMatch({
+      ...state,
+      open: true,
+      surface,
+    }, 0));
+  },
+
+  closeSearch: (options) => {
+    const restoreFocus = options?.restoreFocus ?? true;
+    set((state) => ({
+      open: false,
+      closeSuppressRestoreToken: restoreFocus
+        ? state.closeSuppressRestoreToken
+        : state.closeSuppressRestoreToken + 1,
+    }));
+  },
+
+  setQuery: (query) => {
+    set((state) => resolveActiveMatch({
+      ...state,
+      query,
+    }, 0));
+  },
+
+  goToNextMatch: () => {
+    set((state) => resolveActiveMatch(state, state.activeMatchIndex + 1));
+  },
+
+  goToPreviousMatch: () => {
+    set((state) => resolveActiveMatch(state, state.activeMatchIndex - 1));
+  },
+
+  registerUnit: (registration) => {
+    set((state) => {
+      const query = normalizeContentSearchQuery(registration.query);
+      const matchIds = [...registration.matchIds];
+      const previous = state.unitsById[registration.unitId];
+      const surface = registration.surface ?? "chat";
+      const orderKey = registration.orderKey ?? null;
+
+      if (
+        previous
+        && previous.surface === surface
+        && previous.query === query
+        && previous.orderKey === orderKey
+        && stringArraysEqual(previous.matchIds, matchIds)
+      ) {
+        return state;
+      }
+
+      const nextState = {
+        ...state,
+        nextUnitOrder: previous ? state.nextUnitOrder : state.nextUnitOrder + 1,
+        unitsById: {
+          ...state.unitsById,
+          [registration.unitId]: {
+            unitId: registration.unitId,
+            surface,
+            query,
+            matchIds,
+            order: previous?.order ?? state.nextUnitOrder,
+            orderKey,
+          },
+        },
+      };
+      return resolveActiveMatch(nextState, state.activeMatchIndex);
+    });
+  },
+
+  unregisterUnit: (unitId) => {
+    set((state) => {
+      if (!state.unitsById[unitId]) {
+        return state;
+      }
+
+      const unitsById = { ...state.unitsById };
+      delete unitsById[unitId];
+      return resolveActiveMatch({
+        ...state,
+        unitsById,
+      }, state.activeMatchIndex);
+    });
+  },
+
+  setSurfaceAvailability: (surface, available) => {
+    set((state) => {
+      if (state.surfaceAvailability[surface] === available) {
+        return state;
+      }
+
+      const surfaceAvailability = { ...state.surfaceAvailability, [surface]: available };
+      // A surface going unavailable while it's the active open search means
+      // its host unmounted (e.g. the git pane closed) — leaving the pill open
+      // over unrelated content would float a stale, unreachable search, so
+      // auto-close it.
+      const shouldAutoClose = !available && state.surface === surface && state.open;
+      return {
+        ...state,
+        surfaceAvailability,
+        ...(shouldAutoClose ? { open: false } : {}),
+      };
+    });
+  },
+}));
+
+export function selectVisibleContentSearchMatchIds(state: Pick<
+  ContentSearchState,
+  "query" | "surface" | "unitsById"
+>): string[] {
+  const query = normalizeContentSearchQuery(state.query);
+  if (!query) {
+    return [];
+  }
+
+  return Object.values(state.unitsById)
+    .filter((unit) => unit.surface === state.surface && unit.query === query)
+    .sort(compareContentSearchUnits)
+    .flatMap((unit) => unit.matchIds);
+}
+
+// Units with an explicit orderKey sort first, ascending. Units without one
+// (e.g. inline diffs that can't cheaply learn their row index) fall after all
+// keyed units, in registration order among themselves.
+function compareContentSearchUnits(left: ContentSearchUnit, right: ContentSearchUnit): number {
+  if (left.orderKey !== null && right.orderKey !== null) {
+    return left.orderKey - right.orderKey || left.order - right.order;
+  }
+  if (left.orderKey !== null) {
+    return -1;
+  }
+  if (right.orderKey !== null) {
+    return 1;
+  }
+  return left.order - right.order;
+}
+
+function resolveActiveMatch<State extends Pick<
+  ContentSearchState,
+  "query" | "surface" | "unitsById"
+>>(
+  state: State,
+  requestedIndex: number,
+): State & Pick<ContentSearchState, "activeMatchIndex" | "activeMatchId"> {
+  const matchIds = selectVisibleContentSearchMatchIds(state);
+  if (matchIds.length === 0) {
+    return {
+      ...state,
+      activeMatchIndex: 0,
+      activeMatchId: null,
+    };
+  }
+
+  const activeMatchIndex = positiveModulo(requestedIndex, matchIds.length);
+  return {
+    ...state,
+    activeMatchIndex,
+    activeMatchId: matchIds[activeMatchIndex] ?? null,
+  };
+}
+
+function positiveModulo(value: number, modulus: number): number {
+  return ((value % modulus) + modulus) % modulus;
+}
+
+function stringArraysEqual(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((value, index) => value === right[index]);
+}

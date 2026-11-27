@@ -1,0 +1,598 @@
+import type { ProblemDetails } from "../types/runtime.js";
+import { requestBoundedJson } from "./bounded-json.js";
+import { AgentAuthClient } from "./agent-auth.js";
+import { AgentsClient } from "./agents.js";
+import { CoworkClient } from "./cowork.js";
+import { FilesClient } from "./files.js";
+import { GitClient } from "./git.js";
+import { MobilityClient } from "./mobility.js";
+import { PlansClient } from "./plans.js";
+import {
+  normalizeProblemDetails,
+} from "./problem-details.js";
+import { ProcessesClient } from "./processes.js";
+import { PullRequestsClient } from "./pull-requests.js";
+import { RepoRootsClient } from "./repo-roots.js";
+import { ReplayClient } from "./replay.js";
+import { ReviewsClient } from "./reviews.js";
+import { RuntimeClient } from "./runtime.js";
+import { SessionsClient } from "./sessions.js";
+import { TerminalsClient } from "./terminals.js";
+import { WorkflowRunsV2Client } from "./workflow-runs-v2.js";
+import { WorktreesClient } from "./worktrees.js";
+import { WorkspacesClient } from "./workspaces.js";
+
+export interface AnyHarnessClientOptions {
+  baseUrl: string;
+  authToken?: string;
+  fetch?: typeof globalThis.fetch;
+}
+
+export type AnyHarnessMeasurementOperationId = `mop_${string}`;
+
+export interface AnyHarnessRequestOptions {
+  headers?: HeadersInit;
+  signal?: AbortSignal;
+  measurementOperationId?: AnyHarnessMeasurementOperationId;
+  timingCategory?: AnyHarnessTimingCategory;
+  timingScope?: AnyHarnessTimingScope;
+  timingLifecycle?: AnyHarnessRequestTimingLifecycle;
+}
+
+export type AnyHarnessTimingCategory =
+  | "workspace.get"
+  | "workspace.list"
+  | "workspace.worktree.restore"
+  | "workspace.detect_setup"
+  | "workspace.display_name.update"
+  | "workspace.setup_status"
+  | "workspace.setup_rerun"
+  | "workspace.setup_start"
+  | "workspace.purge"
+  | "workspace.archive"
+  | "workspace.unarchive"
+  | "worktree.inventory"
+  | "worktree.orphan.prune"
+  | "repo_root.list"
+  | "session.get"
+  | "session.list"
+  | "session.events.list"
+  | "session.resume"
+  | "session.title.update"
+  | "session.goal.set"
+  | "session.goal.clear"
+  | "session.loop.set"
+  | "session.loop.edit"
+  | "session.loop.list"
+  | "session.loop.clear"
+  | "session.loop.clear_one"
+  | "session.stream"
+  | "file.list"
+  | "file.search"
+  | "file.create"
+  | "file.rename"
+  | "file.delete"
+  | "file.read"
+  | "file.stat"
+  | "git.status"
+  | "git.diff"
+  | "git.branch_diff_files"
+  | "git.base_worktree_diff_files";
+
+export interface AnyHarnessTimingScope {
+  runtimeUrlHash?: string;
+}
+
+export interface AnyHarnessRequestStartEvent {
+  type: "request_start";
+  category: AnyHarnessTimingCategory;
+  method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
+  measurementOperationId?: AnyHarnessMeasurementOperationId;
+  runtimeUrlHash?: string;
+}
+
+export interface AnyHarnessRequestTimingLifecycle {
+  onRequestStart?: (event: AnyHarnessRequestStartEvent) => void | (() => void);
+}
+
+export type AnyHarnessTimingEvent =
+  | {
+      type: "request";
+      category: AnyHarnessTimingCategory;
+      method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
+      status: number | "network_error" | "aborted";
+      durationMs: number;
+      measurementOperationId?: AnyHarnessMeasurementOperationId;
+      runtimeUrlHash?: string;
+    }
+  | {
+      type: "stream";
+      category: "session.stream";
+      phase:
+        | "connect"
+        | "first_event"
+        | "event"
+        | "close"
+        | "abort"
+        | "network_error";
+      durationMs?: number;
+      eventCount?: number;
+      maxInterArrivalGapMs?: number;
+      malformedEventCount?: number;
+      measurementOperationId?: AnyHarnessMeasurementOperationId;
+      runtimeUrlHash?: string;
+    };
+
+export type AnyHarnessTimingObserver = (event: AnyHarnessTimingEvent) => void;
+
+const anyHarnessTimingObservers = new Set<AnyHarnessTimingObserver>();
+
+export function setAnyHarnessTimingObserver(
+  observer: AnyHarnessTimingObserver | null,
+): () => void {
+  if (!observer) {
+    anyHarnessTimingObservers.clear();
+    return () => undefined;
+  }
+  anyHarnessTimingObservers.add(observer);
+  return () => {
+    anyHarnessTimingObservers.delete(observer);
+  };
+}
+
+export function emitAnyHarnessTimingEvent(event: AnyHarnessTimingEvent): void {
+  for (const observer of [...anyHarnessTimingObservers]) {
+    observer(event);
+  }
+}
+
+export function withTimingCategory(
+  options: AnyHarnessRequestOptions | undefined,
+  category: AnyHarnessTimingCategory,
+): AnyHarnessRequestOptions {
+  return {
+    ...options,
+    timingCategory: category,
+  };
+}
+
+export class AnyHarnessError extends Error {
+  public readonly problem: ProblemDetails;
+  public readonly details?: Record<string, unknown>;
+
+  constructor(
+    problem: ProblemDetails,
+    cause?: unknown,
+    details?: Record<string, unknown>,
+  ) {
+    const normalizedProblem = normalizeProblemDetails(problem, {
+      title: "Request failed",
+      status: 500,
+    });
+    super(normalizedProblem.detail ?? normalizedProblem.title);
+    this.name = "AnyHarnessError";
+    this.problem = normalizedProblem;
+    if (details !== undefined) {
+      this.details = details;
+    }
+    if (cause !== undefined) {
+      (this as Error & { cause?: unknown }).cause = cause;
+    }
+  }
+}
+
+const TELEMETRY_SAFE_PROBLEM_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
+const ANYHARNESS_RUNTIME_INCIDENT_INSTANCE =
+  /^urn:proliferate:anyharness:incident:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const MAX_ERROR_CAUSE_CHAIN_DEPTH = 8;
+const MAX_BOUNDED_ERROR_RESPONSE_BYTES = 65_536;
+
+/**
+ * Whether an AnyHarness request error (or an Error wrapping one) carries the
+ * runtime-owned incident receipt returned through RFC 7807 `instance`.
+ *
+ * The receipt is correlation only: its exact namespace and canonical UUID
+ * shape identify the runtime as the exception owner, without claiming that a
+ * telemetry vendor accepted the corresponding event.
+ *
+ * Validation covers the entire bounded cause chain and fails closed if any
+ * later cause is not an Error, repeats, cannot be read, or exceeds the depth
+ * limit, even when an earlier error carries a valid receipt.
+ */
+export function hasAnyHarnessRuntimeIncidentReceipt(error: unknown): boolean {
+  let current = error;
+  let foundReceipt = false;
+  const seen = new Set<Error>();
+
+  for (let depth = 0; depth < MAX_ERROR_CAUSE_CHAIN_DEPTH; depth += 1) {
+    if (!(current instanceof Error) || seen.has(current)) {
+      return false;
+    }
+    seen.add(current);
+
+    if (
+      current instanceof AnyHarnessError
+      && typeof current.problem.instance === "string"
+      && ANYHARNESS_RUNTIME_INCIDENT_INSTANCE.test(current.problem.instance)
+    ) {
+      foundReceipt = true;
+    }
+
+    const cause = readErrorCause(current);
+    if (!cause.ok) {
+      return false;
+    }
+    if (cause.value == null) {
+      return foundReceipt;
+    }
+    current = cause.value;
+  }
+
+  return false;
+}
+
+/**
+ * Replace an AnyHarness request error (or an Error wrapping one) with a
+ * detached telemetry representation. RFC 7807 `detail` remains available on
+ * the original error for caller-facing UI, but neither it nor the original
+ * cause chain can reach an exception transport through the returned value.
+ */
+export function toAnyHarnessTelemetryError(error: unknown): unknown {
+  const anyHarnessError = findAnyHarnessError(error);
+  if (!anyHarnessError) {
+    return error;
+  }
+
+  const rawCode = anyHarnessError.problem.code;
+  const code = typeof rawCode === "string" && TELEMETRY_SAFE_PROBLEM_CODE.test(rawCode)
+    ? rawCode
+    : null;
+  const safeError = new Error(
+    code
+      ? `AnyHarness request failed (${code})`
+      : "AnyHarness request failed",
+  ) as Error & { code?: string; status: number };
+  safeError.name = "AnyHarnessError";
+  safeError.status = anyHarnessError.problem.status;
+  if (code) {
+    safeError.code = code;
+  }
+  return safeError;
+}
+
+function findAnyHarnessError(error: unknown): AnyHarnessError | null {
+  let current = error;
+  const seen = new Set<unknown>();
+  for (
+    let depth = 0;
+    depth < MAX_ERROR_CAUSE_CHAIN_DEPTH && current != null;
+    depth += 1
+  ) {
+    if (current instanceof AnyHarnessError) {
+      return current;
+    }
+    if (!(current instanceof Error) || seen.has(current)) {
+      return null;
+    }
+    seen.add(current);
+    const cause = readErrorCause(current);
+    if (!cause.ok) {
+      return null;
+    }
+    current = cause.value;
+  }
+  return null;
+}
+
+function readErrorCause(
+  error: Error,
+): { ok: true; value: unknown } | { ok: false } {
+  try {
+    return {
+      ok: true,
+      value: (error as Error & { cause?: unknown }).cause,
+    };
+  } catch {
+    return { ok: false };
+  }
+}
+
+export class AnyHarnessTransport {
+  readonly baseUrl: string;
+  readonly authToken?: string;
+  readonly fetch: typeof globalThis.fetch;
+
+  constructor(options: AnyHarnessClientOptions) {
+    let baseUrl = options.baseUrl;
+    while (baseUrl.endsWith("/")) {
+      baseUrl = baseUrl.slice(0, -1);
+    }
+    this.baseUrl = baseUrl;
+    this.authToken = options.authToken;
+    this.fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
+  }
+
+  async get<T>(path: string, options?: AnyHarnessRequestOptions): Promise<T> {
+    return this.request<T>("GET", path, undefined, options, {
+      accept: "application/json",
+    });
+  }
+
+  // The owning transport keeps auth, headers, timing, and lifecycle intact.
+  // requestBoundedJson owns the status-specific stream/body byte boundary.
+  async getBoundedJson<T>(
+    path: string,
+    maxResponseBytes: number,
+    options?: AnyHarnessRequestOptions,
+  ): Promise<{ body: T; bodyBytes: number }> {
+    const result = await requestBoundedJson(
+      (signal) => this.fetchWithTiming(
+        "GET", path, undefined, options, { accept: "application/json" }, signal,
+      ),
+      {
+        successBytes: maxResponseBytes,
+        errorBytes: MAX_BOUNDED_ERROR_RESPONSE_BYTES,
+      },
+      options?.signal,
+    );
+    if (!result.response.ok) {
+      throw toAnyHarnessErrorBody(result.response, result.body);
+    }
+    return { body: result.body as T, bodyBytes: result.bodyBytes };
+  }
+
+  async getBlob(path: string, options?: AnyHarnessRequestOptions): Promise<Blob> {
+    const res = await this.fetchWithTiming("GET", path, undefined, options, {});
+    if (!res.ok) {
+      throw await toAnyHarnessError(res);
+    }
+    return res.blob();
+  }
+
+  async post<T>(path: string, body: unknown, options?: AnyHarnessRequestOptions): Promise<T> {
+    return this.request<T>("POST", path, body, options, {
+        "content-type": "application/json",
+        accept: "application/json",
+    });
+  }
+
+  async put<T>(path: string, body: unknown, options?: AnyHarnessRequestOptions): Promise<T> {
+    return this.request<T>("PUT", path, body, options, {
+        "content-type": "application/json",
+        accept: "application/json",
+    });
+  }
+
+  async patch<T>(path: string, body: unknown, options?: AnyHarnessRequestOptions): Promise<T> {
+    return this.request<T>("PATCH", path, body, options, {
+        "content-type": "application/json",
+        accept: "application/json",
+    });
+  }
+
+  async delete(path: string, options?: AnyHarnessRequestOptions): Promise<void> {
+    const res = await this.fetchWithTiming("DELETE", path, undefined, options, {
+      accept: "application/json",
+    });
+    if (!res.ok) {
+      throw await toAnyHarnessError(res);
+    }
+  }
+
+  async deleteJson<T>(path: string, options?: AnyHarnessRequestOptions): Promise<T> {
+    const res = await this.fetchWithTiming("DELETE", path, undefined, options, {
+      accept: "application/json",
+    });
+    return this.handleResponse<T>(res);
+  }
+
+  private async request<T>(
+    method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE",
+    path: string,
+    body: unknown,
+    options: AnyHarnessRequestOptions | undefined,
+    headers: HeadersInit,
+  ): Promise<T> {
+    const res = await this.fetchWithTiming(method, path, body, options, headers);
+    return this.handleResponse<T>(res);
+  }
+
+  private async fetchWithTiming(
+    method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE",
+    path: string,
+    body: unknown,
+    options: AnyHarnessRequestOptions | undefined,
+    headers: HeadersInit,
+    signal: AbortSignal | undefined = options?.signal,
+  ): Promise<Response> {
+    const startedAt = timingNow();
+    const finishRequestLifecycle = this.startRequestLifecycle(method, options);
+    try {
+      const res = await this.fetch(`${this.baseUrl}${path}`, {
+        method,
+        headers: this.buildHeaders(headers, options),
+        signal,
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      this.emitRequestTiming(method, options, res.status, timingNow() - startedAt);
+      return res;
+    } catch (error) {
+      this.emitRequestTiming(
+        method,
+        options,
+        isAbortError(error) ? "aborted" : "network_error",
+        timingNow() - startedAt,
+      );
+      throw error;
+    } finally {
+      finishRequestLifecycle();
+    }
+  }
+
+  private startRequestLifecycle(
+    method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE",
+    options: AnyHarnessRequestOptions | undefined,
+  ): () => void {
+    if (!options?.timingCategory || !options.timingLifecycle?.onRequestStart) {
+      return () => undefined;
+    }
+
+    try {
+      const finish = options.timingLifecycle.onRequestStart({
+        type: "request_start",
+        category: options.timingCategory,
+        method,
+        measurementOperationId: options.measurementOperationId,
+        runtimeUrlHash: options.timingScope?.runtimeUrlHash ?? hashTimingScope(this.baseUrl),
+      });
+      if (typeof finish !== "function") {
+        return () => undefined;
+      }
+      let finished = false;
+      return () => {
+        if (finished) {
+          return;
+        }
+        finished = true;
+        try {
+          finish();
+        } catch {
+          // Dev-only request lifecycle hooks must not affect transport results.
+        }
+      };
+    } catch {
+      return () => undefined;
+    }
+  }
+
+  private emitRequestTiming(
+    method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE",
+    options: AnyHarnessRequestOptions | undefined,
+    status: number | "network_error" | "aborted",
+    durationMs: number,
+  ): void {
+    if (!options?.timingCategory) {
+      return;
+    }
+    emitAnyHarnessTimingEvent({
+      type: "request",
+      category: options.timingCategory,
+      method,
+      status,
+      durationMs,
+      measurementOperationId: options.measurementOperationId,
+      runtimeUrlHash: options.timingScope?.runtimeUrlHash ?? hashTimingScope(this.baseUrl),
+    });
+  }
+
+  private async handleResponse<T>(res: Response): Promise<T> {
+    if (!res.ok) {
+      throw await toAnyHarnessError(res);
+    }
+    return (await res.json()) as T;
+  }
+
+  private buildHeaders(headers: HeadersInit, options?: AnyHarnessRequestOptions): Headers {
+    const next = new Headers(headers);
+    if (options?.headers) {
+      const extraHeaders = new Headers(options.headers);
+      extraHeaders.forEach((value, key) => {
+        next.set(key, value);
+      });
+    }
+    if (this.authToken) {
+      next.set("authorization", `Bearer ${this.authToken}`);
+    }
+    return next;
+  }
+}
+
+function timingNow(): number {
+  return typeof performance !== "undefined" ? performance.now() : Date.now();
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
+export function hashTimingScope(value: string): string {
+  // Stable grouping hash only; this is not anonymization or a privacy boundary.
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `scope_${(hash >>> 0).toString(36)}`;
+}
+
+export class AnyHarnessClient {
+  readonly runtime: RuntimeClient;
+  readonly agents: AgentsClient;
+  readonly agentAuth: AgentAuthClient;
+  readonly mobility: MobilityClient;
+  readonly plans: PlansClient;
+  readonly repoRoots: RepoRootsClient;
+  readonly replay: ReplayClient;
+  readonly reviews: ReviewsClient;
+  readonly workspaces: WorkspacesClient;
+  readonly worktrees: WorktreesClient;
+  readonly cowork: CoworkClient;
+  readonly files: FilesClient;
+  readonly sessions: SessionsClient;
+  readonly git: GitClient;
+  readonly pullRequests: PullRequestsClient;
+  readonly terminals: TerminalsClient;
+  readonly processes: ProcessesClient;
+  readonly workflowRunsV2: WorkflowRunsV2Client;
+
+  constructor(options: AnyHarnessClientOptions) {
+    const transport = new AnyHarnessTransport(options);
+    this.runtime = new RuntimeClient(transport);
+    this.agents = new AgentsClient(transport);
+    this.agentAuth = new AgentAuthClient(transport);
+    this.mobility = new MobilityClient(transport);
+    this.plans = new PlansClient(transport);
+    this.repoRoots = new RepoRootsClient(transport);
+    this.replay = new ReplayClient(transport);
+    this.reviews = new ReviewsClient(transport);
+    this.workspaces = new WorkspacesClient(transport);
+    this.worktrees = new WorktreesClient(transport);
+    this.cowork = new CoworkClient(transport);
+    this.files = new FilesClient(transport);
+    this.sessions = new SessionsClient(transport);
+    this.git = new GitClient(transport);
+    this.pullRequests = new PullRequestsClient(transport);
+    this.terminals = new TerminalsClient(transport);
+    this.processes = new ProcessesClient(transport);
+    this.workflowRunsV2 = new WorkflowRunsV2Client(transport);
+  }
+}
+
+async function toAnyHarnessError(res: Response): Promise<AnyHarnessError> {
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {
+    body = undefined;
+  }
+
+  return toAnyHarnessErrorBody(res, body);
+}
+
+function toAnyHarnessErrorBody(res: Response, body: unknown): AnyHarnessError {
+  const details = isJsonObject(body) && isJsonObject(body.detail)
+    ? { ...body.detail }
+    : undefined;
+  return new AnyHarnessError(
+    normalizeProblemDetails(body, {
+      title: res.statusText || "Request failed",
+      status: res.status,
+    }),
+    undefined,
+    details,
+  );
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

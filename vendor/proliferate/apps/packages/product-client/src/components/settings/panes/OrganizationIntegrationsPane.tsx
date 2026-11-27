@@ -1,0 +1,206 @@
+import { useMemo, useState } from "react";
+import { Badge } from "#product/primitives/Badge";
+import { Button } from "#product/primitives/Button";
+import { Input } from "#product/primitives/Input";
+import { Switch } from "#product/primitives/Switch";
+import { SettingsEmptyState } from "#product/primitives/patterns/settings/SettingsEmptyState";
+import { PageHeader } from "#product/primitives/patterns/PageHeader";
+import { SettingsPageBody } from "#product/primitives/patterns/settings/SettingsPageBody";
+import { SettingsRow } from "#product/primitives/patterns/settings/SettingsRow";
+import { SettingsSection } from "#product/primitives/patterns/settings/SettingsSection";
+import type { AdminIntegrationDefinition } from "@proliferate/cloud-sdk/client/integrations";
+import { AddCustomIntegrationDialog } from "#product/components/settings/panes/integrations/AddCustomIntegrationDialog";
+import { IntegrationIcon } from "#product/components/settings/panes/integrations/IntegrationIcon";
+import {
+  useAdminIntegrationDefinitionActions,
+  useAdminIntegrationDefinitions,
+} from "#product/hooks/access/cloud/integrations/use-admin-integration-definitions";
+import { useActiveOrganization } from "#product/hooks/organizations/facade/use-active-organization";
+import {
+  filterIntegrationsByQuery,
+  integrationSearchState,
+} from "#product/lib/domain/settings/integrations-presentation";
+import {
+  adminIntegrationAuthKindLabel,
+  adminIntegrationEnabledView,
+  adminIntegrationSourceLabel,
+  customIntegrationCreatedMessage,
+  type CustomIntegrationFormInput,
+} from "#product/lib/domain/settings/org-integrations-presentation";
+import { useToastStore } from "#product/stores/toast/toast-store";
+
+/**
+ * Org-admin integrations pane: every visible definition (seed + org-custom)
+ * with its effective-enabled policy switch, plus creation of org-custom MCP
+ * definitions.
+ */
+export function OrganizationIntegrationsPane() {
+  const {
+    activeOrganization,
+    activeOrganizationId,
+    organizationsQuery,
+  } = useActiveOrganization();
+  const definitionsQuery = useAdminIntegrationDefinitions(activeOrganizationId);
+  const {
+    createDefinition,
+    creatingDefinition,
+    setEnabled,
+  } = useAdminIntegrationDefinitionActions(activeOrganizationId);
+  const showToast = useToastStore((state) => state.show);
+
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [togglingDefinitionId, setTogglingDefinitionId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  async function handleToggle(definition: AdminIntegrationDefinition, enabled: boolean) {
+    setTogglingDefinitionId(definition.definitionId);
+    try {
+      await setEnabled({ definitionId: definition.definitionId, enabled });
+    } catch {
+      showToast(`${definition.displayName} could not be ${enabled ? "enabled" : "disabled"}.`);
+    } finally {
+      setTogglingDefinitionId(null);
+    }
+  }
+
+  async function handleCreate(input: CustomIntegrationFormInput) {
+    // Errors propagate to the dialog, which surfaces them inline.
+    const created = await createDefinition(input);
+    setAddDialogOpen(false);
+    showToast(customIntegrationCreatedMessage(created), "info");
+  }
+
+  const definitions = definitionsQuery.data ?? [];
+  // Derive the bar's visibility and the effective query together: if the list
+  // shrinks below the threshold the input hides and filtering resets to empty
+  // in the same render, so a phantom "No integrations found" can never show.
+  const { showSearch, activeQuery } = integrationSearchState(definitions.length, searchQuery);
+  const filteredDefinitions = useMemo(
+    () => filterIntegrationsByQuery(definitions, activeQuery),
+    [definitions, activeQuery],
+  );
+
+  return (
+    <SettingsPageBody>
+      <PageHeader
+        variant="flat"
+        title="Integrations"
+        description="Control which integrations members of your organization can connect and use."
+        action={
+          <Button type="button" variant="secondary" onClick={() => setAddDialogOpen(true)}>
+            Add custom MCP
+          </Button>
+        }
+      />
+
+      {organizationsQuery.isLoading ? (
+        <SettingsSection>
+          <SettingsRow label="Integrations" description="Loading organization..." />
+        </SettingsSection>
+      ) : !activeOrganization ? (
+        <SettingsSection>
+          <SettingsRow
+            label="No organization"
+            description="Create or join an organization before configuring organization-wide integrations."
+          />
+        </SettingsSection>
+      ) : definitionsQuery.isLoading ? (
+        <div className="text-ui-sm text-muted-foreground">Loading integrations...</div>
+      ) : definitionsQuery.isError ? (
+        <SettingsEmptyState
+          size="compact"
+          title="Integrations could not be loaded."
+          action={
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                void definitionsQuery.refetch();
+              }}
+            >
+              Retry
+            </Button>
+          }
+        />
+      ) : definitions.length === 0 ? (
+        <SettingsEmptyState size="compact" title="No integrations are available yet." />
+      ) : (
+        <SettingsSection title="Available integrations">
+          {showSearch ? (
+            <div className="px-3.5 pt-3.5 pb-3.5">
+              <Input
+                aria-label="Search integrations"
+                className="h-8 px-2"
+                placeholder="Search integrations"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+              />
+            </div>
+          ) : null}
+          {filteredDefinitions.length === 0 ? (
+            <p className="px-3.5 py-3 text-ui-sm text-muted-foreground">No integrations found</p>
+          ) : null}
+          {filteredDefinitions.map((definition) => {
+            const enabledView = adminIntegrationEnabledView(definition);
+            return (
+              // Contradiction, recorded rather than re-derived: the settings
+              // slice spec paired this row with `IntegrationRow`'s RosterRow
+              // contract, but this pane never renders `IntegrationRow` — these
+              // are the admin catalog's own rows, a five-column table (name /
+              // source / auth kind / provenance / switch) whose columns must
+              // stay aligned across rows. `RosterRow` has a single trailing
+              // slot and no cross-row column mechanism (the same reason
+              // `OrganizationMembersList`'s table deferred), and `SettingsRow`
+              // is label + control. Neither fits without breaking alignment,
+              // so the grid stays until a table-row pattern exists.
+              <div
+                key={definition.definitionId}
+                className="grid grid-cols-[minmax(0,1.6fr)_minmax(0,0.6fr)_minmax(0,0.6fr)_minmax(0,10rem)_auto] items-center gap-3 px-3.5 py-[13px]"
+              >
+                <div className="flex min-w-0 items-center gap-3">
+                  <IntegrationIcon namespace={definition.namespace} className="icon-display [font-size:var(--text-sidebar-brand)]" />
+                  <div className="min-w-0">
+                    <div className="truncate text-ui font-medium text-foreground">
+                      {definition.displayName}
+                    </div>
+                    <div className="mt-0.5 truncate text-ui-sm text-muted-foreground">
+                      {definition.namespace}
+                    </div>
+                  </div>
+                </div>
+                <div className="min-w-0">
+                  <Badge tone="neutral">
+                    {adminIntegrationSourceLabel(definition.source)}
+                  </Badge>
+                </div>
+                <div className="min-w-0 truncate text-ui-sm text-muted-foreground">
+                  {adminIntegrationAuthKindLabel(definition.authKind)}
+                </div>
+                <div className="min-w-0 truncate text-right text-ui-sm text-muted-foreground">
+                  {enabledView.provenance}
+                </div>
+                <div className="flex justify-end">
+                  <Switch
+                    aria-label={`${definition.displayName} enabled`}
+                    checked={enabledView.enabled}
+                    disabled={togglingDefinitionId === definition.definitionId}
+                    onChange={(value) => {
+                      void handleToggle(definition, value);
+                    }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </SettingsSection>
+      )}
+
+      <AddCustomIntegrationDialog
+        open={addDialogOpen}
+        creating={creatingDefinition}
+        onClose={() => setAddDialogOpen(false)}
+        onSubmit={handleCreate}
+      />
+    </SettingsPageBody>
+  );
+}

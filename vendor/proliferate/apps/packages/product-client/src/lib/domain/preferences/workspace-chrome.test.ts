@@ -1,0 +1,91 @@
+import { describe, expect, it } from "vitest";
+import {
+  resolveCoworkWorkspaceChromeClasses,
+  resolveEditorTabChromeClasses,
+  resolveMainSidebarEdgeClassName,
+  resolveStandardWorkspaceChromeClasses,
+  resolveTerminalTabChromeClasses,
+} from "#product/lib/domain/preferences/workspace-chrome";
+
+describe("workspace chrome classes", () => {
+  it("adds one main-sidebar edge only for transparent Desktop chrome", () => {
+    expect(resolveMainSidebarEdgeClassName({ desktop: true, transparent: true }))
+      .toBe("border-r border-border");
+    expect(resolveMainSidebarEdgeClassName({ desktop: true, transparent: false })).toBe("");
+    expect(resolveMainSidebarEdgeClassName({ desktop: false, transparent: true })).toBe("");
+  });
+
+  it("preserves standard shell classes", () => {
+    expect(resolveStandardWorkspaceChromeClasses({
+      transparent: true,
+      sidebarOpen: true,
+    })).toEqual({
+      root: "bg-transparent",
+      contentShell: "bg-background",
+      header: "flex h-[46px] shrink-0 items-center bg-background/70 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60 relative after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-border after:content-['']",
+    });
+
+    expect(resolveStandardWorkspaceChromeClasses({
+      transparent: false,
+      sidebarOpen: true,
+    })).toEqual({
+      root: "bg-sidebar",
+      contentShell: "bg-background border-l transition-[border-color,border-top-left-radius] duration-panel ease-out-cubic border-t rounded-tl-2xl border-border",
+      header: "flex h-[46px] shrink-0 items-center bg-background relative after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-border after:content-['']",
+    });
+
+    expect(resolveStandardWorkspaceChromeClasses({
+      transparent: true,
+      sidebarOpen: false,
+    }).contentShell).toBe("bg-background");
+    expect(resolveStandardWorkspaceChromeClasses({
+      transparent: false,
+      sidebarOpen: false,
+    }).contentShell).toBe("bg-background border-l transition-[border-color,border-top-left-radius] duration-panel ease-out-cubic border-t rounded-tl-none border-transparent");
+  });
+
+  it("matches cowork content chrome to the standard shell", () => {
+    expect(resolveCoworkWorkspaceChromeClasses({
+      transparent: true,
+      sidebarOpen: true,
+    }).contentShell).toBe("bg-background");
+    expect(resolveCoworkWorkspaceChromeClasses({
+      transparent: false,
+      sidebarOpen: false,
+    }).contentShell).toBe("bg-background");
+    expect(resolveCoworkWorkspaceChromeClasses({
+      transparent: true,
+      sidebarOpen: false,
+    }).contentShell).toBe("bg-background");
+    expect(resolveCoworkWorkspaceChromeClasses({
+      transparent: false,
+      sidebarOpen: true,
+    }).contentShell).toBe("bg-background rounded-tl-2xl border-l border-t border-border");
+  });
+
+  it("preserves editor tab classes", () => {
+    expect(resolveEditorTabChromeClasses(true)).toEqual({
+      tablist: "flex h-9 shrink-0 items-end gap-1 overflow-x-auto border-b border-foreground/10 bg-background/60 px-1 pt-1 backdrop-blur-md supports-[backdrop-filter]:bg-background/50",
+      shape: "-mb-px rounded-t-md",
+      active: "border-foreground/10 border-b-background bg-background/85 text-foreground shadow-subtle backdrop-blur-xl",
+    });
+    expect(resolveEditorTabChromeClasses(false)).toEqual({
+      tablist: "flex h-9 shrink-0 items-end gap-1 overflow-x-auto px-1 pt-1",
+      shape: "rounded-md",
+      active: "border-border bg-background text-foreground shadow-subtle",
+    });
+  });
+
+  it("preserves terminal tab classes", () => {
+    expect(resolveTerminalTabChromeClasses(true)).toEqual({
+      rail: "relative flex shrink-0 items-center gap-1 overflow-hidden border-b border-foreground/10 bg-background/60 pr-1 backdrop-blur-md supports-[backdrop-filter]:bg-background/50",
+      active: "bg-background/85 text-foreground backdrop-blur-xl",
+      inactive: "bg-transparent text-muted-foreground hover:bg-hover hover:text-foreground active:bg-active",
+    });
+    expect(resolveTerminalTabChromeClasses(false)).toEqual({
+      rail: "relative flex shrink-0 items-center gap-1 overflow-hidden pr-1",
+      active: "bg-background text-foreground",
+      inactive: "bg-transparent text-muted-foreground hover:bg-hover hover:text-foreground active:bg-active",
+    });
+  });
+});

@@ -1,0 +1,204 @@
+use crate::api::auth::{require_workspace_scope, AuthContext, AuthError};
+use crate::api::http::error::ApiError;
+use crate::app::AppState;
+use crate::domains::workspaces::access_gate::WorkspaceAccessError;
+
+pub fn map_access_error(error: WorkspaceAccessError) -> ApiError {
+    match error {
+        WorkspaceAccessError::WorkspaceNotFound(id) => {
+            ApiError::not_found(format!("workspace not found: {id}"), "WORKSPACE_NOT_FOUND")
+        }
+        WorkspaceAccessError::SessionNotFound(id) => {
+            ApiError::not_found(format!("session not found: {id}"), "SESSION_NOT_FOUND")
+        }
+        WorkspaceAccessError::TerminalNotFound(id) => {
+            ApiError::not_found(format!("terminal not found: {id}"), "TERMINAL_NOT_FOUND")
+        }
+        WorkspaceAccessError::MutationBlocked { workspace_id, mode } => ApiError::conflict(
+            format!(
+                "workspace {workspace_id} is not writable while mode={}",
+                mode.as_str()
+            ),
+            "WORKSPACE_MUTATION_BLOCKED",
+        ),
+        WorkspaceAccessError::LiveSessionStartBlocked { workspace_id, mode } => ApiError::conflict(
+            format!(
+                "workspace {workspace_id} cannot start live sessions while mode={}",
+                mode.as_str()
+            ),
+            "WORKSPACE_LIVE_SESSION_BLOCKED",
+        ),
+        WorkspaceAccessError::WorkspaceArchived(workspace_id) => ApiError::conflict(
+            format!("workspace {workspace_id} is archived"),
+            "WORKSPACE_ARCHIVED",
+        ),
+        WorkspaceAccessError::Unexpected(error) => ApiError::internal(format!(
+            "workspace access state could not be verified: {error}"
+        )),
+    }
+}
+
+pub fn assert_workspace_mutable(state: &AppState, workspace_id: &str) -> Result<(), ApiError> {
+    state
+        .workspace_access_gate
+        .assert_can_mutate_for_workspace(workspace_id)
+        .map_err(map_access_error)
+}
+
+/// The workspace exists, and that is all this asserts.
+///
+/// Read routes need the 404, not a lifecycle refusal: an archived workspace
+/// still renders its chat history, its file tree, and its git state, which is
+/// the entire point of archiving instead of deleting. Any route that spawns a
+/// process or writes the worktree uses [`assert_workspace_active`] or the
+/// access gate instead.
+pub fn assert_workspace_exists(state: &AppState, workspace_id: &str) -> Result<(), ApiError> {
+    state
+        .workspace_runtime
+        .get_workspace(workspace_id)
+        .map_err(|error| ApiError::internal(error.to_string()))?
+        .ok_or_else(|| ApiError::not_found("Workspace not found", "WORKSPACE_NOT_FOUND"))?;
+    Ok(())
+}
+
+/// The archived refusal for routes that are not already on
+/// [`WorkspaceAccessGate`](crate::domains::workspaces::access_gate::WorkspaceAccessGate).
+///
+/// A thin wrapper, deliberately: the gate carries the predicate, so this and
+/// the gate's own `assert_can_mutate_for_workspace` / `assert_can_start_live_session`
+/// cannot drift into two guards that disagree about what "archived" forbids.
+pub fn assert_workspace_active(state: &AppState, workspace_id: &str) -> Result<(), ApiError> {
+    state
+        .workspace_access_gate
+        .assert_workspace_not_archived(workspace_id)
+        .map_err(map_access_error)
+}
+
+pub fn assert_workspace_auth_scope(auth: &AuthContext, workspace_id: &str) -> Result<(), ApiError> {
+    let AuthContext::UserClaim(claim) = auth else {
+        return Ok(());
+    };
+    require_workspace_scope(claim, workspace_id).map_err(auth_scope_error_to_api)
+}
+
+pub fn assert_session_auth_scope(
+    state: &AppState,
+    auth: &AuthContext,
+    session_id: &str,
+) -> Result<(), ApiError> {
+    let AuthContext::UserClaim(claim) = auth else {
+        return Ok(());
+    };
+    if let Some(scoped_session_id) = claim.anyharness_session_id.as_deref() {
+        if scoped_session_id != session_id {
+            return Err(auth_scope_error_to_api(AuthError::ScopeMismatch));
+        }
+    }
+    let session = state
+        .session_service
+        .get_session(session_id)
+        .map_err(|error| ApiError::internal(error.to_string()))?
+        .ok_or_else(|| ApiError::not_found("Session not found", "SESSION_NOT_FOUND"))?;
+    require_workspace_scope(claim, &session.workspace_id).map_err(auth_scope_error_to_api)
+}
+
+pub async fn assert_terminal_auth_scope(
+    state: &AppState,
+    auth: &AuthContext,
+    terminal_id: &str,
+) -> Result<(), ApiError> {
+    let AuthContext::UserClaim(claim) = auth else {
+        return Ok(());
+    };
+    let terminal_handle = state
+        .terminal_service
+        .lookup_terminal(terminal_id)
+        .await
+        .ok_or_else(|| ApiError::not_found("Terminal not found", "TERMINAL_NOT_FOUND"))?;
+    let terminal = terminal_handle
+        .snapshot()
+        .await
+        .map_err(|_| ApiError::not_found("Terminal not found", "TERMINAL_NOT_FOUND"))?;
+    require_workspace_scope(claim, &terminal.workspace_id).map_err(auth_scope_error_to_api)
+}
+
+pub fn assert_terminal_command_auth_scope(
+    state: &AppState,
+    auth: &AuthContext,
+    command_run_id: &str,
+) -> Result<(), ApiError> {
+    let AuthContext::UserClaim(claim) = auth else {
+        return Ok(());
+    };
+    let run = state
+        .terminal_service
+        .get_command_run(command_run_id)
+        .map_err(|error| ApiError::internal(error.to_string()))?
+        .ok_or_else(|| ApiError::not_found("Command run not found", "COMMAND_RUN_NOT_FOUND"))?;
+    require_workspace_scope(claim, &run.workspace_id).map_err(auth_scope_error_to_api)
+}
+
+fn auth_scope_error_to_api(error: AuthError) -> ApiError {
+    match error {
+        AuthError::ScopeMismatch => ApiError::forbidden(
+            "Direct-attach token is not scoped to this resource.",
+            "DIRECT_ATTACH_SCOPE_MISMATCH",
+        ),
+        _ => ApiError::forbidden(
+            "Direct-attach token cannot access this resource.",
+            "DIRECT_ATTACH_FORBIDDEN",
+        ),
+    }
+}
+
+pub fn assert_session_mutable(state: &AppState, session_id: &str) -> Result<(), ApiError> {
+    state
+        .workspace_access_gate
+        .assert_can_mutate_for_session(session_id)
+        .map_err(map_access_error)
+}
+
+pub async fn assert_terminal_mutable(state: &AppState, terminal_id: &str) -> Result<(), ApiError> {
+    state
+        .workspace_access_gate
+        .assert_can_mutate_for_terminal(terminal_id)
+        .await
+        .map_err(map_access_error)
+}
+
+/// Session mutation admission at the HTTP boundary (spec 2b): every
+/// execution-affecting route acquires the session's mutation permit with the
+/// External source BEFORE its first side effect, and holds the returned
+/// permit across the mutation. A session controlled by a nonterminal workflow
+/// answers the stable conflict; policy infrastructure failure surfaces as the
+/// generic storage error, never a fabricated admission. Cosmetic store-only
+/// routes (title) deliberately do not call this (ruling 2b-2).
+pub async fn admit_session_mutation(
+    state: &AppState,
+    session_id: &str,
+    kind: crate::domains::sessions::admission::SessionMutationKind,
+) -> Result<crate::domains::sessions::admission::SessionMutationPermit, ApiError> {
+    use crate::domains::sessions::admission::{SessionMutationConflict, SessionMutationSource};
+    state
+        .session_admission
+        .acquire(session_id, kind, &SessionMutationSource::external())
+        .await
+        .map_err(|conflict| match conflict {
+            SessionMutationConflict::ControlledByWorkflow { .. } => ApiError::conflict(
+                "session execution is controlled by an active workflow run",
+                "SESSION_CONTROLLED_BY_WORKFLOW",
+            ),
+            SessionMutationConflict::SubagentOpenRequired => ApiError::conflict(
+                "open the subagent before performing this operation",
+                "SUBAGENT_OPEN_REQUIRED",
+            ),
+            SessionMutationConflict::Internal(error) => {
+                tracing::error!(
+                    session_id = %session_id,
+                    error = %error,
+                    "session mutation admission lookup failed"
+                );
+                ApiError::internal("session admission unavailable")
+            }
+        })
+}

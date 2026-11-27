@@ -1,0 +1,393 @@
+import { useState } from "react";
+import type {
+  FileChangeContentPart,
+  FileReadContentPart,
+  TerminalOutputContentPart,
+  ToolCallContentPart,
+  ToolCallItem,
+  ToolResultTextContentPart,
+} from "@anyharness/sdk";
+import { Button } from "#product/primitives/Button";
+import { BashCommandCall } from "#product/components/workspace/chat/tool-calls/BashCommandCall";
+import { CoworkArtifactToolActionRow } from "#product/components/workspace/chat/tool-calls/CoworkArtifactToolActionRow";
+import { CoworkCodingToolActionRow } from "#product/components/workspace/chat/tool-calls/cowork/CoworkCodingToolActionRow";
+import { FileChangeCall } from "#product/components/workspace/chat/tool-calls/FileChangeCall";
+import { FileReadCall } from "#product/components/workspace/chat/tool-calls/FileReadCall";
+import { GenericToolResultRow } from "#product/components/workspace/chat/tool-calls/GenericToolResultRow";
+import { SkillsToolResultRow } from "#product/components/workspace/chat/tool-calls/SkillsToolResultRow";
+import { AgentOperationsToolActionRow } from "#product/components/workspace/chat/tool-calls/AgentOperationsToolActionRow";
+import { useOpenCoworkCodingSession } from "#product/hooks/cowork/workflows/use-open-cowork-coding-session";
+import { useWorkspaceSelection } from "#product/hooks/workspaces/workflows/selection/use-workspace-selection";
+import {
+  deriveAgentOperationsReadTarget,
+  deriveAgentOperationsReceiptPresentation,
+  isAgentOperationsReadAction,
+  readAgentOperationsStructuredOutput,
+} from "#product/domain/chats/tools/agent-operations-tool-presentation";
+import { deriveSkillsToolResultPresentation } from "#product/domain/chats/tools/skills-tool-result";
+import { describeToolCallDisplay } from "#product/domain/chats/tools/tool-call-display";
+import { normalizeToolResultText } from "#product/domain/chats/tools/tool-result-text";
+import { CHAT_VISIBLE_FILE_CHANGE_LIMIT } from "#product/lib/domain/workspaces/changes/diff-display-policy";
+import { ToolKindIcon } from "#product/components/workspace/chat/transcript/TranscriptToolKindIcon";
+import { AgentIdentityGlyph } from "#product/components/patterns/AgentIdentityGlyph";
+import { buildDelegatedAgentIdentity } from "#product/lib/domain/delegated-work/identity";
+import { useBackgroundCommandStatus } from "#product/hooks/activity/derived/use-background-command-status";
+import { useTranscriptSessionId } from "#product/components/workspace/chat/transcript/TranscriptContexts";
+
+export function TranscriptToolCallItemBlock({
+  item,
+  workspaceId,
+  onOpenArtifact,
+  onOpenBackgroundTerminal,
+}: {
+  item: ToolCallItem;
+  workspaceId: string | null;
+  onOpenArtifact: (workspaceId: string, artifactId: string) => void;
+  /**
+   * Deep-opens the Background work pane's terminal detail for a background
+   * command's `ActivityProcess.id` (bgwork r8). Optional: absent in surfaces
+   * that don't host the pane (e.g. the playground preview).
+   */
+  onOpenBackgroundTerminal?: (processId: string) => void;
+}) {
+  const openCodingSession = useOpenCoworkCodingSession();
+  const { selectWorkspace } = useWorkspaceSelection();
+  const [showAllFileChanges, setShowAllFileChanges] = useState(false);
+  // Computed ahead of the early returns below so the roster lookup hook
+  // (shared with CollapsedActionRows' CommandActionRow/ParsedCommandRows,
+  // bgwork r8 round 3) is called unconditionally on every render path.
+  const toolResultText = item.contentParts
+    .filter((part): part is ToolResultTextContentPart => part.type === "tool_result_text")
+    .map((part) => part.text)
+    .join("\n\n");
+  const normalizedResultText = normalizeToolResultText(toolResultText);
+  // bgwork r8: a Bash tool result carrying the literal "Command running in
+  // background with ID: {taskId}" sentence correlates this row to a roster
+  // `ActivityProcess` — client-side only, there is no wire tool_call_id link.
+  // A row whose result text doesn't parse to an id (foreground commands, or
+  // any unrecognized shape) falls through to the ordinary inline-disclosure
+  // BashCommandCall below, unchanged.
+  const { processId: backgroundProcessId, trailingStatus: backgroundTrailingStatus } =
+    useBackgroundCommandStatus(normalizedResultText, useTranscriptSessionId());
+
+  if (
+    item.semanticKind === "cowork_artifact_create"
+    || item.semanticKind === "cowork_artifact_update"
+  ) {
+    return (
+      <CoworkArtifactToolActionRow
+        item={item}
+        onOpenArtifact={
+          workspaceId
+            ? (artifactId) => onOpenArtifact(workspaceId, artifactId)
+            : undefined
+        }
+      />
+    );
+  }
+
+  if (item.semanticKind === "cowork_coding") {
+    return (
+      <CoworkCodingToolActionRow
+        item={item}
+        onOpenCodingSession={(input) => { void openCodingSession(input); }}
+        onOpenWorkspace={(targetWorkspaceId) => {
+          void selectWorkspace(targetWorkspaceId, { force: true });
+        }}
+      />
+    );
+  }
+
+  const fileChanges = item.contentParts.filter(
+    (part): part is FileChangeContentPart => part.type === "file_change",
+  );
+  const fileReads = item.contentParts.filter(
+    (part): part is FileReadContentPart => part.type === "file_read",
+  );
+  const terminalParts = item.contentParts.filter(
+    (part): part is TerminalOutputContentPart => part.type === "terminal_output",
+  );
+  const toolCallPart = item.contentParts.find(
+    (part): part is ToolCallContentPart => part.type === "tool_call",
+  );
+  const toolName = toolCallPart?.title ?? item.title ?? item.nativeToolName ?? "Tool call";
+  const rawInput = isRecord(item.rawInput);
+  const bashDescription = readString(rawInput?.description) ?? undefined;
+  const bashCommand = readString(rawInput?.command) ?? toolName;
+  const openBackgroundTerminal = backgroundProcessId && onOpenBackgroundTerminal
+    ? () => onOpenBackgroundTerminal(backgroundProcessId)
+    : undefined;
+  const fallbackDisplay = describeToolCallDisplay(item, toolName);
+  const rows: React.ReactNode[] = [];
+  const status = mapStatus(item.status);
+  const skillsToolResult = deriveSkillsToolResultPresentation(item, normalizedResultText);
+  const agentOperationsReceipt = deriveAgentOperationsReceiptPresentation(item);
+  const agentOperationsReadTarget = deriveAgentOperationsReadTarget(item);
+  const fallbackIcon = agentOperationsReadTarget?.sessionId
+    ? (
+      <AgentIdentityGlyph
+        identity={buildDelegatedAgentIdentity({
+          id: agentOperationsReadTarget.sessionId,
+          title: agentOperationsReadTarget.title ?? "Agent",
+          sessionId: agentOperationsReadTarget.sessionId,
+        })}
+        dimension={16}
+      />
+    )
+    : <ToolKindIcon iconKey={fallbackDisplay.iconKey} />;
+  const agentOperationsResultText = agentOperationsReceipt
+    ? normalizedResultText || formatStructuredToolOutput(readAgentOperationsStructuredOutput(item))
+    : null;
+  const genericResultText = normalizedResultText
+    || (isAgentOperationsReadAction(item)
+      ? formatStructuredToolOutput(readAgentOperationsStructuredOutput(item))
+      : null);
+  const visibleFileChanges = showAllFileChanges
+    ? fileChanges
+    : fileChanges.slice(0, CHAT_VISIBLE_FILE_CHANGE_LIMIT);
+  const hiddenFileChangeCount = fileChanges.length - visibleFileChanges.length;
+  const canToggleFileChanges = fileChanges.length > CHAT_VISIBLE_FILE_CHANGE_LIMIT;
+
+  visibleFileChanges.forEach((part, idx) => {
+    rows.push(
+      <FileChangeCall
+        key={`file-change-${idx}`}
+        operation={part.operation}
+        path={part.path}
+        workspacePath={part.workspacePath}
+        basename={part.basename}
+        newPath={part.newPath}
+        newWorkspacePath={part.newWorkspacePath}
+        newBasename={part.newBasename}
+        additions={part.additions}
+        deletions={part.deletions}
+        patch={part.patch}
+        preview={part.preview}
+        status={status}
+        contentSearchUnitId={`diff:tool:${item.itemId}:file-change:${idx}`}
+      />,
+    );
+  });
+  if (canToggleFileChanges) {
+    rows.push(
+      <FileChangesToggleRow
+        key="file-change-toggle"
+        expanded={showAllFileChanges}
+        hiddenCount={hiddenFileChangeCount}
+        onToggle={() => setShowAllFileChanges((value) => !value)}
+      />,
+    );
+  }
+
+  fileReads.forEach((part, idx) => {
+    rows.push(
+      <FileReadCall
+        key={`file-read-${idx}`}
+        path={part.path}
+        workspacePath={part.workspacePath}
+        basename={part.basename}
+        line={part.line}
+        scope={part.scope}
+        startLine={part.startLine}
+        endLine={part.endLine}
+        preview={part.preview ?? (normalizedResultText || undefined)}
+        status={status}
+      />,
+    );
+  });
+
+  if (terminalParts.length > 0) {
+    const output = terminalParts
+      .filter((part) => part.event === "output" && part.data)
+      .map((part) => part.data ?? "")
+      .join("");
+    rows.push(
+      <BashCommandCall
+        key="terminal"
+        command={bashCommand}
+        description={bashDescription}
+        output={output || (typeof item.rawOutput === "string" ? item.rawOutput : undefined)}
+        status={status}
+        duration={backgroundProcessId ? backgroundTrailingStatus : formatToolDuration(item)}
+        onOpenBackgroundTerminal={openBackgroundTerminal}
+      />,
+    );
+  }
+
+  if (rows.length === 0 && normalizedResultText) {
+    if (item.nativeToolName === "Bash" || item.toolKind === "execute") {
+      rows.push(
+        <BashCommandCall
+          key="terminal-result"
+          command={bashCommand}
+          description={bashDescription}
+          output={normalizedResultText}
+          status={status}
+          duration={backgroundProcessId ? backgroundTrailingStatus : formatToolDuration(item)}
+          onOpenBackgroundTerminal={openBackgroundTerminal}
+        />,
+      );
+    } else if (item.nativeToolName === "Read" || item.toolKind === "read") {
+      const fallbackReadPath = deriveReadPath(item, toolName);
+      rows.push(
+        <FileReadCall
+          key="read-result"
+          path={fallbackReadPath}
+          basename={fallbackReadPath.split("/").pop() ?? fallbackReadPath}
+          scope="unknown"
+          preview={normalizedResultText}
+          status={status}
+        />,
+      );
+    }
+  }
+
+  if (rows.length === 0 && skillsToolResult) {
+    rows.push(
+      <SkillsToolResultRow
+        key="skills-result"
+        presentation={skillsToolResult}
+        status={status}
+      />,
+    );
+  }
+
+  if (rows.length === 0 && agentOperationsReceipt) {
+    rows.push(
+      <AgentOperationsToolActionRow
+        key="agent-operations-receipt"
+        item={item}
+        presentation={agentOperationsReceipt}
+        resultText={agentOperationsResultText}
+        currentWorkspaceId={workspaceId}
+      />,
+    );
+  }
+
+  if (rows.length === 0 && genericResultText) {
+    rows.push(
+        <GenericToolResultRow
+          key="result"
+          icon={fallbackIcon}
+          label={fallbackDisplay.label}
+          status={status}
+        hint={fallbackDisplay.hint}
+        resultText={genericResultText}
+      />,
+    );
+  }
+
+  if (rows.length === 0) {
+    rows.push(
+        <GenericToolResultRow
+          key="tool"
+          icon={fallbackIcon}
+          label={fallbackDisplay.label}
+          status={status}
+        hint={fallbackDisplay.hint}
+      />,
+    );
+  }
+
+  if (rows.length === 1) {
+    return <>{rows[0]}</>;
+  }
+
+  const hasOnlyFileChangeRows =
+    fileChanges.length > 0
+    && fileReads.length === 0
+    && terminalParts.length === 0;
+  return (
+    <div className={hasOnlyFileChangeRows ? "flex flex-col" : "space-y-1"}>
+      {rows}
+    </div>
+  );
+}
+
+function formatStructuredToolOutput(output: Record<string, unknown> | null): string | null {
+  if (!output) {
+    return null;
+  }
+  try {
+    return JSON.stringify(output, null, 2);
+  } catch {
+    return null;
+  }
+}
+
+function FileChangesToggleRow({
+  expanded,
+  hiddenCount,
+  onToggle,
+}: {
+  expanded: boolean;
+  hiddenCount: number;
+  onToggle: () => void;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      onClick={onToggle}
+      className="h-7 w-fit justify-start rounded-md px-1.5 text-chat font-normal text-muted-foreground hover:bg-muted hover:text-foreground"
+    >
+      {expanded ? "Show less" : `Show ${hiddenCount} more`}
+    </Button>
+  );
+}
+
+function deriveReadPath(item: ToolCallItem, fallback: string): string {
+  const rawInput = isRecord(item.rawInput);
+  const fromInput =
+    readString(rawInput?.file_path) ??
+    readString(rawInput?.path);
+  if (fromInput) return fromInput;
+  return fallback.startsWith("Read ") ? fallback.slice(5) : fallback;
+}
+
+function isRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? value as Record<string, unknown> : null;
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function mapStatus(
+  status: string,
+): "running" | "completed" | "failed" {
+  if (status === "completed") return "completed";
+  if (status === "failed") return "failed";
+  return "running";
+}
+
+function formatToolDuration(item: ToolCallItem): string | undefined {
+  const rawItem = isRecord(item);
+  const startedAtValue =
+    readString(rawItem?.startedAt)
+    ?? readString(rawItem?.timestamp);
+  if (!startedAtValue) {
+    return undefined;
+  }
+
+  const startedAt = Date.parse(startedAtValue);
+  if (!Number.isFinite(startedAt)) {
+    return undefined;
+  }
+
+  const completedAtValue = readString(rawItem?.completedAt);
+  const completedAt = completedAtValue ? Date.parse(completedAtValue) : Date.now();
+  if (!Number.isFinite(completedAt) || completedAt < startedAt) {
+    return undefined;
+  }
+
+  const elapsedSeconds = Math.max(0, Math.round((completedAt - startedAt) / 1000));
+  if (elapsedSeconds < 60) {
+    return `for ${elapsedSeconds}s`;
+  }
+
+  const minutes = Math.floor(elapsedSeconds / 60);
+  const seconds = elapsedSeconds % 60;
+  return seconds === 0 ? `for ${minutes}m` : `for ${minutes}m ${seconds}s`;
+}

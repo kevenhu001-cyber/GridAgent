@@ -1,0 +1,122 @@
+import { useState, type ReactNode } from "react";
+import { motion } from "@proliferate/design/motion";
+import { Button } from "#product/primitives/Button";
+import { Check, Copy } from "#product/primitives/icons/core";
+import { AutoHideScrollArea } from "#product/primitives/patterns/AutoHideScrollArea";
+import { CODE_BLOCK_MAX_HEIGHT_CLASS } from "#product/domain/chats/tools/tool-call-layout";
+
+/**
+ * Code block card: bordered rounded shell with a header carrying
+ * the language label and an always-visible copy icon button. `children`
+ * overrides the rendered code content (e.g. app-injected highlighted HTML);
+ * `code` remains the copy payload and the plain-text fallback.
+ */
+export function MarkdownCodeBlockShell({
+  code,
+  label,
+  children,
+}: {
+  code: string;
+  label?: string | null;
+  children?: ReactNode;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  function copyCode() {
+    void writeClipboardText(code)
+      .then((copiedSuccessfully) => {
+        if (!copiedSuccessfully) {
+          return;
+        }
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), motion.feedback.copiedResetMs);
+      });
+  }
+
+  return (
+    <div
+      // Recorded causes (DESIGN_SYSTEM.md § UI-conformance review, check 4):
+      // `my-[14px]` is optical, not scale — the block's own 1px transparent
+      // border plus its cap height put its visual edge half a step inside the
+      // box, so 14px reads as the 16px rhythm the surrounding prose uses.
+      // `bg-[var(--color-code-block-background,var(--color-card))]` is a
+      // two-argument CSS fallback for an optional per-theme override; no token
+      // utility can express a fallback chain.
+      className="relative my-[14px] w-full min-w-0 overflow-clip rounded-lg border border-transparent bg-[var(--color-code-block-background,var(--color-card))]"
+      data-markdown-code-block="true"
+    >
+      <div className="flex select-none items-center justify-between gap-2 py-1 pl-2 pr-1.5 text-chat text-muted-foreground">
+        {label ? <span className="min-w-0 flex-1 truncate">{label}</span> : <span className="min-w-0 flex-1" />}
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          onClick={copyCode}
+          className="size-6 shrink-0 rounded-md bg-transparent text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          aria-label="Copy code"
+        >
+          {copied ? <Check className="icon-paired" /> : <Copy className="icon-paired" />}
+        </Button>
+      </div>
+      {/*
+        Brought into the shared AutoHideScrollArea primitive (rung 8, PRO-258):
+        this used to be a bare `overflow-x-auto overflow-y-auto` div, which
+        chained scroll natively (the inverse inconsistency the ADR calls out —
+        every OTHER nested scroller inside a transcript row trapped wheel
+        deltas at its edge, while this one bubbled by default). Routing it
+        through the primitive with `chainVerticalWheel` makes a long fenced
+        code block behave exactly like every other nested tool-output region:
+        the transcript scroll continues past it on wheel, touch, and momentum.
+      */}
+      <AutoHideScrollArea
+        allowHorizontal
+        viewportClassName={`${CODE_BLOCK_MAX_HEIGHT_CLASS} p-3 font-mono text-chat font-normal [&_pre]:!m-0 [&_pre]:!p-0 [&_pre]:!bg-transparent [&_code]:text-chat`}
+        chainVerticalWheel
+        viewportDataAttributes={{ "data-markdown-code-content": "true" }}
+      >
+        {children ?? (
+          <pre className="m-0 p-0">
+            <code className="whitespace-pre font-mono text-chat font-normal text-foreground">
+              {code}
+            </code>
+          </pre>
+        )}
+      </AutoHideScrollArea>
+    </div>
+  );
+}
+
+async function writeClipboardText(value: string): Promise<boolean> {
+  if (writeClipboardTextFallback(value)) {
+    return true;
+  }
+  const clipboard = navigator.clipboard;
+  if (clipboard?.writeText) {
+    try {
+      await clipboard.writeText(value);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+function writeClipboardTextFallback(value: string): boolean {
+  const input = document.createElement("textarea");
+  input.value = value;
+  input.setAttribute("readonly", "true");
+  input.style.position = "fixed";
+  input.style.left = "-9999px";
+  input.style.top = "0";
+  document.body.appendChild(input);
+  input.focus();
+  input.select();
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    document.body.removeChild(input);
+  }
+}

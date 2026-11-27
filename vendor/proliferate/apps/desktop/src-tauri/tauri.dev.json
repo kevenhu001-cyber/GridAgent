@@ -1,0 +1,32 @@
+{
+  "productName": "Proliferate Local",
+  "identifier": "com.proliferate.app.local",
+  "app": {
+    "windows": [
+      {
+        "title": "Proliferate Dev",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 700,
+        "resizable": true,
+        "maximized": true,
+        "fullscreen": false,
+        "dragDropEnabled": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "transparent": true
+      }
+    ]
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["proliferate-local"]
+      }
+    },
+    "updater": {
+      "endpoints": []
+    }
+  }
+}

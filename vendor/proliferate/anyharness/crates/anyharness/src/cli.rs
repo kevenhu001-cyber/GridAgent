@@ -1,0 +1,25 @@
+use clap::{Parser, Subcommand};
+
+use crate::commands::catalog_probe::CatalogProbeArgs;
+use crate::commands::install_agents::InstallAgentsArgs;
+use crate::commands::serve::ServeArgs;
+
+#[derive(Parser)]
+#[command(name = "anyharness")]
+#[command(about = "AnyHarness: a runtime for coding agents")]
+#[command(version = env!("PROLIFERATE_STAMPED_VERSION"))]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Commands,
+}
+
+#[derive(Subcommand)]
+pub enum Commands {
+    Serve(ServeArgs),
+    /// Install or reconcile managed agent artifacts into the runtime home
+    InstallAgents(InstallAgentsArgs),
+    /// Print the OpenAPI JSON schema for the runtime API
+    PrintOpenapi,
+    /// Probe an installed agent harness over ACP and snapshot its model/mode catalog
+    CatalogProbe(CatalogProbeArgs),
+}

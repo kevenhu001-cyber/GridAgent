@@ -1,0 +1,148 @@
+import type {
+  PointerEventHandler,
+  RefObject,
+} from "react";
+import type { TerminalRecord } from "@anyharness/sdk";
+import { RightPanelContent } from "#product/components/workspace/shell/right-panel/RightPanelContent";
+import { RightPanelHeaderTabs } from "#product/components/workspace/shell/right-panel/RightPanelHeaderTabs";
+import type {
+  RightPanelActiveEntryKey,
+  RightPanelHeaderEntryKey,
+  RightPanelTool,
+} from "#product/lib/domain/workspaces/shell/right-panel-model";
+import type { RightPanelHeaderEntry } from "#product/lib/domain/workspaces/shell/right-panel-header-entry";
+import type { RightPanelNewTabMenuDefault } from "#product/lib/infra/right-panel-new-tab-menu";
+import type {
+  FileViewerMode,
+  ViewerTarget,
+} from "#product/lib/domain/workspaces/viewer/viewer-target";
+import type { WorkspaceFileBuffer } from "#product/stores/editor/workspace-file-buffers-store";
+
+interface RightPanelFrameProps {
+  rootRef: RefObject<HTMLDivElement | null>;
+  onPointerDownCapture: PointerEventHandler<HTMLDivElement>;
+  workspaceId: string | null;
+  workspaceUiKey: string | null;
+  activeEntryKey: RightPanelActiveEntryKey;
+  activeTool: RightPanelTool | null;
+  /** Whether the right panel is actually open/visible (not just mounted). */
+  isOpen: boolean;
+  activeTerminalId: string | null;
+  activeViewerTarget: ViewerTarget | null;
+  entries: readonly RightPanelHeaderEntry[];
+  /** Finish-signal ladder rung 1 — the Background work entry's unread dot. */
+  backgroundWorkDirty: boolean;
+  unreadByTerminal: Record<string, boolean>;
+  buffersByPath: Record<string, WorkspaceFileBuffer>;
+  tabModes: Record<string, FileViewerMode>;
+  orderedTerminals: readonly TerminalRecord[];
+  isWorkspaceReady: boolean;
+  shouldRenderContent: boolean;
+  shouldMountTerminalPanel: boolean;
+  canConnectTerminals: boolean;
+  isLoadingTerminals: boolean;
+  terminalListErrorMessage: string | null;
+  terminalFocusRequestToken: number;
+  newTabMenuRequestToken: number;
+  newTabMenuDefaultKind: RightPanelNewTabMenuDefault;
+  onActivateEntry: (entryKey: RightPanelHeaderEntryKey) => boolean;
+  onSelectTerminal: (terminalId: string) => void;
+  onCloseTerminal: (terminalId: string) => void;
+  onCloseViewerTarget: (targetKey: RightPanelHeaderEntryKey) => void;
+  onRenameTerminal: (terminalId: string, title: string) => Promise<void>;
+  onCreateTerminal: () => void;
+  onOpenRepoSettings: () => void;
+  onReorderHeaderEntry: (
+    entryKey: RightPanelHeaderEntryKey,
+    beforeEntryKey: RightPanelHeaderEntryKey | null,
+  ) => void;
+}
+
+export function RightPanelFrame({
+  rootRef,
+  onPointerDownCapture,
+  workspaceId,
+  workspaceUiKey,
+  activeEntryKey,
+  activeTool,
+  isOpen,
+  activeTerminalId,
+  activeViewerTarget,
+  entries,
+  backgroundWorkDirty,
+  unreadByTerminal,
+  buffersByPath,
+  tabModes,
+  orderedTerminals,
+  isWorkspaceReady,
+  shouldRenderContent,
+  shouldMountTerminalPanel,
+  canConnectTerminals,
+  isLoadingTerminals,
+  terminalListErrorMessage,
+  terminalFocusRequestToken,
+  newTabMenuRequestToken,
+  newTabMenuDefaultKind,
+  onActivateEntry,
+  onSelectTerminal,
+  onCloseTerminal,
+  onCloseViewerTarget,
+  onRenameTerminal,
+  onCreateTerminal,
+  onOpenRepoSettings,
+  onReorderHeaderEntry,
+}: RightPanelFrameProps) {
+  return (
+    <div
+      ref={rootRef}
+      data-right-panel-root="true"
+      data-focus-zone="right-panel"
+      data-group="true"
+      tabIndex={-1}
+      onPointerDownCapture={onPointerDownCapture}
+      className="relative flex h-full flex-col overflow-hidden border-l border-t border-border bg-sidebar-background text-sidebar-foreground outline-none"
+    >
+      <RightPanelHeaderTabs
+        entries={entries}
+        activeEntryKey={activeEntryKey}
+        backgroundWorkDirty={backgroundWorkDirty}
+        unreadByTerminal={unreadByTerminal}
+        buffersByPath={buffersByPath}
+        tabModes={tabModes}
+        isWorkspaceReady={isWorkspaceReady}
+        newTabMenuRequestToken={newTabMenuRequestToken}
+        newTabMenuDefaultKind={newTabMenuDefaultKind}
+        onActivateEntry={onActivateEntry}
+        onCloseTerminal={onCloseTerminal}
+        onCloseViewerTarget={onCloseViewerTarget}
+        onRenameTerminal={onRenameTerminal}
+        onCreateTerminal={onCreateTerminal}
+        onReorderHeaderEntry={onReorderHeaderEntry}
+        onOpenRepoSettings={onOpenRepoSettings}
+      />
+
+      <RightPanelContent
+        workspaceId={workspaceId}
+        workspaceUiKey={workspaceUiKey}
+        activeEntryKey={activeEntryKey}
+        activeTool={activeTool}
+        isOpen={isOpen}
+        activeTerminalId={activeTerminalId}
+        activeViewerTarget={activeViewerTarget}
+        orderedTerminals={orderedTerminals}
+        shouldRenderContent={shouldRenderContent}
+        shouldMountTerminalPanel={shouldMountTerminalPanel}
+        isWorkspaceReady={isWorkspaceReady}
+        canConnectTerminals={canConnectTerminals}
+        isLoadingTerminals={isLoadingTerminals}
+        terminalListErrorMessage={terminalListErrorMessage}
+        terminalFocusRequestToken={terminalFocusRequestToken}
+        unreadByTerminal={unreadByTerminal}
+        onNewTerminal={onCreateTerminal}
+        onSelectTerminal={onSelectTerminal}
+        onCloseTerminal={onCloseTerminal}
+        onRenameTerminal={onRenameTerminal}
+      />
+    </div>
+  );
+}

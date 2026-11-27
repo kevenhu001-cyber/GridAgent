@@ -1,0 +1,185 @@
+#!/usr/bin/env node
+// Vendors the models.dev provider catalog into a small, UI-only suggestion
+// list for the desktop app's OpenCode "Add provider" picker (contract §6).
+//
+// Refresh: node scripts/vendor-provider-registry.mjs
+// (re-run whenever OpenCode-supported providers change upstream; the output
+// below is checked in, there is no build-time fetch).
+
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+// The consumed copy lives in product-client (harness-env-vars.ts imports it);
+// the desktop host reads it through that package, so this is the only output.
+const productConfigDir = path.join(repoRoot, "apps/packages/product-client/src/config");
+const outputPath = path.join(productConfigDir, "provider-registry.generated.json");
+// Hand-curated documentation/console URLs for the featured provider tier
+// (PRO-206). models.dev does not publish console URLs and its `doc` field is
+// sparse, so this overlay is checked in and merged onto the vendored entries by
+// provider id (overlay wins). No network — it is read from disk.
+const docOverlayPath = path.join(productConfigDir, "provider-doc-overlay.json");
+// Vendored logo marks (models.dev repo is MIT; the marks are kept byte-for-byte
+// in their own currentColor mono form). Consumed via the generated URL map so
+// each mark is a bundler asset in the lazily-loaded picker chunk, never a
+// login-path barrel import.
+const logosDir = path.join(repoRoot, "apps/packages/product-client/src/assets/provider-logos");
+const logoMapPath = path.join(productConfigDir, "provider-logos.generated.ts");
+const sourceUrl = "https://models.dev/api.json";
+const logoUrl = (id) => `https://models.dev/logos/${id}.svg`;
+
+async function fetchProviders() {
+  const response = await fetch(sourceUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ${sourceUrl}: ${response.status} ${response.statusText}`);
+  }
+  return response.json();
+}
+
+// Upstream ids become path components (assets/provider-logos/<id>.svg) and
+// identifiers in generated TS, so only plain slug ids are kept — anything else
+// could escape the logo dir or emit unparseable output.
+const SAFE_PROVIDER_ID_RE = /^[a-z0-9][a-z0-9._-]*$/i;
+
+function reduceProviders(raw) {
+  const providers = [];
+
+  for (const provider of Object.values(raw)) {
+    const envVarNames = Array.isArray(provider.env) ? provider.env.filter(Boolean) : [];
+    if (envVarNames.length === 0) continue;
+    if (typeof provider.id !== "string" || !SAFE_PROVIDER_ID_RE.test(provider.id)) {
+      console.warn(`Skipping provider with unsafe id: ${JSON.stringify(provider.id)}`);
+      continue;
+    }
+
+    const entry = {
+      id: provider.id,
+      displayName: provider.name ?? provider.id,
+      envVarNames,
+    };
+    if (typeof provider.npm === "string" && provider.npm) {
+      entry.npm = provider.npm;
+    }
+    // models.dev sometimes carries a `doc` homepage URL upstream; keep it when
+    // present so a regeneration captures it automatically. The hand-curated
+    // overlay (mergeDocOverlay) still wins for the featured tier and adds the
+    // console URLs upstream never provides.
+    if (typeof provider.doc === "string" && provider.doc) {
+      entry.docsUrl = provider.doc;
+    }
+    providers.push(entry);
+  }
+
+  providers.sort((a, b) => a.id.localeCompare(b.id));
+  return providers;
+}
+
+// Merge the checked-in doc-URL overlay onto the vendored entries by id (overlay
+// wins). Read from disk, never the network, so the merge is deterministic and
+// reproducible from checked-in inputs alone.
+function mergeDocOverlay(providers) {
+  if (!existsSync(docOverlayPath)) return providers;
+  const overlay = JSON.parse(readFileSync(docOverlayPath, "utf8")).providers ?? {};
+  return providers.map((provider) => {
+    const patch = overlay[provider.id];
+    return patch ? { ...provider, ...patch } : provider;
+  });
+}
+
+// Download one mark per kept provider. A provider with no published logo is
+// skipped and logged — the picker renders a neutral fallback glyph for it, so a
+// missing mark is never a gate (agent-auth.md: attribution never gates).
+//
+// Downloads land in a sibling temp dir and are swapped in only after every
+// fetch settled. A mid-loop throw (network drop) therefore leaves the checked-in
+// logos and the generated map they back untouched, rather than an empty dir plus
+// a map importing 170+ missing files.
+async function vendorLogos(providers) {
+  const stagingDir = `${logosDir}.staging`;
+  rmSync(stagingDir, { recursive: true, force: true });
+  mkdirSync(stagingDir, { recursive: true });
+
+  const kept = [];
+  const missing = [];
+  try {
+    for (const provider of providers) {
+      const response = await fetch(logoUrl(provider.id));
+      if (!response.ok) {
+        missing.push(`${provider.id} (${response.status})`);
+        continue;
+      }
+      const svg = await response.text();
+      if (!svg.includes("<svg")) {
+        missing.push(`${provider.id} (not an svg)`);
+        continue;
+      }
+      writeFileSync(path.join(stagingDir, `${provider.id}.svg`), svg);
+      kept.push(provider.id);
+    }
+  } catch (error) {
+    rmSync(stagingDir, { recursive: true, force: true });
+    throw error;
+  }
+
+  // Atomic-enough swap: same filesystem, and the only window is between the two
+  // renames, which no build observes (this is a manual refresh script).
+  const retiredDir = `${logosDir}.retired`;
+  rmSync(retiredDir, { recursive: true, force: true });
+  try {
+    renameSync(logosDir, retiredDir);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  renameSync(stagingDir, logosDir);
+  rmSync(retiredDir, { recursive: true, force: true });
+  return { kept, missing };
+}
+
+// Emit the id -> asset-URL map as generated TypeScript. Each entry is a plain
+// asset import (a URL string, not inlined markup), so the whole map costs ~one
+// short string per provider and the SVG bytes stay out of every JS chunk.
+function writeLogoMap(ids) {
+  const sorted = [...ids].sort();
+  const lines = [
+    "// GENERATED by scripts/vendor-provider-registry.mjs — do not edit by hand.",
+    "// Provider marks vendored from https://models.dev/logos/<id>.svg (models.dev",
+    "// is MIT; the marks are unaltered). Imported as asset URLs so the SVG bytes",
+    "// are emitted as files, never inlined into a JS chunk. Only the lazily",
+    "// loaded provider picker imports this module.",
+    "",
+    ...sorted.map(
+      (id, index) =>
+        `import logo${index} from "../assets/provider-logos/${id}.svg?no-inline";`,
+    ),
+    "",
+    "export const PROVIDER_LOGO_URLS: Readonly<Record<string, string>> = {",
+    ...sorted.map((id, index) => `  ${JSON.stringify(id)}: logo${index},`),
+    "};",
+    "",
+  ];
+  writeFileSync(logoMapPath, lines.join("\n"));
+}
+
+async function main() {
+  const raw = await fetchProviders();
+  const providers = mergeDocOverlay(reduceProviders(raw));
+  mkdirSync(productConfigDir, { recursive: true });
+  writeFileSync(outputPath, `${JSON.stringify(providers, null, 2)}\n`);
+  console.log(`Wrote ${providers.length} providers to ${path.relative(repoRoot, outputPath)}`);
+
+  const { kept, missing } = await vendorLogos(providers);
+  writeLogoMap(kept);
+  console.log(
+    `Vendored ${kept.length} logos to ${path.relative(repoRoot, logosDir)}`
+    + ` (${readdirSync(logosDir).length} files); ${missing.length} unavailable`,
+  );
+  if (missing.length > 0) {
+    console.log(`No logo published for: ${missing.join(", ")}`);
+  }
+}
+
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+});

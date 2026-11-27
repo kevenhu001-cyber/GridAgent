@@ -1,0 +1,591 @@
+import { AnyHarnessError } from "@anyharness/sdk";
+import { ProliferateClientError } from "@proliferate/cloud-sdk";
+import { CancelledError, type QueryClient } from "@tanstack/react-query";
+import { describe, expect, it, vi } from "vitest";
+import { fingerprintTelemetryKey } from "#product/lib/domain/telemetry/key-fingerprint";
+import {
+  createAppQueryClient,
+  hashAppQueryKey,
+  shouldCaptureAppMutationError,
+  shouldCaptureAppQueryError,
+} from "#product/lib/infra/query/query-client";
+
+describe("hashAppQueryKey", () => {
+  it("hashes plain query keys with sorted object fields", () => {
+    expect(hashAppQueryKey(["cloud", { repo: "b", owner: "a" }])).toBe(
+      '["cloud",{"owner":"a","repo":"b"}]',
+    );
+  });
+
+  it("does not recurse forever on cyclic query keys", () => {
+    const value: { id: string; self?: unknown } = { id: "cycle" };
+    value.self = value;
+
+    expect(hashAppQueryKey(["workspace", value])).toBe(
+      '["workspace",{"id":"cycle","self":"[Circular]"}]',
+    );
+  });
+
+  it("summarizes non-plain objects instead of traversing browser objects", () => {
+    const event = new Event("click");
+
+    expect(hashAppQueryKey(["event", event])).toBe('["event","[Event]"]');
+  });
+});
+
+async function runFailingQuery(
+  client: QueryClient,
+  queryKey: readonly unknown[],
+  error: Error,
+  meta?: { telemetryHandled: true },
+): Promise<void> {
+  await expect(client.fetchQuery({
+    queryKey,
+    queryFn: async () => {
+      throw error;
+    },
+    retry: false,
+    meta,
+  })).rejects.toBe(error);
+}
+
+async function runFailingMutation(
+  client: QueryClient,
+  error: Error,
+  mutationKey?: readonly unknown[],
+): Promise<void> {
+  const mutation = client.getMutationCache().build(client, {
+    ...(mutationKey === undefined ? {} : { mutationKey }),
+    mutationFn: async () => {
+      throw error;
+    },
+    retry: false,
+  });
+
+  await expect(mutation.execute(undefined)).rejects.toBe(error);
+}
+
+function fileError(code: string, status: number, detail?: string): AnyHarnessError {
+  return new AnyHarnessError({
+    type: "about:blank",
+    title: "File request failed",
+    status,
+    code,
+    ...(detail === undefined ? {} : { detail }),
+  });
+}
+
+function modelGatedError(instance?: string): AnyHarnessError {
+  return new AnyHarnessError({
+    type: "about:blank",
+    title: "Model unsupported",
+    status: 400,
+    detail: "caller-visible refusal detail",
+    code: "SESSION_MODEL_UNSUPPORTED",
+    ...(instance === undefined ? {} : { instance }),
+  });
+}
+
+const VALID_RUNTIME_INCIDENT_RECEIPT =
+  "urn:proliferate:anyharness:incident:8fd6ea9a-1246-4ef0-a526-9cc5f86ed960";
+
+const FILE_QUERY_RESPONSES = [
+  ["INVALID_FILE_PATH", 400],
+  ["FILE_NOT_FOUND", 404],
+  ["FILE_PERMISSION_DENIED", 403],
+  ["NOT_A_DIRECTORY", 400],
+] as const;
+
+const PRIVATE_KEY_MARKERS = [
+  "src/private/credentials.txt",
+  "/Users/example/private-workspace/secret.md",
+  "/Users/example",
+  "https://runtime.example.invalid/v1/files?token=private",
+] as const;
+
+describe("createAppQueryClient query telemetry", () => {
+  it.each([
+    ["AbortError", new DOMException("Aborted", "AbortError")],
+    ["401 auth gate", new ProliferateClientError("Signed out", 401)],
+    ["403 permission gate", new ProliferateClientError("Forbidden", 403)],
+    ["GitHub App reconnect state", new ProliferateClientError(
+      "Reconnect GitHub App",
+      409,
+      "github_app_authorization_expired",
+    )],
+    ["GitHub App installation state", new ProliferateClientError(
+      "Install GitHub App",
+      409,
+      "github_app_installation_required",
+    )],
+    ["AnyHarness hosting availability", new AnyHarnessError({
+      type: "about:blank",
+      title: "GitHub CLI is not installed",
+      status: 400,
+      code: "HOSTING_GH_NOT_INSTALLED",
+    })],
+    ["missing Cowork thread lifecycle state", new AnyHarnessError({
+      type: "about:blank",
+      title: "Cowork thread not found",
+      status: 404,
+      code: "COWORK_THREAD_NOT_FOUND",
+    })],
+  ])("does not capture %s while preserving query error state", async (_name, error) => {
+    const captureException = vi.fn();
+    const client = createAppQueryClient({ captureException });
+    const queryKey = ["expected-state", _name];
+
+    await runFailingQuery(client, queryKey, error);
+
+    expect(captureException).not.toHaveBeenCalled();
+    expect(client.getQueryState(queryKey)).toMatchObject({
+      status: "error",
+      error,
+    });
+  });
+
+  it.each(FILE_QUERY_RESPONSES)(
+    "does not capture file response %s while preserving query error state",
+    async (code, status) => {
+      const captureException = vi.fn();
+      const client = createAppQueryClient({ captureException });
+      const error = fileError(code, status);
+      const queryKey = ["workspace-file", code];
+
+      await runFailingQuery(client, queryKey, error);
+
+      expect(captureException).not.toHaveBeenCalled();
+      expect(client.getQueryState(queryKey)).toMatchObject({
+        status: "error",
+        error,
+      });
+    },
+  );
+
+  it("captures a non-5xx outside-workspace refusal", async () => {
+    const captureException = vi.fn();
+    const client = createAppQueryClient({ captureException });
+    const error = fileError("PATH_OUTSIDE_WORKSPACE", 400);
+
+    await runFailingQuery(client, ["workspace-file", "outside"], error);
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not capture TanStack cancellation", () => {
+    expect(shouldCaptureAppQueryError(new CancelledError())).toBe(false);
+  });
+
+  it.each([
+    ["generic 400", new ProliferateClientError("Bad Request", 400)],
+    ["generic Not Found", new ProliferateClientError("Not Found", 404)],
+    ["generic 409", new ProliferateClientError("Conflict", 409)],
+    ["generic 422", new ProliferateClientError("Unprocessable", 422)],
+    ["unrecognized coded 409", new ProliferateClientError(
+      "Workspace state conflict",
+      409,
+      "workspace_state_conflict",
+    )],
+    ["5xx request failure", new ProliferateClientError("Unavailable", 503)],
+    ["network failure", new TypeError("Failed to fetch")],
+    ["unknown programming failure", new Error("Invariant failed")],
+    ["Cowork code-like message without a typed code", new Error(
+      "COWORK_THREAD_NOT_FOUND",
+    )],
+    [
+      "configuration-like unknown failure",
+      Object.assign(new Error("Missing configuration invariant"), {
+        code: "INTERNAL_STATE_INVALID",
+      }),
+    ],
+  ])("captures %s", async (_name, error) => {
+    const captureException = vi.fn();
+    const client = createAppQueryClient({ captureException });
+    const queryKey = ["capture", _name];
+
+    await runFailingQuery(client, queryKey, error);
+
+    expect(captureException).toHaveBeenCalledExactlyOnceWith(error, {
+      tags: {
+        action: "query_error",
+        domain: "react_query",
+      },
+      extras: {
+        query_hash: fingerprintTelemetryKey(hashAppQueryKey(queryKey)),
+      },
+    });
+  });
+
+  it("captures the Cowork lifecycle code when its status is 5xx", async () => {
+    const captureException = vi.fn();
+    const client = createAppQueryClient({ captureException });
+    const error = new AnyHarnessError({
+      type: "about:blank",
+      title: "Cowork request failed",
+      status: 503,
+      code: "COWORK_THREAD_NOT_FOUND",
+    });
+    const queryKey = ["cowork", "managed-workspaces"];
+
+    await runFailingQuery(client, queryKey, error);
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+    const [capturedError, context] = captureException.mock.calls[0];
+    expect(capturedError).not.toBe(error);
+    expect(capturedError).toMatchObject({
+      name: "AnyHarnessError",
+      message: "AnyHarness request failed (COWORK_THREAD_NOT_FOUND)",
+      status: 503,
+      code: "COWORK_THREAD_NOT_FOUND",
+    });
+    expect(context).toEqual({
+      tags: {
+        action: "query_error",
+        domain: "react_query",
+      },
+      extras: {
+        query_hash: fingerprintTelemetryKey(hashAppQueryKey(queryKey)),
+      },
+    });
+  });
+
+  it.each(FILE_QUERY_RESPONSES)(
+    "captures and sanitizes file response %s when its status is 5xx",
+    async (code) => {
+      const captureException = vi.fn();
+      const client = createAppQueryClient({ captureException });
+      const detail = `caller-visible-${code}`;
+      const error = fileError(code, 503, detail);
+      const queryKey = ["workspace-file", code];
+
+      await runFailingQuery(client, queryKey, error);
+
+      expect(captureException).toHaveBeenCalledTimes(1);
+      const [capturedError, context] = captureException.mock.calls[0];
+      expect(capturedError).not.toBe(error);
+      expect(capturedError).toMatchObject({
+        message: `AnyHarness request failed (${code})`,
+        status: 503,
+        code,
+      });
+      expect(JSON.stringify(capturedError)).not.toContain(detail);
+      expect(context.extras.query_hash).toBe(
+        fingerprintTelemetryKey(hashAppQueryKey(queryKey)),
+      );
+    },
+  );
+
+  it("keeps raw cache identity but fingerprints path-bearing capture identities", async () => {
+    const captureException = vi.fn();
+    const client = createAppQueryClient({ captureException });
+    const queryKey = ["workspace-files", ...PRIVATE_KEY_MARKERS];
+    const mutationKey = ["workspace-file-mutation", ...PRIVATE_KEY_MARKERS];
+
+    await runFailingQuery(client, queryKey, new Error("Query failed"));
+    await runFailingMutation(client, new Error("Mutation failed"), mutationKey);
+
+    const serializedQueryKey = hashAppQueryKey(queryKey);
+    const serializedMutationKey = hashAppQueryKey(mutationKey);
+    const queryContext = captureException.mock.calls[0][1];
+    const mutationContext = captureException.mock.calls[1][1];
+    expect(client.getQueryCache().find({ queryKey })?.queryHash).toBe(
+      serializedQueryKey,
+    );
+    expect(serializedQueryKey).toContain(PRIVATE_KEY_MARKERS[0]);
+    expect(queryContext.extras.query_hash).toBe(
+      fingerprintTelemetryKey(serializedQueryKey),
+    );
+    expect(mutationContext.extras.mutation_key).toBe(
+      fingerprintTelemetryKey(serializedMutationKey),
+    );
+    const capturedContexts = JSON.stringify([queryContext, mutationContext]);
+    for (const marker of PRIVATE_KEY_MARKERS) {
+      expect(capturedContexts).not.toContain(marker);
+    }
+  });
+
+  it("captures an AnyHarness 5xx without its caller-facing detail", async () => {
+    const captureException = vi.fn();
+    const client = createAppQueryClient({ captureException });
+    const rawTail = "provider stderr: caller-only-secret";
+    const error = new AnyHarnessError({
+      type: "about:blank",
+      title: "Internal error",
+      status: 500,
+      detail: rawTail,
+      code: "AGENT_STARTUP_FAILED",
+    });
+    const queryKey = ["session", "create"];
+
+    await runFailingQuery(client, queryKey, error);
+
+    expect(error.message).toBe(rawTail);
+    expect(captureException).toHaveBeenCalledTimes(1);
+    const [capturedError, context] = captureException.mock.calls[0];
+    expect(capturedError).toBeInstanceOf(Error);
+    expect(capturedError).not.toBe(error);
+    expect(capturedError.message).toBe(
+      "AnyHarness request failed (AGENT_STARTUP_FAILED)",
+    );
+    expect("problem" in capturedError).toBe(false);
+    expect("cause" in capturedError).toBe(false);
+    expect(capturedError.stack).not.toContain(rawTail);
+    expect(JSON.stringify(capturedError)).not.toContain(rawTail);
+    expect(context).toEqual({
+      tags: {
+        action: "query_error",
+        domain: "react_query",
+      },
+      extras: {
+        query_hash: fingerprintTelemetryKey(hashAppQueryKey(queryKey)),
+      },
+    });
+  });
+
+  it("suppresses global query capture for a cause-wrapped runtime incident receipt", async () => {
+    const captureException = vi.fn();
+    const client = createAppQueryClient({ captureException });
+    const cause = modelGatedError(VALID_RUNTIME_INCIDENT_RECEIPT);
+    const error = Object.assign(new Error("Failed to open chat"), { cause });
+    const queryKey = ["session", "create"];
+
+    await runFailingQuery(client, queryKey, error);
+
+    expect(captureException).not.toHaveBeenCalled();
+    expect(client.getQueryState(queryKey)).toMatchObject({
+      status: "error",
+      error,
+    });
+  });
+
+  it.each([
+    ["an old runtime without a receipt", undefined],
+    ["a malformed receipt", "urn:proliferate:anyharness:incident:not-a-uuid"],
+    [
+      "a foreign receipt",
+      "urn:proliferate:server:incident:8fd6ea9a-1246-4ef0-a526-9cc5f86ed960",
+    ],
+  ])("keeps global query capture for %s", async (_name, instance) => {
+    const captureException = vi.fn();
+    const client = createAppQueryClient({ captureException });
+    const error = modelGatedError(instance);
+    const queryKey = ["session", "create", _name];
+
+    await runFailingQuery(client, queryKey, error);
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+    const [capturedError] = captureException.mock.calls[0];
+    expect(capturedError).toMatchObject({
+      name: "AnyHarnessError",
+      message: "AnyHarness request failed (SESSION_MODEL_UNSUPPORTED)",
+      status: 400,
+      code: "SESSION_MODEL_UNSUPPORTED",
+    });
+    expect("problem" in capturedError).toBe(false);
+    expect("cause" in capturedError).toBe(false);
+  });
+
+  it("captures an AnyHarness mutation failure without its caller-facing detail", async () => {
+    const captureException = vi.fn();
+    const client = createAppQueryClient({ captureException });
+    const rawTail = "provider stderr: mutation-caller-only-secret";
+    const error = new AnyHarnessError({
+      type: "about:blank",
+      title: "Internal error",
+      status: 500,
+      detail: rawTail,
+      code: "AGENT_STARTUP_FAILED",
+    });
+    const mutationKey = ["session", "create"];
+    const mutation = client.getMutationCache().build(client, {
+      mutationKey,
+      mutationFn: async () => {
+        throw error;
+      },
+      retry: false,
+    });
+
+    await expect(mutation.execute(undefined)).rejects.toBe(error);
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+    const [capturedError, context] = captureException.mock.calls[0];
+    expect(capturedError).toBeInstanceOf(Error);
+    expect(capturedError).not.toBe(error);
+    expect(capturedError.message).toBe(
+      "AnyHarness request failed (AGENT_STARTUP_FAILED)",
+    );
+    expect("problem" in capturedError).toBe(false);
+    expect("cause" in capturedError).toBe(false);
+    expect(capturedError.stack).not.toContain(rawTail);
+    expect(JSON.stringify(capturedError)).not.toContain(rawTail);
+    expect(context).toEqual({
+      tags: {
+        action: "mutation_error",
+        domain: "react_query",
+      },
+      extras: {
+        mutation_key: fingerprintTelemetryKey(hashAppQueryKey(mutationKey)),
+      },
+    });
+  });
+
+  it("suppresses global mutation capture for a runtime incident receipt", async () => {
+    const captureException = vi.fn();
+    const client = createAppQueryClient({ captureException });
+    const error = modelGatedError(VALID_RUNTIME_INCIDENT_RECEIPT);
+    const mutation = client.getMutationCache().build(client, {
+      mutationKey: ["session", "create"],
+      mutationFn: async () => {
+        throw error;
+      },
+      retry: false,
+    });
+
+    await expect(mutation.execute(undefined)).rejects.toBe(error);
+
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["an old runtime without a receipt", undefined],
+    ["a malformed receipt", "urn:proliferate:anyharness:incident:not-a-uuid"],
+    [
+      "a foreign receipt",
+      "urn:proliferate:server:incident:8fd6ea9a-1246-4ef0-a526-9cc5f86ed960",
+    ],
+  ])("keeps global mutation capture for %s", async (_name, instance) => {
+    const captureException = vi.fn();
+    const client = createAppQueryClient({ captureException });
+    const error = modelGatedError(instance);
+    const mutation = client.getMutationCache().build(client, {
+      mutationKey: ["session", "create", _name],
+      mutationFn: async () => {
+        throw error;
+      },
+      retry: false,
+    });
+
+    await expect(mutation.execute(undefined)).rejects.toBe(error);
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+    const [capturedError] = captureException.mock.calls[0];
+    expect(capturedError).toMatchObject({
+      name: "AnyHarnessError",
+      message: "AnyHarness request failed (SESSION_MODEL_UNSUPPORTED)",
+      status: 400,
+      code: "SESSION_MODEL_UNSUPPORTED",
+    });
+    expect("problem" in capturedError).toBe(false);
+    expect("cause" in capturedError).toBe(false);
+  });
+
+  it("preserves the explicit telemetryHandled query override", async () => {
+    const captureException = vi.fn();
+    const client = createAppQueryClient({ captureException });
+
+    await runFailingQuery(
+      client,
+      ["handled"],
+      new Error("Captured by the query owner"),
+      { telemetryHandled: true },
+    );
+
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it("keeps the existing query retry and UI defaults", () => {
+    const client = createAppQueryClient({ captureException: vi.fn() });
+
+    expect(client.getDefaultOptions().queries).toMatchObject({
+      staleTime: 30_000,
+      refetchOnWindowFocus: false,
+      retry: 1,
+    });
+  });
+
+  it("leaves mutation telemetry behavior unchanged", async () => {
+    const captureException = vi.fn();
+    const client = createAppQueryClient({ captureException });
+    const error = new ProliferateClientError("Forbidden", 403);
+    const mutationKey = ["mutation-permission-gate"];
+    const mutation = client.getMutationCache().build(client, {
+      mutationKey,
+      mutationFn: async () => {
+        throw error;
+      },
+      retry: false,
+    });
+
+    await expect(mutation.execute(undefined)).rejects.toBe(error);
+
+    expect(captureException).toHaveBeenCalledExactlyOnceWith(error, {
+      tags: {
+        action: "mutation_error",
+        domain: "react_query",
+      },
+      extras: {
+        mutation_key: fingerprintTelemetryKey(hashAppQueryKey(mutationKey)),
+      },
+    });
+  });
+
+  it("keeps an absent mutation key as the bounded unknown literal", async () => {
+    const captureException = vi.fn();
+    const client = createAppQueryClient({ captureException });
+
+    await runFailingMutation(client, new Error("Mutation failed"));
+
+    expect(captureException.mock.calls[0][1].extras).toEqual({
+      mutation_key: "unknown",
+    });
+  });
+
+  it.each(FILE_QUERY_RESPONSES)(
+    "keeps file response %s reportable for mutations",
+    async (code) => {
+      const captureException = vi.fn();
+      const client = createAppQueryClient({ captureException });
+      const error = fileError(code, 400);
+      const mutationKey = ["workspace-file-mutation", code];
+
+      await runFailingMutation(client, error, mutationKey);
+
+      expect(captureException).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ code }),
+        expect.objectContaining({
+          extras: {
+            mutation_key: fingerprintTelemetryKey(hashAppQueryKey(mutationKey)),
+          },
+        }),
+      );
+    },
+  );
+
+  it.each([
+    "REPO_ROOT_NOT_GIT_REPO",
+    "REPO_ROOT_WORKTREE_UNSUPPORTED",
+    "REPO_WORKSPACE_NOT_GIT_REPO",
+    "REPO_WORKSPACE_WORKTREE_UNSUPPORTED",
+  ])("does not capture expected repository mutation validation %s", async (code) => {
+    const captureException = vi.fn();
+    const client = createAppQueryClient({ captureException });
+    const error = new AnyHarnessError({
+      type: "about:blank",
+      title: "Repository selection rejected",
+      status: 400,
+      code,
+    });
+    const mutation = client.getMutationCache().build(client, {
+      mutationKey: ["resolve-repository"],
+      mutationFn: async () => {
+        throw error;
+      },
+      retry: false,
+    });
+
+    await expect(mutation.execute(undefined)).rejects.toBe(error);
+
+    expect(shouldCaptureAppMutationError(error)).toBe(false);
+    expect(captureException).not.toHaveBeenCalled();
+  });
+});

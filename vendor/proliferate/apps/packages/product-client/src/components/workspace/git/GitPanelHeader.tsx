@@ -1,0 +1,224 @@
+import { useState } from "react";
+import type { GitBranchRef } from "@anyharness/sdk";
+import { GitReviewOptionsMenu } from "./GitReviewOptionsMenu";
+import { GitReviewBaseSelector } from "./GitReviewBaseSelector";
+import { GitReviewTargetSelector } from "./GitReviewTargetSelector";
+import {
+  CollapseAll,
+  ExpandAll,
+} from "#product/primitives/icons/workspace";
+import { Search } from "#product/primitives/icons/core";
+import { PaneIconButton } from "#product/primitives/PaneIconButton";
+import { PopoverButton, POPOVER_SURFACE_CLASS } from "#product/primitives/PopoverButton";
+import { PopoverMenuItem } from "#product/primitives/PopoverMenuItem";
+import { PopoverSearchField } from "#product/primitives/PopoverSearchField";
+import type { GitPanelMode } from "#product/lib/domain/workspaces/changes/git-panel-diff";
+import type { GitReviewFileEntry } from "#product/lib/domain/workspaces/changes/git-review-entries";
+
+interface GitPanelHeaderProps {
+  changesFilter: GitPanelMode;
+  visibleChangedCount: number;
+  additions: number;
+  deletions: number;
+  isRuntimeReady: boolean;
+  branchRefs: readonly GitBranchRef[];
+  baseRef: string | null;
+  layout: "unified" | "split";
+  wrapLongLines: boolean;
+  allFilesCollapsed: boolean;
+  reviewEntries: readonly GitReviewFileEntry[];
+  onFilterChange: (mode: GitPanelMode) => void;
+  onBaseRefChange: (baseRef: string | null) => void;
+  onToggleLayout: () => void;
+  onToggleWrap: () => void;
+  onToggleAllFiles: () => void;
+  onFocusFile: (entry: GitReviewFileEntry) => void;
+  onRefresh: () => void;
+}
+
+export function GitPanelHeader({
+  changesFilter,
+  visibleChangedCount,
+  additions,
+  deletions,
+  isRuntimeReady,
+  branchRefs,
+  baseRef,
+  layout,
+  wrapLongLines,
+  allFilesCollapsed,
+  reviewEntries,
+  onFilterChange,
+  onBaseRefChange,
+  onToggleLayout,
+  onToggleWrap,
+  onToggleAllFiles,
+  onFocusFile,
+  onRefresh,
+}: GitPanelHeaderProps) {
+  const showTargetSelector = changesFilter === "branch";
+
+  return (
+    <div
+      // C4: names an inline-size container so descendants (this header's own
+      // future responsive chrome) can query the review pane's width directly
+      // instead of the viewport — no Tailwind container-query variant covers
+      // naming a container, only querying one.
+      className="z-20 flex shrink-0 flex-col [container-name:review-header] [container-type:inline-size] border-b border-border/70 bg-sidebar-background px-2 py-1 text-sidebar-muted-foreground"
+    >
+      <div className="flex min-h-7 min-w-0 items-center gap-1">
+        <GitReviewBaseSelector
+          activeMode={changesFilter}
+          changedCount={visibleChangedCount}
+          onSelect={onFilterChange}
+        />
+        {showTargetSelector && (
+          <GitReviewTargetSelector
+            mode={changesFilter}
+            baseRef={baseRef}
+            branchRefs={branchRefs}
+            isRuntimeReady={isRuntimeReady}
+            onSelect={onBaseRefChange}
+          />
+        )}
+        <GitPanelAggregateStats additions={additions} deletions={deletions} />
+        <div className="ms-auto flex shrink-0 items-center gap-px">
+          <PaneIconButton
+            label={allFilesCollapsed ? "Expand all diffs" : "Collapse all diffs"}
+            aria-pressed={allFilesCollapsed}
+            onClick={onToggleAllFiles}
+          >
+            {allFilesCollapsed
+              ? <ExpandAll className="icon-paired" />
+              : <CollapseAll className="icon-paired" />}
+          </PaneIconButton>
+          <GitReviewJumpToFileMenu
+            reviewEntries={reviewEntries}
+            onFocusFile={onFocusFile}
+          />
+          <GitReviewOptionsMenu
+            allFilesCollapsed={allFilesCollapsed}
+            wrapLongLines={wrapLongLines}
+            layout={layout}
+            isRuntimeReady={isRuntimeReady}
+            onToggleAllFiles={onToggleAllFiles}
+            onToggleWrap={onToggleWrap}
+            onToggleLayout={onToggleLayout}
+            onRefresh={onRefresh}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GitReviewJumpToFileMenu({
+  reviewEntries,
+  onFocusFile,
+}: {
+  reviewEntries: readonly GitReviewFileEntry[];
+  onFocusFile: (entry: GitReviewFileEntry) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const query = search.trim().toLowerCase();
+  const filteredEntries = query
+    ? reviewEntries.filter((entry) =>
+        entry.file.displayPath.toLowerCase().includes(query)
+        || entry.file.path.toLowerCase().includes(query))
+    : reviewEntries;
+
+  return (
+    <PopoverButton
+      trigger={(
+        <PaneIconButton label="Jump to file" disabled={reviewEntries.length === 0}>
+          <Search className="icon-paired" />
+        </PaneIconButton>
+      )}
+      align="end"
+      className={`w-72 ${POPOVER_SURFACE_CLASS}`}
+      onOpenChange={(open: boolean) => {
+        if (!open) {
+          setSearch("");
+        }
+      }}
+    >
+      {(close: () => void) => (
+        <div className="flex max-h-80 flex-col">
+          <PopoverSearchField
+            value={search}
+            onChange={setSearch}
+            placeholder="Jump to file"
+            ariaLabel="Filter changed files"
+            autoFocus
+          />
+          <div className="h-px shrink-0 bg-border" />
+          <div className="min-h-0 flex-1 overflow-y-auto p-1">
+            {filteredEntries.length === 0 ? (
+              <p className="px-2.5 py-2 text-ui-sm text-muted-foreground">No files</p>
+            ) : (
+              filteredEntries.map((entry) => {
+                const baseName = entry.file.displayPath.split("/").pop()
+                  ?? entry.file.displayPath;
+                const dirPath = entry.file.displayPath.slice(
+                  0,
+                  entry.file.displayPath.length - baseName.length,
+                ).replace(/\/$/, "");
+                const additions = entry.file.currentDiff?.additions ?? 0;
+                const deletions = entry.file.currentDiff?.deletions ?? 0;
+                return (
+                  <PopoverMenuItem
+                    key={entry.key}
+                    title={entry.file.displayPath}
+                    label={(
+                      <span className="flex min-w-0 items-baseline gap-1.5">
+                        <span className="truncate">{baseName}</span>
+                        {dirPath && (
+                          <span className="min-w-0 truncate text-muted-foreground">
+                            {dirPath}
+                          </span>
+                        )}
+                      </span>
+                    )}
+                    trailing={(additions > 0 || deletions > 0) ? (
+                      <span className="inline-flex items-center gap-1 tabular-nums tracking-tight">
+                        {additions > 0 && <span className="text-git-green">+{additions}</span>}
+                        {deletions > 0 && <span className="text-git-red">-{deletions}</span>}
+                      </span>
+                    ) : undefined}
+                    density="compact"
+                    onClick={() => {
+                      onFocusFile(entry);
+                      close();
+                    }}
+                  />
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+    </PopoverButton>
+  );
+}
+
+function GitPanelAggregateStats({
+  additions,
+  deletions,
+}: {
+  additions: number;
+  deletions: number;
+}) {
+  return (
+    <div
+      className="flex shrink-0 items-center gap-1 text-ui leading-none tabular-nums tracking-tight"
+      aria-label={`${additions} additions, ${deletions} deletions`}
+    >
+      <span className={additions > 0 ? "text-git-green" : "text-sidebar-muted-foreground/70"}>
+        +{additions}
+      </span>
+      <span className={deletions > 0 ? "text-git-red" : "text-sidebar-muted-foreground/70"}>
+        -{deletions}
+      </span>
+    </div>
+  );
+}

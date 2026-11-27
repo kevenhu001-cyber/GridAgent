@@ -1,0 +1,370 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type {
+  AnyHarnessRequestOptions,
+  CreateWorkspaceRequest,
+  CreateWorktreeWorkspaceRequest,
+  StartWorkspaceSetupRequest,
+  UpdateWorkspaceDisplayNameRequest,
+} from "@anyharness/sdk";
+import {
+  resolveRuntimeCacheScopeKey,
+  resolveRuntimeConnection,
+  useAnyHarnessCacheScopeKey,
+  useAnyHarnessRuntimeContext,
+} from "../context/AnyHarnessRuntime.js";
+import {
+  useAnyHarnessWorkspaceContext,
+  resolveWorkspaceConnectionFromContext,
+} from "../context/AnyHarnessWorkspace.js";
+import {
+  getAnyHarnessClient,
+} from "../lib/client-cache.js";
+import {
+  anyHarnessRepoRootsKey,
+  anyHarnessRuntimeWorkspacesKey,
+  anyHarnessWorkspaceKey,
+  anyHarnessWorktreesInventoryKey,
+  anyHarnessWorkspaceDetailKey,
+  anyHarnessWorkspaceDetectSetupKey,
+  anyHarnessWorkspaceSetupStatusKey,
+  anyHarnessWorkspaceSubagentsKey,
+} from "../lib/query-keys.js";
+import { requestOptionsWithSignal } from "../lib/request-options.js";
+
+interface RuntimeQueryOptions {
+  enabled?: boolean;
+  requestOptions?: AnyHarnessRequestOptions;
+}
+
+interface WorkspaceQueryOptions {
+  workspaceId?: string | null;
+  enabled?: boolean;
+  requestOptions?: AnyHarnessRequestOptions;
+}
+
+interface WorkspaceSubagentsQueryOptions extends WorkspaceQueryOptions {
+  /** Passthrough to React Query; omit to keep the default (no polling). */
+  refetchInterval?: number | false;
+  /** Passthrough to React Query; omit to keep the client's default. */
+  refetchOnWindowFocus?: boolean;
+}
+
+export function useRuntimeWorkspacesQuery(options?: RuntimeQueryOptions) {
+  const runtime = useAnyHarnessRuntimeContext();
+  const runtimeUrl = runtime.runtimeUrl?.trim() ?? "";
+  const cacheScopeKey = resolveRuntimeCacheScopeKey(runtime);
+
+  return useQuery({
+    queryKey: anyHarnessRuntimeWorkspacesKey(runtimeUrl, cacheScopeKey),
+    enabled: (options?.enabled ?? true) && runtimeUrl.length > 0,
+    queryFn: async ({ signal }) => {
+      const client = getAnyHarnessClient(resolveRuntimeConnection(runtime));
+      return client.workspaces.list(
+        undefined,
+        requestOptionsWithSignal(options?.requestOptions, signal),
+      );
+    },
+  });
+}
+
+export function useWorkspaceQuery(options: WorkspaceQueryOptions) {
+  const workspace = useAnyHarnessWorkspaceContext();
+  const cacheScopeKey = useAnyHarnessCacheScopeKey();
+  const workspaceId = options.workspaceId ?? workspace.workspaceId;
+
+  return useQuery({
+    queryKey: anyHarnessWorkspaceDetailKey(cacheScopeKey, workspaceId),
+    enabled: (options.enabled ?? true) && !!workspaceId,
+    queryFn: async ({ signal }) => {
+      const resolved = await resolveWorkspaceConnectionFromContext(workspace, workspaceId);
+      const client = getAnyHarnessClient(resolved.connection);
+      return client.workspaces.get(
+        resolved.connection.anyharnessWorkspaceId,
+        requestOptionsWithSignal(options.requestOptions, signal),
+      );
+    },
+  });
+}
+
+export function useWorkspaceSubagentsQuery(options?: WorkspaceSubagentsQueryOptions) {
+  const workspace = useAnyHarnessWorkspaceContext();
+  const cacheScopeKey = useAnyHarnessCacheScopeKey();
+  const workspaceId = options?.workspaceId ?? workspace.workspaceId;
+
+  return useQuery({
+    queryKey: anyHarnessWorkspaceSubagentsKey(cacheScopeKey, workspaceId),
+    enabled: (options?.enabled ?? true) && !!workspaceId,
+    // Spread conditionally: an explicit `undefined` would override the host
+    // QueryClient's global defaults, silently changing every omitted-option caller.
+    ...(options?.refetchInterval !== undefined
+      ? { refetchInterval: options.refetchInterval }
+      : {}),
+    ...(options?.refetchOnWindowFocus !== undefined
+      ? { refetchOnWindowFocus: options.refetchOnWindowFocus }
+      : {}),
+    queryFn: async ({ signal }) => {
+      const resolved = await resolveWorkspaceConnectionFromContext(workspace, workspaceId);
+      const client = getAnyHarnessClient(resolved.connection);
+      return client.workspaces.listSubagents(
+        resolved.connection.anyharnessWorkspaceId,
+        requestOptionsWithSignal(options?.requestOptions, signal),
+      );
+    },
+  });
+}
+
+export function useResolveWorkspaceFromPathMutation() {
+  const runtime = useAnyHarnessRuntimeContext();
+  const queryClient = useQueryClient();
+  const runtimeUrl = runtime.runtimeUrl?.trim() ?? "";
+  const cacheScopeKey = resolveRuntimeCacheScopeKey(runtime);
+
+  return useMutation({
+    mutationFn: async (path: string) => {
+      const client = getAnyHarnessClient(resolveRuntimeConnection(runtime));
+      return client.workspaces.resolveFromPath(path);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: anyHarnessRuntimeWorkspacesKey(runtimeUrl, cacheScopeKey),
+      });
+      await queryClient.invalidateQueries({
+        queryKey: anyHarnessRepoRootsKey(runtimeUrl, cacheScopeKey),
+      });
+    },
+  });
+}
+
+export function useCreateWorkspaceMutation() {
+  const runtime = useAnyHarnessRuntimeContext();
+  const queryClient = useQueryClient();
+  const runtimeUrl = runtime.runtimeUrl?.trim() ?? "";
+  const cacheScopeKey = resolveRuntimeCacheScopeKey(runtime);
+
+  return useMutation({
+    mutationFn: async (input: CreateWorkspaceRequest) => {
+      const client = getAnyHarnessClient(resolveRuntimeConnection(runtime));
+      return client.workspaces.create(input);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: anyHarnessRuntimeWorkspacesKey(runtimeUrl, cacheScopeKey),
+      });
+      await queryClient.invalidateQueries({
+        queryKey: anyHarnessRepoRootsKey(runtimeUrl, cacheScopeKey),
+      });
+    },
+  });
+}
+
+export function useCreateWorktreeWorkspaceMutation() {
+  const runtime = useAnyHarnessRuntimeContext();
+  const queryClient = useQueryClient();
+  const runtimeUrl = runtime.runtimeUrl?.trim() ?? "";
+  const cacheScopeKey = resolveRuntimeCacheScopeKey(runtime);
+
+  return useMutation({
+    mutationFn: async (input: CreateWorktreeWorkspaceRequest) => {
+      const client = getAnyHarnessClient(resolveRuntimeConnection(runtime));
+      return client.workspaces.createWorktree(input);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: anyHarnessRuntimeWorkspacesKey(runtimeUrl, cacheScopeKey),
+      });
+    },
+  });
+}
+
+export function useRestoreWorktreeWorkspaceMutation() {
+  const runtime = useAnyHarnessRuntimeContext();
+  const workspace = useAnyHarnessWorkspaceContext();
+  const queryClient = useQueryClient();
+  const runtimeUrl = runtime.runtimeUrl?.trim() ?? "";
+  const cacheScopeKey = resolveRuntimeCacheScopeKey(runtime);
+
+  return useMutation({
+    mutationFn: async (workspaceId: string) => {
+      const resolved = await resolveWorkspaceConnectionFromContext(workspace, workspaceId);
+      const client = getAnyHarnessClient(resolved.connection);
+      return client.workspaces.restoreWorktree(
+        resolved.connection.anyharnessWorkspaceId,
+      );
+    },
+    onSuccess: async (_data, workspaceId) => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: anyHarnessRuntimeWorkspacesKey(runtimeUrl, cacheScopeKey),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: anyHarnessWorkspaceKey(cacheScopeKey, workspaceId),
+        }),
+      ]);
+    },
+  });
+}
+
+export function useUpdateWorkspaceDisplayNameMutation() {
+  const runtime = useAnyHarnessRuntimeContext();
+  const workspace = useAnyHarnessWorkspaceContext();
+  const queryClient = useQueryClient();
+  const runtimeUrl = runtime.runtimeUrl?.trim() ?? "";
+  const cacheScopeKey = resolveRuntimeCacheScopeKey(runtime);
+
+  return useMutation({
+    mutationFn: async ({
+      workspaceId,
+      request,
+      requestOptions,
+    }: {
+      workspaceId: string;
+      request: UpdateWorkspaceDisplayNameRequest;
+      requestOptions?: AnyHarnessRequestOptions;
+    }) => {
+      const resolved = await resolveWorkspaceConnectionFromContext(workspace, workspaceId);
+      const client = getAnyHarnessClient(resolved.connection);
+      return client.workspaces.updateDisplayName(
+        resolved.connection.anyharnessWorkspaceId,
+        request,
+        requestOptions,
+      );
+    },
+    onSuccess: async (_data, variables) => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: anyHarnessRuntimeWorkspacesKey(runtimeUrl, cacheScopeKey),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: anyHarnessWorkspaceKey(cacheScopeKey, variables.workspaceId),
+        }),
+      ]);
+    },
+  });
+}
+
+export function usePurgeWorkspaceMutation() {
+  const runtime = useAnyHarnessRuntimeContext();
+  const workspace = useAnyHarnessWorkspaceContext();
+  const queryClient = useQueryClient();
+  const runtimeUrl = runtime.runtimeUrl?.trim() ?? "";
+  const cacheScopeKey = resolveRuntimeCacheScopeKey(runtime);
+
+  return useMutation({
+    mutationFn: async (workspaceId: string) => {
+      const resolved = await resolveWorkspaceConnectionFromContext(workspace, workspaceId);
+      const client = getAnyHarnessClient(resolved.connection);
+      return client.workspaces.purge(resolved.connection.anyharnessWorkspaceId);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: anyHarnessRuntimeWorkspacesKey(runtimeUrl, cacheScopeKey),
+      });
+      await queryClient.invalidateQueries({
+        queryKey: anyHarnessWorktreesInventoryKey(runtimeUrl, cacheScopeKey),
+      });
+    },
+  });
+}
+
+export function useDetectProjectSetupQuery(options?: WorkspaceQueryOptions) {
+  const workspace = useAnyHarnessWorkspaceContext();
+  const cacheScopeKey = useAnyHarnessCacheScopeKey();
+  const workspaceId = options?.workspaceId ?? workspace.workspaceId;
+
+  return useQuery({
+    queryKey: anyHarnessWorkspaceDetectSetupKey(cacheScopeKey, workspaceId),
+    enabled: (options?.enabled ?? true) && !!workspaceId,
+    staleTime: Infinity,
+    queryFn: async ({ signal }) => {
+      const resolved = await resolveWorkspaceConnectionFromContext(workspace, workspaceId);
+      const client = getAnyHarnessClient(resolved.connection);
+      return client.workspaces.detectSetup(
+        resolved.connection.anyharnessWorkspaceId,
+        requestOptionsWithSignal(options?.requestOptions, signal),
+      );
+    },
+  });
+}
+
+export function useSetupStatusQuery(options?: WorkspaceQueryOptions & { refetchWhileRunning?: boolean }) {
+  const workspace = useAnyHarnessWorkspaceContext();
+  const cacheScopeKey = useAnyHarnessCacheScopeKey();
+  const workspaceId = options?.workspaceId ?? workspace.workspaceId;
+  const refetchWhileRunning = options?.refetchWhileRunning ?? true;
+
+  return useQuery({
+    queryKey: anyHarnessWorkspaceSetupStatusKey(cacheScopeKey, workspaceId),
+    enabled: (options?.enabled ?? true) && !!workspaceId,
+    // Don't retry on 404 (no setup job exists for this workspace)
+    retry: (failureCount, error) => {
+      if (error instanceof Error && error.message.includes("404")) return false;
+      return failureCount < 2;
+    },
+    queryFn: async ({ signal }) => {
+      const resolved = await resolveWorkspaceConnectionFromContext(workspace, workspaceId);
+      const client = getAnyHarnessClient(resolved.connection);
+      return client.workspaces.getSetupStatus(
+        resolved.connection.anyharnessWorkspaceId,
+        requestOptionsWithSignal(options?.requestOptions, signal),
+      );
+    },
+    // Poll every 2s while setup is running, stop on terminal state
+    refetchInterval: (query) => {
+      if (!refetchWhileRunning) return false;
+      const status = query.state.data?.status;
+      if (status === "queued" || status === "running") return 2000;
+      return false;
+    },
+  });
+}
+
+export function useRerunSetupMutation() {
+  const runtime = useAnyHarnessRuntimeContext();
+  const workspace = useAnyHarnessWorkspaceContext();
+  const queryClient = useQueryClient();
+  const cacheScopeKey = resolveRuntimeCacheScopeKey(runtime);
+
+  return useMutation({
+    mutationFn: async (workspaceId: string) => {
+      const resolved = await resolveWorkspaceConnectionFromContext(workspace, workspaceId);
+      const client = getAnyHarnessClient(resolved.connection);
+      return client.workspaces.rerunSetup(
+        resolved.connection.anyharnessWorkspaceId,
+      );
+    },
+    onSuccess: async (_data, workspaceId) => {
+      await queryClient.invalidateQueries({
+        queryKey: anyHarnessWorkspaceSetupStatusKey(cacheScopeKey, workspaceId),
+      });
+    },
+  });
+}
+
+export function useStartSetupMutation() {
+  const runtime = useAnyHarnessRuntimeContext();
+  const workspace = useAnyHarnessWorkspaceContext();
+  const queryClient = useQueryClient();
+  const cacheScopeKey = resolveRuntimeCacheScopeKey(runtime);
+
+  return useMutation({
+    mutationFn: async ({
+      workspaceId,
+      input,
+    }: {
+      workspaceId: string;
+      input: StartWorkspaceSetupRequest;
+    }) => {
+      const resolved = await resolveWorkspaceConnectionFromContext(workspace, workspaceId);
+      const client = getAnyHarnessClient(resolved.connection);
+      return client.workspaces.startSetup(
+        resolved.connection.anyharnessWorkspaceId,
+        input,
+      );
+    },
+    onSuccess: async (_data, variables) => {
+      await queryClient.invalidateQueries({
+        queryKey: anyHarnessWorkspaceSetupStatusKey(cacheScopeKey, variables.workspaceId),
+      });
+    },
+  });
+}

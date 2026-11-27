@@ -1,0 +1,123 @@
+[project]
+name = "proliferate-server"
+version = "0.1.0"
+description = "Proliferate control plane API"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.52.3",
+    "sqlalchemy[asyncio]>=2.0.0",
+    "asyncpg>=0.30.0",
+    "alembic>=1.19.1",
+    "fastapi-users[sqlalchemy,oauth]>=15.0.5",
+    "httpx-oauth>=0.17.0",
+    # proxy.py relies on this exact HTTP/1.1 parser stack for one narrow SSE
+    # incomplete-chunk close; its transport regression makes upgrades explicit.
+    "h11==0.16.0",
+    "httpcore==1.0.9",
+    "httpx==0.28.1",
+    "websockets>=15.0.0",
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.15.0",
+    "python-jose[cryptography]>=3.3.0",
+    "cryptography>=49.0.0",
+    "python-multipart>=0.0.32",
+    "pyyaml>=6.0.3",
+    "rfc8785>=0.1.4",
+    "e2b>=2.37.1",
+    "sentry-sdk[fastapi]>=2.66.1",
+    "boto3>=1.43.67",
+    "botocore[crt]>=1.43.71",
+    "celery>=5.5.0",
+    "celery-redbeat>=2.4.2",
+    "kombu>=5.5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-xdist>=3.8.0",
+    "httpx==0.28.1",
+    "mypy==1.20.2",
+    "ruff>=0.16.2",
+    "sqlalchemy[mypy]>=2.0.0",
+    "types-PyYAML>=6.0.12",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 99
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ANN"]
+ignore = ["B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ANN", "I001"]
+# integrations/ wraps untyped third-party SDKs; Any is the only honest annotation
+"proliferate/integrations/**" = ["ANN401"]
+# Recursive JSON encryption requires Any at its data boundary.
+"proliferate/lib/infra/encryption/json.py" = ["ANN401"]
+# Inline HTML/SVG page renderers contain long literal lines.
+"proliferate/auth/desktop/pages.py" = ["E501"]
+"proliferate/lib/product/redirect_callbacks/page.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy", "sqlalchemy.ext.mypy.plugin"]
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_any_explicit = true
+
+[[tool.mypy.overrides]]
+# integrations/ wraps untyped third-party SDKs (e2b, sentry) where
+# Any is the only honest annotation at the adapter boundary. Sentry uses
+# conditional imports that produce assignment/misc errors due to optional deps.
+module = ["proliferate.integrations.*"]
+disallow_any_explicit = false
+warn_return_any = false
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+# Recursive JSON encryption accepts untyped JSON values at its data boundary.
+module = [
+    "proliferate.lib.infra.encryption.json",
+]
+disallow_any_explicit = false
+warn_return_any = false
+
+[[tool.mypy.overrides]]
+# Pydantic plugin false positives: class-level Any in BaseModel subclasses is
+# injected by the Pydantic mypy plugin, not real Any usage in the source code.
+module = [
+    "proliferate.server.billing.models",
+    "proliferate.server.health",
+    "proliferate.auth.models",
+    "proliferate.auth.desktop.models",
+    "proliferate.server.catalogs.models",
+    "proliferate.server.workflows.models",
+    "proliferate.server.workflows.models_v2",
+    "proliferate.server.meta",
+    "proliferate.server.github.repos.models",
+    "proliferate.server.support.models",
+    "proliferate.server.agent_auth.models",
+    "proliferate.config",
+]
+disallow_any_explicit = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["proliferate"]
+artifacts = ["proliferate/server/artifact_runtime/static/**"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

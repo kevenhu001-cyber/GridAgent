@@ -1,0 +1,126 @@
+import type { Workspace } from "@anyharness/sdk";
+import type { CloudWorkspaceRepoTarget } from "#product/lib/domain/workspaces/cloud/cloud-workspace-creation";
+import type { SidebarCloudWorkspaceSummary } from "#product/lib/domain/workspaces/sidebar/cloud-workspace";
+import type {
+  SidebarStatusIndicator,
+  SidebarWorkspaceVariant,
+} from "#product/lib/domain/workspaces/sidebar/sidebar-indicators";
+import type { WorkspaceGitStatus } from "#product/lib/domain/workspaces/git-status/workspace-git-status-model";
+import type { WorkspaceAvailabilityCommand } from "#product/lib/domain/workspaces/cloud/workspace-availability-commands";
+
+export interface LocalSidebarWorkspaceEntry {
+  source: "local";
+  id: string;
+  repoKey: string;
+  workspace: Workspace;
+}
+
+export interface CloudSidebarWorkspaceEntry {
+  source: "cloud";
+  id: string;
+  cloudWorkspaceId: string;
+  repoKey: string;
+  workspace: SidebarCloudWorkspaceSummary;
+}
+
+export type SidebarWorkspaceEntry =
+  | LocalSidebarWorkspaceEntry
+  | CloudSidebarWorkspaceEntry;
+
+export interface SidebarRepoGroupEntry {
+  repoKey: string;
+  name: string;
+  entries: SidebarWorkspaceEntry[];
+}
+
+export interface SidebarEntryGitMetadata {
+  provider: string | null;
+  owner: string | null;
+  repoName: string | null;
+  branchName: string | null;
+}
+
+export type SidebarEmptyState = "noWorkspaces" | "filteredOut" | null;
+
+export const DEFAULT_SIDEBAR_WORKSPACE_TYPES: SidebarWorkspaceVariant[] = [
+  "local",
+  "worktree",
+  "cloud",
+];
+export const SIDEBAR_REPO_GROUP_ITEM_LIMIT = 6;
+
+export interface SidebarWorkspaceItemState {
+  id: string;
+  localWorkspaceId: string | null;
+  cloudWorkspaceId: string | null;
+  name: string;
+  /**
+   * The label we would render if the user had not set a display name override.
+   * Used as the input placeholder in the rename popover. Equal to `name`
+   * when no override is set.
+   */
+  defaultName: string;
+  /**
+   * Whether the local workspace has a user-set display name override. Cloud
+   * entries are always `false` (cloud renaming uses a separate flow).
+   */
+  hasDisplayNameOverride: boolean;
+  /**
+   * Whether this entry supports renaming via the AnyHarness display name
+   * override. False for cloud entries (handled separately).
+   */
+  renameSupported: boolean;
+  subtitle: string | null;
+  active: boolean;
+  archived: boolean;
+  /**
+   * The persisted pin ids this workspace matched across its related logical
+   * ids (mirrors the `archived` matching); non-empty means pinned. Unpin
+   * removes every one of them, so a pin recorded under a former identity
+   * (alias, local-slot, or materialization id) cannot outlive the row.
+   */
+  pinnedIds: string[];
+  variant: SidebarWorkspaceVariant;
+  statusIndicator: SidebarStatusIndicator | null;
+  lastInteracted: string | null;
+  needsReview: boolean;
+  workspaceLocationCopyLabel: string | null;
+  workspaceLocationCopyValue: string | null;
+  workspaceLocationCopyToastLabel: string | null;
+  branchName: string | null;
+  /**
+   * Total sessions recorded against this workspace's materialization, read
+   * from the workspace record's execution summary that the workspace
+   * collections query already carries. Null when the owning materialization
+   * reports no summary (cloud-only entries and pending projections).
+   */
+  sessionCount: number | null;
+  /**
+   * Composed git/PR status keyed by this item's logical workspace id
+   * (§2.7). Null when no status is known for the workspace.
+   */
+  gitStatus: WorkspaceGitStatus | null;
+  /**
+   * Workspace-copy availability commands (PR 5): Add Cloud copy / Open on this
+   * Mac / Link / Unlink / Relink / Recreate, or a PR 6 reconcile-git-state entry
+   * into the reconciliation dialog. Resolved from the shared availability command
+   * model so the DOM and native menus render identically.
+   */
+  availabilityCommands: WorkspaceAvailabilityCommand[];
+  /** Ids the availability actions target: the Cloud workspace, this install's
+   * linked local materialization, and the repo owner/name for Add Cloud copy. */
+  cloudWorkspaceIdForActions: string | null;
+  linkedMaterializationId: string | null;
+  repoOwner: string | null;
+  repoName: string | null;
+}
+
+export interface SidebarGroupState {
+  sourceRoot: string;
+  name: string;
+  items: SidebarWorkspaceItemState[];
+  allLogicalWorkspaceIds: string[];
+  repoRootId: string | null;
+  localSourceRoot: string | null;
+  cloudRepoTarget: CloudWorkspaceRepoTarget | null;
+}

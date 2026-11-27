@@ -1,0 +1,196 @@
+use std::path::PathBuf;
+use std::time::Duration;
+
+use anyhow::{anyhow, Context, Result};
+use clap::Args;
+
+use anyharness_lib::app::{default_runtime_home, ensure_runtime_home};
+use anyharness_lib::domains::agents::model::AgentKind;
+use anyharness_lib::domains::agents::readiness::service::resolve_agent_unrouted_by_kind;
+use anyharness_lib::live::sessions::probe::{probe_agent, ProbeOptions, ProbeSnapshot};
+
+mod catalog_probe_auth;
+
+use catalog_probe_auth::{auth_env_for_context, trial_model_name, IsolationDirs, ProbeSecrets};
+
+#[derive(Args)]
+pub struct CatalogProbeArgs {
+    /// Agent kind to probe (claude, codex, cursor, opencode, grok)
+    #[arg(long)]
+    pub agent: String,
+
+    /// Auth context to probe under (e.g. anthropic-api). Determines which
+    /// credential env vars are required and injected.
+    #[arg(long = "auth-context")]
+    pub auth_context: String,
+
+    #[arg(long)]
+    pub runtime_home: Option<String>,
+
+    /// Output directory for the probe snapshot JSON
+    #[arg(long, default_value = "scripts/agent-catalog/generated")]
+    pub out: String,
+
+    /// Seconds to wait for a ConfigOptionUpdate after each model switch
+    #[arg(long, default_value_t = 8)]
+    pub model_switch_timeout_secs: u64,
+
+    /// Cap the number of models switched through (safety valve)
+    #[arg(long)]
+    pub max_models: Option<usize>,
+
+    /// Availability trial: model ids NOT on the advertised menu to test by
+    /// seeding the harness config with them (repeatable). Accepted ids are
+    /// available-but-not-default-visible; rejected ids are unavailable.
+    #[arg(long = "trial-model")]
+    pub trial_models: Vec<String>,
+}
+
+pub async fn run(args: CatalogProbeArgs) -> Result<()> {
+    let agent_kind = AgentKind::parse(&args.agent)
+        .ok_or_else(|| anyhow!("unknown agent kind `{}`", args.agent))?;
+    if !args.trial_models.is_empty() && agent_kind != AgentKind::Claude {
+        anyhow::bail!("--trial-model is currently supported for claude only");
+    }
+    let secrets = ProbeSecrets::capture_and_scrub();
+    let mut isolation_dirs = IsolationDirs::default();
+    let auth_env =
+        auth_env_for_context(&secrets, &agent_kind, &args.auth_context, &mut isolation_dirs)?;
+
+    let runtime_home = args
+        .runtime_home
+        .as_ref()
+        .map(PathBuf::from)
+        .unwrap_or_else(default_runtime_home);
+    ensure_runtime_home(&runtime_home)?;
+
+    // `live/` never fetches from a domain service, so probe_agent no longer
+    // resolves this itself; the artifact-path fact crosses the boundary here.
+    let resolved = resolve_agent_unrouted_by_kind(&agent_kind, &runtime_home)?;
+
+    let options = ProbeOptions {
+        agent_kind: agent_kind.clone(),
+        resolved: resolved.clone(),
+        auth_context: args.auth_context.clone(),
+        auth_env,
+        // The central pipeline scrubs its own process env and builds isolated
+        // credential dirs (`auth_env_for_context`), so it needs no per-child
+        // removals; the runtime engine, which must not mutate its own env, does.
+        auth_env_remove: Vec::new(),
+        runtime_home: runtime_home.clone(),
+        // Keep the historical temp_dir() workspace: this process is short-lived
+        // and owns nothing a scratch guard would clean up.
+        workspace_root: None,
+        model_switch_timeout: Duration::from_secs(args.model_switch_timeout_secs),
+        max_models: args.max_models,
+        // The per-model option matrix is exactly what this command exists to
+        // capture (it feeds the shipped catalog's control wiring).
+        switch_models: true,
+        send_test_prompt: false,
+    };
+
+    let local = tokio::task::LocalSet::new();
+    let mut snapshot = local.run_until(probe_agent(options)).await?;
+
+    // Availability trials: one fresh, isolated probe per candidate id with
+    // the harness config seeded to select it. Accepted = the harness lists
+    // or selects the id; the menu-read in `snapshot` is unaffected.
+    for trial_id in &args.trial_models {
+        let trial_env =
+            auth_env_for_context(&secrets, &agent_kind, &args.auth_context, &mut isolation_dirs)?;
+        let config_dir = trial_env
+            .get("CLAUDE_CONFIG_DIR")
+            .cloned()
+            .ok_or_else(|| anyhow!("claude trial requires an isolated CLAUDE_CONFIG_DIR"))?;
+        std::fs::write(
+            std::path::Path::new(&config_dir).join("settings.json"),
+            serde_json::json!({ "model": trial_id }).to_string(),
+        )?;
+        let trial_options = ProbeOptions {
+            agent_kind: agent_kind.clone(),
+            resolved: resolved.clone(),
+            auth_context: format!("{}+trial:{trial_id}", args.auth_context),
+            auth_env: trial_env,
+            auth_env_remove: Vec::new(),
+            runtime_home: runtime_home.clone(),
+            workspace_root: None,
+            model_switch_timeout: Duration::from_secs(args.model_switch_timeout_secs),
+            max_models: Some(0),
+            // Inert here: `max_models: Some(0)` leaves the loop nothing to
+            // iterate. Set anyway so this command has ONE policy, not two.
+            switch_models: true,
+            // Menu listing is NOT acceptance — the harness lists whatever the
+            // config names. Only a successful inference turn counts.
+            send_test_prompt: true,
+        };
+        let (accepted, name, config_options) =
+            match local.run_until(probe_agent(trial_options)).await {
+                Ok(trial_snapshot) => {
+                    let accepted = match &trial_snapshot.prompt_result {
+                        Some(result) if result.ok => true,
+                        Some(result) => {
+                            println!("trial {trial_id}: prompt rejected ({})", result.detail);
+                            false
+                        }
+                        None => false,
+                    };
+                    let name = trial_model_name(&trial_snapshot.baseline_config_options, trial_id);
+                    let config_options =
+                        accepted.then(|| trial_snapshot.baseline_config_options.clone());
+                    (accepted, name, config_options)
+                }
+                Err(error) => {
+                    println!("trial {trial_id}: probe failed ({error}) — recording as rejected");
+                    (false, None, None)
+                }
+            };
+        snapshot.trials.push(
+            anyharness_lib::live::sessions::probe::ProbeTrialResult {
+                model_id: trial_id.clone(),
+                accepted,
+                name,
+                config_options,
+            },
+        );
+    }
+
+    let out_dir = PathBuf::from(&args.out);
+    std::fs::create_dir_all(&out_dir)
+        .with_context(|| format!("failed to create output dir {}", out_dir.display()))?;
+    let out_path = out_dir.join(format!(
+        "{}.{}.probe.json",
+        args.agent.to_lowercase(),
+        args.auth_context.to_lowercase()
+    ));
+    std::fs::write(&out_path, serde_json::to_vec_pretty(&snapshot)?)
+        .with_context(|| format!("failed to write {}", out_path.display()))?;
+
+    print_summary(&snapshot, &out_path);
+    Ok(())
+}
+
+fn print_summary(snapshot: &ProbeSnapshot, out_path: &std::path::Path) {
+    if let Some(attestation) = &snapshot.attestation {
+        println!(
+            "agent: {} {} ({})",
+            attestation.name,
+            attestation.version,
+            attestation.title.as_deref().unwrap_or("-")
+        );
+    }
+    println!(
+        "models: {} (current: {})",
+        snapshot.models.len(),
+        snapshot.current_model_id.as_deref().unwrap_or("-")
+    );
+    let observed = snapshot
+        .models
+        .iter()
+        .filter(|model| model.config_options.is_some())
+        .count();
+    println!("per-model config options observed: {observed}/{}", snapshot.models.len());
+    for warning in &snapshot.warnings {
+        println!("warning: {warning}");
+    }
+    println!("wrote {}", out_path.display());
+}

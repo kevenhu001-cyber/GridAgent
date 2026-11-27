@@ -1,0 +1,262 @@
+/* @vitest-environment jsdom */
+
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { HomeTargetPicker } from "#product/components/home/screen/HomeTargetPicker";
+import type { SettingsRepositoryEntry } from "#product/lib/domain/settings/repositories";
+
+const keystoneRepository: SettingsRepositoryEntry = {
+  sourceRoot: "/Users/pablo/keystone",
+  name: "Keystone",
+  secondaryLabel: null,
+  workspaceCount: 1,
+  repoRootId: "repo-root-keystone",
+  localWorkspaceId: "workspace-keystone-local",
+  gitProvider: "github",
+  gitOwner: "withkeystone",
+  gitRepoName: "landing",
+  cloudConfigured: false,
+  availability: "local",
+};
+
+const productRepository: SettingsRepositoryEntry = {
+  sourceRoot: "/Users/pablo/proliferate",
+  name: "Proliferate",
+  secondaryLabel: null,
+  workspaceCount: 1,
+  repoRootId: "repo-root-proliferate",
+  localWorkspaceId: "workspace-proliferate-local",
+  gitProvider: "github",
+  gitOwner: "proliferate-ai",
+  gitRepoName: "proliferate",
+  cloudConfigured: false,
+  availability: "local",
+};
+
+function renderPicker(overrides: Partial<Parameters<typeof HomeTargetPicker>[0]> = {}) {
+  const onSelectCowork = vi.fn();
+  const onSelectRepository = vi.fn();
+  const onSelectRuntime = vi.fn();
+  const onSelectBranch = vi.fn();
+  const onAddRepository = vi.fn();
+  const onConfigureCloud = vi.fn();
+
+  render(
+    <HomeTargetPicker
+      desktopTargetsAvailable={true}
+      destination="repository"
+      repoLaunchKind="worktree"
+      repositories={[keystoneRepository, productRepository]}
+      selectedRepository={keystoneRepository}
+      selectedBranchName="main"
+      branchOptions={["main", "staging"]}
+      branchLoading={false}
+      cloudActionBySourceRoot={{
+        [keystoneRepository.sourceRoot]: { kind: "create", label: "New cloud workspace" },
+        [productRepository.sourceRoot]: { kind: "create", label: "New cloud workspace" },
+      }}
+      onSelectCowork={onSelectCowork}
+      onSelectRepository={onSelectRepository}
+      onSelectRuntime={onSelectRuntime}
+      onSelectBranch={onSelectBranch}
+      onAddRepository={onAddRepository}
+      onConfigureCloud={onConfigureCloud}
+      {...overrides}
+    />,
+  );
+
+  return {
+    onSelectCowork,
+    onSelectRepository,
+    onSelectRuntime,
+    onSelectBranch,
+    onAddRepository,
+    onConfigureCloud,
+  };
+}
+
+afterEach(() => {
+  cleanup();
+});
+
+describe("HomeTargetPicker", () => {
+  it("renders project and runtime as separate controls for repository launches", () => {
+    renderPicker();
+
+    expect(screen.getByRole("button", { name: /Keystone/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /New worktree/i })).toBeTruthy();
+  });
+
+  it("keeps the selected runtime when changing repositories", () => {
+    const callbacks = renderPicker({
+      repoLaunchKind: "cloud",
+      selectedBranchName: "staging",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Keystone/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Proliferate/i }));
+
+    expect(callbacks.onSelectRepository).toHaveBeenCalledWith(productRepository.sourceRoot);
+  });
+
+  it("changes only the runtime target from the runtime picker", () => {
+    const callbacks = renderPicker();
+
+    fireEvent.click(screen.getByRole("button", { name: /New worktree/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Work locally/i }));
+
+    expect(callbacks.onSelectRuntime).toHaveBeenCalledWith("local");
+  });
+
+  // `bodyClassName="py-0"` is only an override because PickerPopoverContent
+  // merges rather than concatenates: a plain join left the pattern's own `py-1`
+  // standing, later in the generated stylesheet, and it silently won.
+  it("lets the runtime picker's py-0 body beat the pattern's py-1 default", () => {
+    renderPicker();
+
+    fireEvent.click(screen.getByRole("button", { name: /New worktree/i }));
+    const body = screen
+      .getByRole("button", { name: /Work locally/i })
+      .closest(".overflow-y-auto");
+
+    expect(body).not.toBeNull();
+    expect(body?.className).toContain("py-0");
+    expect(body?.className).not.toContain("py-1");
+  });
+
+  it("keeps Web cloud setup actionable while hiding Desktop runtime choices", () => {
+    const callbacks = renderPicker({
+      desktopTargetsAvailable: false,
+      repoLaunchKind: "worktree",
+      cloudActionBySourceRoot: {
+        [keystoneRepository.sourceRoot]: {
+          kind: "configure",
+          label: "Grant repository access",
+        },
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Runtime: Grant repository access/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Grant repository access" }));
+
+    expect(callbacks.onConfigureCloud).toHaveBeenCalledWith(keystoneRepository);
+    expect(callbacks.onSelectRuntime).not.toHaveBeenCalledWith("cloud");
+    expect(screen.queryByRole("button", { name: /Work locally/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /New worktree/i })).toBeNull();
+  });
+
+  it("hides the runtime control for cowork starts", () => {
+    renderPicker({
+      destination: "cowork",
+      selectedRepository: null,
+    });
+
+    const projectButton = screen.getByRole("button", { name: /No project/i });
+    expect(projectButton.className).toContain("h-7");
+    expect(projectButton.className).toContain("px-2.5");
+    expect(screen.queryByRole("button", { name: /No repository/i })).toBeNull();
+  });
+
+  it("offers the projectless Cowork target on Desktop", () => {
+    const callbacks = renderPicker();
+
+    fireEvent.click(screen.getByRole("button", { name: /Project: Keystone repository/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Don't work in a project" }));
+
+    expect(callbacks.onSelectCowork).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not offer the Desktop-only Cowork target on Web", () => {
+    const callbacks = renderPicker({ desktopTargetsAvailable: false });
+
+    fireEvent.click(screen.getByRole("button", { name: /Project: Keystone repository/i }));
+
+    expect(screen.queryByRole("button", { name: "Don't work in a project" })).toBeNull();
+    expect(callbacks.onSelectCowork).not.toHaveBeenCalled();
+  });
+
+  it("normalizes forged Web runtime props and exposes only Cloud", () => {
+    const callbacks = renderPicker({
+      desktopTargetsAvailable: false,
+      repoLaunchKind: "worktree",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Runtime: Cloud" }));
+
+    expect(screen.getByRole("button", { name: "Cloud" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Work locally/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /New worktree/i })).toBeNull();
+    expect(screen.queryByText("Loading targets")).toBeNull();
+    expect(callbacks.onSelectRuntime).not.toHaveBeenCalled();
+  });
+
+  it("selects a base branch from the branch picker without changing runtime", () => {
+    const callbacks = renderPicker();
+
+    fireEvent.click(screen.getByRole("button", { name: /Branch: main/i }));
+    fireEvent.click(screen.getByRole("button", { name: "staging" }));
+
+    expect(callbacks.onSelectBranch).toHaveBeenCalledWith("staging");
+    expect(callbacks.onSelectRuntime).not.toHaveBeenCalled();
+  });
+
+  it("focuses the search field whenever a searchable target picker opens", async () => {
+    renderPicker();
+
+    fireEvent.click(screen.getByRole("button", { name: /Project: Keystone repository/i }));
+    const projectSearch = screen.getByPlaceholderText("Search projects");
+    await waitFor(() => expect(document.activeElement).toBe(projectSearch));
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: /Branch: main/i }));
+    const branchSearch = screen.getByPlaceholderText("Search branches");
+    await waitFor(() => expect(document.activeElement).toBe(branchSearch));
+  });
+
+  it("filters repositories and branches in their own selectors", () => {
+    renderPicker();
+
+    fireEvent.click(screen.getByRole("button", { name: /Project: Keystone repository/i }));
+    fireEvent.change(screen.getByPlaceholderText("Search projects"), {
+      target: { value: "prolif" },
+    });
+
+    expect(screen.getByRole("button", { name: /Proliferate/i })).toBeTruthy();
+    expect(screen.queryByText(keystoneRepository.sourceRoot)).toBeNull();
+
+    fireEvent.keyDown(document, { key: "Escape" }); // Radix dismissable layer listens on document (old hand-rolled listener was on window)
+    fireEvent.click(screen.getByRole("button", { name: /Branch: main/i }));
+    fireEvent.change(screen.getByPlaceholderText("Search branches"), {
+      target: { value: "stag" },
+    });
+
+    expect(screen.getByRole("button", { name: "staging" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "main" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Work locally/i })).toBeNull();
+  });
+
+  // FM8 (PRO-10): cloud is culled from Desktop. The Desktop runtime picker must
+  // always offer local / worktree, never a cloud choice and never empty.
+  it("offers local and worktree on Desktop and never a cloud runtime choice", () => {
+    const callbacks = renderPicker({
+      cloudActionBySourceRoot: {
+        [keystoneRepository.sourceRoot]: { kind: "create", label: "New cloud workspace" },
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Runtime: New worktree/i }));
+
+    expect(screen.getByRole("button", { name: "Work locally" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "New worktree" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Cloud/i })).toBeNull();
+    expect(callbacks.onConfigureCloud).not.toHaveBeenCalled();
+  });
+
+  it("coerces a stale cloud repoLaunchKind to worktree on Desktop", () => {
+    renderPicker({ repoLaunchKind: "cloud" });
+
+    // The trigger reflects the coerced worktree runtime, never "Cloud".
+    expect(screen.getByRole("button", { name: /Runtime: New worktree/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Runtime: Cloud/i })).toBeNull();
+  });
+});

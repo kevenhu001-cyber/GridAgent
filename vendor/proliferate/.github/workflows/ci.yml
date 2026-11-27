@@ -1,0 +1,695 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  CARGO_TERM_COLOR: always
+
+jobs:
+  repo-shape:
+    name: Repo shape checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Validate lint records
+        run: |
+          python3 -m unittest scripts/test_lint_records.py
+          python3 scripts/lint_records.py
+
+      - name: Check max source file length
+        run: python3 scripts/check_max_lines.py
+
+      - name: Check alembic migration heads
+        run: python3 scripts/check_migration_heads.py
+
+      - name: Check AnyHarness old flat paths
+        run: python3 scripts/check_anyharness_old_paths.py
+
+      - name: Check Proliferate server old paths
+        run: |
+          python3 -m unittest scripts/test_check_server_old_paths.py
+          python3 scripts/check_server_old_paths.py
+
+      - name: Check Proliferate Worker structure
+        run: python3 scripts/check_proliferate_worker_structure.py
+
+      - name: Check frontend layer boundaries
+        run: |
+          python3 -m unittest scripts/test_check_frontend_boundaries.py
+          python3 scripts/check_frontend_boundaries.py
+          python3 -m unittest scripts/test_check_mobile_product_client_export.py
+
+      - name: Check appearance scaling ownership
+        run: |
+          python3 -m unittest scripts/test_check_appearance_scaling.py
+          python3 scripts/check_appearance_scaling.py
+
+      - name: Check design attribution
+        run: |
+          python3 -m unittest scripts/test_check_design_attribution.py
+          python3 scripts/check_design_attribution.py
+
+      - name: Check toast copy
+        run: |
+          python3 -m unittest scripts/test_check_toast_copy.py
+          python3 scripts/check_toast_copy.py
+
+      - name: Check agent-auth secret logs
+        run: |
+          python3 -m unittest scripts/test_check_agent_auth_secret_logs.py
+          python3 scripts/check_agent_auth_secret_logs.py
+
+      - name: Check frontend structure drift
+        run: python3 scripts/report_frontend_structure.py --strict --summary-only
+
+      - name: Check transcript single scroll writer
+        run: python3 scripts/check_transcript_scroll_writer.py
+
+      - name: Check component library conformance
+        run: |
+          python3 -m unittest scripts/test_check_component_library.py
+          python3 scripts/check_component_library.py
+
+      - name: Test server boundary checker
+        run: >-
+          uv run --python 3.12 --with pytest==9.1.1
+          pytest --noconftest -p no:cacheprovider -c /dev/null -q
+          server/tests/unit/test_server_boundary_checker.py
+          server/tests/unit/test_server_boundary_checker_named_writes.py
+
+      - name: Check server layer boundaries
+        run: python3 scripts/check_server_boundaries.py
+
+      - name: Check AnyHarness layer boundaries
+        run: |
+          python3 -m unittest scripts/test_check_anyharness_boundaries.py
+          python3 scripts/check_anyharness_boundaries.py
+
+      - name: Check AnyHarness domain fences
+        run: |
+          python3 -m unittest scripts/test_check_anyharness_fences.py
+          python3 scripts/check_anyharness_fences.py
+
+      - name: Check frontend directory fences
+        run: |
+          python3 -m unittest scripts/test_check_frontend_fences.py
+          python3 scripts/check_frontend_fences.py
+
+      - name: Check system manifests
+        run: |
+          python3 -m unittest scripts/test_check_manifests.py
+          python3 scripts/check_manifests.py
+
+      - name: Check session mutation admission
+        run: python3 scripts/check_session_mutation_admission.py
+
+      - name: Check Update Flow lints
+        run: python3 scripts/check_update_flow_lints.py
+
+      - name: Check documentation integrity
+        run: |
+          python3 -m unittest scripts/test_check_docs.py
+          python3 scripts/check_docs.py
+
+  terraform-validate:
+    name: Terraform validate (server/infra)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.9.8"
+
+      # background.tf and the rest of server/infra are loaded by Terraform even
+      # at zero resource counts, so a malformed provider/schema definition would
+      # otherwise only surface at a deploy gate. Parse and validate them here
+      # (no backend, no AWS credentials, no plan/apply) so the checked-in
+      # definitions are proven well-formed on every push/PR.
+      - name: Terraform fmt
+        run: terraform -chdir=server/infra fmt -check -recursive
+
+      - name: Terraform init (no backend)
+        run: terraform -chdir=server/infra init -backend=false -input=false
+
+      - name: Terraform validate
+        run: terraform -chdir=server/infra validate
+
+      # Plan-time proof of the background-plane fail-closed contract: the
+      # worker/Beat services can only be enabled with a managed broker/store OR
+      # both external endpoint secret references. Runs use `command = plan`
+      # against a mocked AWS provider (no credentials, no backend, no apply), so
+      # the invalid partial combos are proven to fail at plan time on the
+      # variable validation, and the valid managed/rebound combos plan cleanly.
+      - name: Terraform test (background plane fail-closed)
+        run: terraform -chdir=server/infra test
+
+      # The live hosted identities intentionally do not share state with the
+      # bootstrap root above. Validate and test the child IAM ownership root
+      # independently; no credentials, backend, plan, or apply are used here.
+      - name: Terraform init (hosted Redis, no backend)
+        run: terraform -chdir=server/infra/hosted-redis init -backend=false -input=false
+
+      - name: Terraform validate (hosted Redis)
+        run: terraform -chdir=server/infra/hosted-redis validate
+
+      - name: Terraform test (hosted Redis least privilege)
+        run: terraform -chdir=server/infra/hosted-redis test
+
+  ci-cd-config:
+    name: CI/CD config checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Check CI/CD scripts parse
+        run: |
+          node --check scripts/ci-cd/create-release-tags.mjs
+          node --check scripts/ci-cd/detect-deploy-surfaces.mjs
+          node --check scripts/ci-cd/prepare-artifact-release.mjs
+          node --check scripts/ci-cd/publish-product-release.mjs
+          node --check scripts/ci-cd/pr-metadata.mjs
+          node --check scripts/ci-cd/resolve-deploy-base.mjs
+          node --check scripts/ci-cd/validate-pr-metadata.mjs
+          node --check scripts/agent-catalog/build-catalog.mjs
+          node --check scripts/agent-catalog/check-version-discipline.mjs
+          node --check scripts/agent-catalog/resolve-pins.mjs
+
+      - name: Test CI/CD scripts
+        run: node --test scripts/ci-cd/*.test.mjs
+
+      # Offline-only: exercises canonicalization, allowlist/checksum drift
+      # detection, and the fake-client apply/verify contract for the Grafana
+      # alerting tooling (both the OLD-workspace overlay tool and the NEW
+      # (proliferate-ops-rebuild) workspace bootstrap). Never touches the
+      # network; live operations stay gated behind GRAFANA_ALERTING_LIVE=1.
+      - name: Test Grafana ops scripts
+        run: node --test scripts/ops/*.test.mjs
+
+      # Launcher-level proof (BG4-LOCAL-01): `make run BACKGROUND=1` must start
+      # the Celery worker/Beat against the SELECTED profile database on
+      # profile-scoped broker/store ports. Renders `docker compose config` (no
+      # daemon needed; the compose CLI ships on the runner) and asserts the
+      # worker/Beat DATABASE_URL DB-name matches the profile DB and ports are
+      # profile-scoped.
+      - name: Test background launcher config
+        run: node --test scripts/dev-background-launch.test.mjs
+
+      - name: Validate agent catalog generation discipline
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
+        run: |
+          node scripts/validate-agent-catalog.mjs
+          node --test scripts/agent-catalog/*.test.mjs
+          node scripts/agent-catalog/check-version-discipline.mjs --base "$BASE_SHA"
+
+      - name: Check workflow YAML parses
+        run: ruby -e 'require "yaml"; ARGV.each { |file| YAML.load_file(file); puts file }' .github/workflows/*.yml
+
+      - name: Smoke deploy surface detector
+        run: node scripts/ci-cd/detect-deploy-surfaces.mjs --base HEAD --head HEAD
+
+  # candidate-build-handoff moved to ci-heavy-lanes.yml (dispatch-only) in the
+  # 2026-08 engineering cull — it protects the parked qualification corridor.
+
+  cargo-check:
+    name: Cargo check & test
+    runs-on: ubuntu-latest
+    # Two caches with different jobs. Swatinem/rust-cache carries the registry
+    # and dependency artifacts, but deliberately discards workspace-crate build
+    # output, so our own crates recompile on every run. sccache is keyed on
+    # rustc invocation inputs, so it can hit for unchanged workspace crates that
+    # the target-dir cache never carries forward. CARGO_INCREMENTAL=0 is
+    # required, not incidental: incremental compilation makes rustc invocations
+    # sccache-uncacheable.
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install system deps (Tauri)
+        run: |
+          sudo "$(command -v node)" "$GITHUB_WORKSPACE/scripts/ci-cd/configure-playwright-apt.mjs"
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+
+      - uses: Swatinem/rust-cache@v2
+
+      # nextest replaces the libtest runner: it schedules each test in its own
+      # process across a work-stealing pool instead of one thread pool per test
+      # binary, which is where the wall-clock win comes from. It does not run
+      # doctests; this workspace has none (every Doc-tests binary reports zero
+      # tests), so nothing is dropped. Pinned rather than floating so the runner
+      # version is deterministic: rust-cache's paths include ~/.cargo/bin, which
+      # is where install-action puts the binary, so an unpinned tool can ride
+      # along in a restored target-dir cache.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest@0.9.143
+
+      # --no-fail-fast restores libtest's diagnostic behaviour: nextest stops
+      # scheduling new tests after the first failure, while cargo test reports
+      # every failure in the binary it is running. Pass/fail is identical either
+      # way; without this a red run surfaces one failing test instead of the
+      # whole failing set.
+      - name: Cargo test
+        run: cargo nextest run --workspace --no-fail-fast
+
+      # The workspace run above builds this package with default features, so
+      # the internal-only export path and its dogfood proof would never be
+      # evaluated without this step.
+      - name: Cargo test internal diagnostics export
+        run: cargo nextest run -p proliferate-diagnostics-collector --features internal-dogfood-export --no-fail-fast
+
+  sdk-build:
+    name: Build SDK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.11.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Regenerate SDK artifacts
+        working-directory: anyharness/sdk
+        run: pnpm run generate
+
+      - name: Verify generated SDK artifacts are committed
+        run: git diff --exit-code -- anyharness/sdk/generated/openapi.json anyharness/sdk/src/generated/openapi.ts
+
+      - name: Typecheck SDK
+        working-directory: anyharness/sdk
+        run: pnpm run typecheck
+
+      - name: Build SDK
+        working-directory: anyharness/sdk
+        run: pnpm run build
+
+      - name: Build sdk-react
+        working-directory: anyharness/sdk-react
+        run: pnpm run build
+
+      # The sdk-react hooks own client-side launch-option cache behaviour
+      # (polling policy, per-kind combine, refresh-error reread). Building the
+      # package proves it typechecks and nothing more, so this suite is the only
+      # gate on that behaviour. It runs here rather than in a frontend job
+      # because it needs the @anyharness/sdk dist built two steps above.
+      - name: Test sdk-react
+        working-directory: anyharness/sdk-react
+        run: pnpm run test
+
+  desktop-frontend:
+    name: Desktop frontend build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.11.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate and build SDK
+        run: |
+          pnpm install
+          cd anyharness/sdk && pnpm run generate && pnpm run build
+          cd ../sdk-react && pnpm run build
+
+      - name: Build desktop frontend
+        working-directory: apps/desktop
+        run: pnpm run build
+
+  mobile-typecheck:
+    name: Mobile typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.11.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Typecheck mobile
+        run: pnpm --filter @proliferate/mobile typecheck
+
+  web-frontend:
+    name: Web frontend build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.11.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Typecheck web
+        run: pnpm web:typecheck
+
+      - name: Build web
+        run: pnpm web:build
+
+  # login-budget moved to ci-heavy-lanes.yml (dispatch-only) in the 2026-08
+  # engineering cull — the lane, its script, and the dependabot posthog pin are
+  # slated to die together in the product cull (Cull Plan PR-5).
+
+  # Housekeeping that "Test product client"
+  # does not need (typecheck, the python-only checks, and the two other
+  # focused vitest invocations) lives in its own job here so every matrix
+  # shard below is pure install+build+test. Runs in parallel with the shards;
+  # merge-gating exactly like shared-frontend-packages was before the split.
+  shared-frontend-checks:
+    name: Shared frontend checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.11.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Typecheck shared packages
+        run: pnpm shared:typecheck
+
+      - name: Build shared packages
+        run: pnpm shared:build
+
+      # Grades the BUILT stylesheet, so it must follow shared:build rather than
+      # sit with the python guards in repo-shape (that job installs no node and
+      # has no dist/theme.css to read). Both modes are checked in one pass.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Check Mobile ProductClient export resolution
+        run: python3 scripts/check_mobile_product_client_export.py --preflight
+
+      - name: Check theme contrast floors
+        run: |
+          python3 -m unittest scripts/test_check_theme_contrast.py
+          python3 scripts/check_theme_contrast.py --table
+
+      - name: Test ProductClient domain
+        run: pnpm --filter @proliferate/product-client exec vitest run src/domain
+
+      # Focused Tier-1 gate for the workflow authoring surface: builder save
+      # gating (title + unresolved-reference blocks), schema-version refusal,
+      # and main-page row lifecycle including confirmed delete
+      # (specs/systems/automations/deep-dive.md assigns UI conflict behavior to
+      # Tier 1). Keep this exact-file signal in addition to the package suite
+      # so regressions remain immediately named.
+      - name: Test workflow authoring surface
+        run: pnpm --filter @proliferate/product-client exec vitest run src/components/workflows/builder-v2/WorkflowBuilderSurface.test.tsx src/components/workflows/main/WorkflowsMainSurface.test.tsx
+
+  # "Test product client" was the pole of the combined job (~338s of
+  # ~8m38s-9m13s wall clock). Sharded 4-way via vitest's native --shard
+  # (3-way still exceeded the 3-minute target; measured numbers in PR #2120).
+  # Every
+  # other step this job used to run (typecheck, python checks, the two other
+  # focused vitest invocations) moved to shared-frontend-checks above, so
+  # every shard here is pure install+build+test. "Install dependencies" and
+  # "Build shared packages" stay ungated: product-client imports
+  # @proliferate/design/@proliferate/cloud-sdk(-react) through package.json
+  # `exports` that resolve only to `dist`, so the build is a real
+  # prerequisite of every shard, not just of the steps that moved out.
+  shared-frontend-packages:
+    name: Shared frontend packages
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.11.0
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build shared packages
+        run: pnpm shared:build
+
+      - name: Test product client
+        run: pnpm --filter @proliferate/product-client exec vitest run --shard=${{ matrix.shard }}/4
+
+  # scroll-physics and workflow-definition-lifecycle moved to
+  # ci-heavy-lanes.yml (dispatch-only) in the 2026-08 engineering cull.
+  # Scroll-physics' structural half stays enforced per-PR by repo-shape's
+  # check_transcript_scroll_writer.py; workflow-definition-lifecycle tested a
+  # surface mid gen-2 rebuild (its per-PR fail-closed gate is accepted-lost
+  # while demoted). Re-gating either is the step-3 CI/CD spec's decision.
+
+  # ---------------------------------------------------------------------------
+  # THE REQUIRED STATUS CHECKS FOR `main`.
+  #
+  # Checked in here because the list is the enforcement backbone and must not
+  # live only in a merged PR description. Names below are check-run DISPLAY
+  # names, exactly as `gh pr checks` prints them.
+  #
+  #   ci-ok                            (CI            -- this file, below)
+  #   server-ci-ok                     (Server CI     -- server-ci.yml)
+  #   Analyze (javascript-typescript)  (CodeQL)
+  #   Analyze (python)                 (CodeQL)
+  #   Analyze (rust)                   (CodeQL)
+  #   Validate PR title and labels     (PR Metadata)
+  #
+  # 2026-08 engineering cull: the two Self-Host Smoke checks ("Detect
+  # smoke-relevant changes", "Production compose smoke") left this list when
+  # self-host-smoke.yml came off the PR path (it still runs on push:main and
+  # dispatch). Removing them from branch protection is a founder settings
+  # action recorded in the cull PR description.
+  #
+  # Why rollups instead of the individual lanes: branch protection cannot tell
+  # "no red X" from "actually verified". A required check that reports
+  # `skipped`, or that stops resolving because its job was renamed or deleted,
+  # is treated as SATISFIED. So a required-checks list made of per-lane names
+  # degrades silently to green exactly when the lanes stop running. `ci-ok` and
+  # `server-ci-ok` invert that: each `needs:` every lane in its workflow, runs
+  # `if: always()`, fails on any result other than `success` (failure, skipped,
+  # and cancelled alike), and carries a drift guard that fails if a job exists
+  # in the file but not in its `needs:` list.
+  #
+  # Two consequences worth stating, because they are the payoff:
+  #   - Sharding or renaming a lane never needs a branch-protection edit. A
+  #     `needs:` entry on a matrix job covers every shard, and the drift guard
+  #     catches a lane that leaves the rollup.
+  #   - No individual lane name from ci.yml or server-ci.yml belongs on the
+  #     list. Adding one back is not extra safety, it is a name that can rot.
+  #
+  # Deliberately NOT required, with reasons:
+  #   intent-tests (provisional) / intent-billing (provisional)
+  #       continue-on-error by design; dispatch-only since the 2026-08 cull
+  #       (they no longer run on PRs at all).
+  #   CI Heavy Lanes (ci-heavy-lanes.yml)
+  #       dispatch-only demotions from this file (2026-08 cull); re-gating is a
+  #       step-3 CI/CD-spec decision.
+  #   docker / self-hosted-release-assets (Build Server Artifacts)
+  #       release-only, and no longer in Server CI at all: they moved to
+  #       _build-server.yml, which release.yml calls directly so a release does
+  #       not re-run the suite its SHA already passed to reach main. They never
+  #       run on a PR. server-ci-ok still derives a release-only exemption from
+  #       a `server-v` tag gate rather than by name, so a release-gated job
+  #       cannot silently reappear inside Server CI outside the rollup.
+  #   Vercel / Vercel Preview Comments
+  #       third-party.
+  #
+  # Any change to the set of required checks belongs in this comment and in
+  # specs/engineering/shipping/release-delivery.md, in the same commit.
+  # ---------------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------------
+  # Absence gate.
+  #
+  # A per-lane required check answers "did this lane go red?". It cannot answer
+  # "did this lane run at all?": branch protection treats a check that never
+  # reports a conclusion, or reports `skipped`, as satisfied. So a lane deleted
+  # from this file, an `if:` that quietly evaluated false, a cancelled run, or a
+  # required-check name that no longer matches any job all read as green. "No
+  # red X" and "actually verified" are indistinguishable.
+  #
+  # This job makes them distinguishable. It `needs:` every other job in this
+  # workflow, runs with `if: always()` so it reports even when dependencies
+  # fail, and succeeds ONLY when every dependency concluded `success`. failure,
+  # skipped, and cancelled are all fatal, and the offending lanes are named in
+  # the failure output. Make `ci-ok` the required check and absence becomes red
+  # instead of invisible.
+  #
+  # `if: always()` is load-bearing: without it this job inherits the implicit
+  # `success()` gate, would be SKIPPED whenever a dependency failed, and would
+  # then report the very `skipped` conclusion branch protection accepts.
+  #
+  # A `needs:` entry on a matrix job (shared-frontend-packages) covers every
+  # shard -- the aggregate result is `success` only if all shards succeeded.
+  #
+  # No language toolchain, no dependency install, no build: a sparse checkout of
+  # this one file plus preinstalled bash/jq/ruby. Seconds of runner time.
+  #
+  # `needs:` cannot cross workflows, so this rolls up ci.yml ONLY. Server CI,
+  # CodeQL, and PR Metadata are separate workflows and still need their own
+  # entries in the required-checks list.
+  ci-ok:
+    name: ci-ok
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: always()
+    needs:
+      - repo-shape
+      - terraform-validate
+      - ci-cd-config
+      - cargo-check
+      - sdk-build
+      - desktop-frontend
+      - mobile-typecheck
+      - web-frontend
+      - shared-frontend-checks
+      - shared-frontend-packages
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/workflows/ci.yml
+          sparse-checkout-cone-mode: false
+
+      # Guards the guard. A job added to this file but not to `needs:` above
+      # would be silently outside the rollup, which is the same absence hole one
+      # level up. Compare the parsed job list against the resolved `needs` keys
+      # and fail on any drift in either direction.
+      - name: Assert the rollup covers every job in ci.yml
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          # Psych 4 (Ruby 3.1+) makes YAML.load_file a safe_load, where a YAML
+          # anchor anywhere in ci.yml raises Psych::AliasesNotEnabled and reds
+          # THIS gate with an error nobody would connect to an anchor.
+          # `unsafe_load_file` permits aliases and exists only on Psych 4, so it
+          # is feature-detected rather than assumed: on Psych 3 plain
+          # `load_file` already permits them. Note this is about the diagnostic,
+          # not safety -- either way the gate fails closed, and ci-cd-config's
+          # "Check workflow YAML parses" step is what owns YAML validity.
+          declared="$(ruby -ryaml -rjson -e '
+            path = ".github/workflows/ci.yml"
+            doc = YAML.respond_to?(:unsafe_load_file) ? YAML.unsafe_load_file(path) : YAML.load_file(path)
+            puts JSON.generate((doc["jobs"].keys - ["ci-ok"]).sort)
+          ')"
+          covered="$(jq -c 'keys' <<<"$NEEDS_JSON")"
+          missing="$(jq -rn --argjson a "$declared" --argjson b "$covered" '($a - $b) | join(", ")')"
+          extra="$(jq -rn --argjson a "$declared" --argjson b "$covered" '($b - $a) | join(", ")')"
+          if [[ -n "$missing" ]]; then
+            echo "::error::ci.yml job(s) missing from the ci-ok needs list: ${missing}. Add them, or the rollup certifies a commit those lanes never verified."
+          fi
+          if [[ -n "$extra" ]]; then
+            echo "::error::ci-ok needs entries that are not jobs in ci.yml: ${extra}."
+          fi
+          [[ -z "$missing" && -z "$extra" ]]
+          echo "ci-ok covers all $(jq -r 'length' <<<"$declared") job(s) in ci.yml."
+
+      # skipped and cancelled are failures here, on purpose: a lane that did not
+      # run did not verify anything, and this check exists to say so out loud.
+      - name: Assert every CI lane concluded success
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          bad=()
+          count=0
+          while IFS=$'\t' read -r lane result; do
+            count=$((count + 1))
+            printf '%-34s %s\n' "$lane" "$result"
+            if [[ "$result" != "success" ]]; then
+              bad+=("${lane} (${result})")
+            fi
+          done < <(jq -r 'to_entries[] | [.key, .value.result] | @tsv' <<<"$NEEDS_JSON")
+
+          # Belt-and-braces rather than an independent safety property: with a
+          # hardcoded needs list, an empty resolution would already have tripped
+          # the drift guard's `missing` branch one step earlier, and a needs
+          # entry naming a nonexistent job makes the whole workflow invalid so
+          # it never runs and the check stays Pending (also fail-closed). Kept
+          # because it costs nothing and covers a shape neither of those does.
+          if [[ "$count" -eq 0 ]]; then
+            echo "::error::ci-ok resolved zero dependencies. The needs list is empty or unresolvable; CI verified nothing."
+            exit 1
+          fi
+          if [[ "${#bad[@]}" -gt 0 ]]; then
+            echo "::error::CI did not verify this commit. Not green: ${bad[*]}"
+            exit 1
+          fi
+          echo "All ${count} CI lanes concluded success."

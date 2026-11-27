@@ -1,0 +1,494 @@
+"""Persistence helpers for integration accounts.
+
+An account is a user's authenticated instance of an integration definition
+(credential bundle + status), one row per (owner_user_id, definition_id).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+from uuid import UUID
+
+from sqlalchemy import Row, and_, delete, literal, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import Select
+
+from proliferate.db.models.integrations import (
+    CloudIntegrationAccount,
+    CloudIntegrationDefinition,
+    CloudIntegrationPolicy,
+)
+from proliferate.db.store.integrations import definitions as definitions_store
+from proliferate.lib.infra.time.wall_clock import utcnow
+
+
+@dataclass(frozen=True)
+class IntegrationAccountRecord:
+    id: UUID
+    definition_id: UUID
+    owner_user_id: UUID
+    owner_scope: str
+    enabled: bool
+    status: str
+    auth_kind: str
+    credential_ciphertext: str | None
+    credential_format: str | None
+    auth_version: int
+    grant_version: int
+    credential_version: int
+    definition_security_revision_id: UUID | None
+    provider_client_id: UUID | None
+    credential_audience: str | None
+    effective_scopes_json: str | None
+    settings_json: str
+    token_expires_at: datetime | None
+    last_error_code: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+def record_from_row(account: CloudIntegrationAccount) -> IntegrationAccountRecord:
+    return IntegrationAccountRecord(
+        id=account.id,
+        definition_id=account.definition_id,
+        owner_user_id=account.owner_user_id,
+        owner_scope=account.owner_scope,
+        enabled=account.enabled,
+        status=account.status,
+        auth_kind=account.auth_kind,
+        credential_ciphertext=account.credential_ciphertext,
+        credential_format=account.credential_format,
+        auth_version=account.auth_version,
+        grant_version=account.grant_version,
+        credential_version=account.credential_version,
+        definition_security_revision_id=account.definition_security_revision_id,
+        provider_client_id=account.provider_client_id,
+        credential_audience=account.credential_audience,
+        effective_scopes_json=account.effective_scopes_json,
+        settings_json=account.settings_json,
+        token_expires_at=account.token_expires_at,
+        last_error_code=account.last_error_code,
+        created_at=account.created_at,
+        updated_at=account.updated_at,
+    )
+
+
+_record = record_from_row
+
+
+async def get_account(
+    db: AsyncSession,
+    account_id: UUID,
+) -> IntegrationAccountRecord | None:
+    account = (
+        await db.execute(
+            select(CloudIntegrationAccount).where(CloudIntegrationAccount.id == account_id)
+        )
+    ).scalar_one_or_none()
+    return _record(account) if account is not None else None
+
+
+async def get_account_for_owner_locked(
+    db: AsyncSession,
+    *,
+    account_id: UUID,
+    owner_user_id: UUID,
+) -> IntegrationAccountRecord | None:
+    account = await db.scalar(
+        select(CloudIntegrationAccount)
+        .where(
+            CloudIntegrationAccount.id == account_id,
+            CloudIntegrationAccount.owner_user_id == owner_user_id,
+        )
+        .with_for_update()
+    )
+    return _record(account) if account is not None else None
+
+
+async def get_account_for_user_definition(
+    db: AsyncSession,
+    user_id: UUID,
+    definition_id: UUID,
+) -> IntegrationAccountRecord | None:
+    account = (
+        await db.execute(
+            select(CloudIntegrationAccount).where(
+                CloudIntegrationAccount.owner_user_id == user_id,
+                CloudIntegrationAccount.definition_id == definition_id,
+            )
+        )
+    ).scalar_one_or_none()
+    return _record(account) if account is not None else None
+
+
+async def list_accounts_for_user(
+    db: AsyncSession,
+    user_id: UUID,
+) -> tuple[IntegrationAccountRecord, ...]:
+    accounts = (
+        (
+            await db.execute(
+                select(CloudIntegrationAccount)
+                .where(CloudIntegrationAccount.owner_user_id == user_id)
+                .order_by(CloudIntegrationAccount.created_at.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return tuple(_record(account) for account in accounts)
+
+
+@dataclass(frozen=True)
+class ReadyAccountRow:
+    """A ready account joined with its definition and (optionally) org policy.
+
+    ``org_policy_enabled`` is the org's policy verdict for the definition, or
+    ``None`` when the org has no policy row (or no org scope was requested).
+    """
+
+    account: IntegrationAccountRecord
+    definition: definitions_store.IntegrationDefinitionRecord
+    org_policy_enabled: bool | None
+
+
+@dataclass(frozen=True)
+class ReadyAccountIdentityRow:
+    """A ready account's non-secret identity, definition, and policy verdict."""
+
+    account_id: UUID
+    owner_user_id: UUID
+    grant_version: int
+    provider: str
+    display_name: str
+    definition_enabled_by_default: bool
+    org_policy_enabled: bool | None
+
+
+def _ready_accounts_stmt(user_id: UUID, organization_id: UUID | None) -> Select:
+    """Ready accounts + non-archived definitions, LEFT JOINed to the org policy.
+
+    The policy overlay joins in the same query (one round-trip, no
+    per-definition lookups); without an org there is no policy join at all.
+    """
+    stmt = select(CloudIntegrationAccount, CloudIntegrationDefinition).join(
+        CloudIntegrationDefinition,
+        CloudIntegrationDefinition.id == CloudIntegrationAccount.definition_id,
+    )
+    if organization_id is not None:
+        stmt = stmt.add_columns(CloudIntegrationPolicy.enabled).outerjoin(
+            CloudIntegrationPolicy,
+            and_(
+                CloudIntegrationPolicy.definition_id == CloudIntegrationAccount.definition_id,
+                CloudIntegrationPolicy.organization_id == organization_id,
+            ),
+        )
+    return stmt.where(
+        CloudIntegrationAccount.owner_user_id == user_id,
+        CloudIntegrationAccount.enabled.is_(True),
+        CloudIntegrationAccount.status == "ready",
+        CloudIntegrationDefinition.archived_at.is_(None),
+        # Definition visibility mirrors the admin API: seeds are global,
+        # org_custom definitions are served only under their owning org's
+        # scope (for org-less requests this collapses to seeds only). Without
+        # this, an org-B-scoped grant would expose the user's accounts on org
+        # A's custom definitions — which org B's admins can neither see nor
+        # policy-control — and provider-name resolution could land on another
+        # org's custom definition that shares a seed namespace.
+        or_(
+            CloudIntegrationDefinition.organization_id.is_(None),
+            CloudIntegrationDefinition.organization_id == organization_id,
+        ),
+    ).order_by(CloudIntegrationAccount.created_at.asc())
+
+
+def _ready_account_row(row: Row, organization_id: UUID | None) -> ReadyAccountRow:
+    return ReadyAccountRow(
+        account=_record(row[0]),
+        definition=definitions_store.record_from_row(row[1]),
+        org_policy_enabled=row[2] if organization_id is not None else None,
+    )
+
+
+async def list_ready_accounts_for_user(
+    db: AsyncSession,
+    user_id: UUID,
+    *,
+    organization_id: UUID | None = None,
+) -> tuple[ReadyAccountRow, ...]:
+    """The user's enabled, ready accounts with non-archived definitions."""
+    rows = (await db.execute(_ready_accounts_stmt(user_id, organization_id))).all()
+    return tuple(_ready_account_row(row, organization_id) for row in rows)
+
+
+async def get_ready_account_for_provider(
+    db: AsyncSession,
+    user_id: UUID,
+    namespace: str,
+    *,
+    organization_id: UUID | None = None,
+    for_update: bool = False,
+) -> ReadyAccountRow | None:
+    """The user's enabled, ready account whose non-archived definition matches ``namespace``."""
+    statement = _ready_accounts_stmt(user_id, organization_id).where(
+        CloudIntegrationDefinition.namespace == namespace
+    )
+    if for_update:
+        statement = statement.with_for_update(of=CloudIntegrationAccount)
+    row = (await db.execute(statement.limit(1))).first()
+    return _ready_account_row(row, organization_id) if row is not None else None
+
+
+async def get_ready_account_identity_for_provider(
+    db: AsyncSession,
+    user_id: UUID,
+    namespace: str,
+    *,
+    organization_id: UUID | None = None,
+    account_id: UUID | None = None,
+    for_update: bool = False,
+) -> ReadyAccountIdentityRow | None:
+    """Resolve only non-secret account identity for approval authorization.
+
+    This projection deliberately excludes credential ciphertext, settings, and
+    provider launch configuration. `for_update` fences the account revision
+    while a short request/admission transaction performs its binding CAS.
+    """
+    statement = (
+        select(
+            CloudIntegrationAccount.id,
+            CloudIntegrationAccount.owner_user_id,
+            CloudIntegrationAccount.grant_version,
+            CloudIntegrationDefinition.namespace,
+            CloudIntegrationDefinition.display_name,
+            CloudIntegrationDefinition.enabled_by_default,
+        )
+        .join(
+            CloudIntegrationDefinition,
+            CloudIntegrationDefinition.id == CloudIntegrationAccount.definition_id,
+        )
+        .where(
+            CloudIntegrationAccount.owner_user_id == user_id,
+            CloudIntegrationAccount.enabled.is_(True),
+            CloudIntegrationAccount.status == "ready",
+            CloudIntegrationDefinition.archived_at.is_(None),
+            CloudIntegrationDefinition.namespace == namespace,
+            or_(
+                CloudIntegrationDefinition.organization_id.is_(None),
+                CloudIntegrationDefinition.organization_id == organization_id,
+            ),
+        )
+        .order_by(CloudIntegrationAccount.created_at.asc())
+        .limit(1)
+    )
+    if organization_id is not None:
+        statement = statement.add_columns(CloudIntegrationPolicy.enabled).outerjoin(
+            CloudIntegrationPolicy,
+            and_(
+                CloudIntegrationPolicy.definition_id == CloudIntegrationAccount.definition_id,
+                CloudIntegrationPolicy.organization_id == organization_id,
+            ),
+        )
+    else:
+        statement = statement.add_columns(literal(None).label("org_policy_enabled"))
+    if account_id is not None:
+        statement = statement.where(CloudIntegrationAccount.id == account_id)
+    if for_update:
+        statement = statement.with_for_update(of=CloudIntegrationAccount)
+
+    row = (await db.execute(statement)).first()
+    if row is None:
+        return None
+    return ReadyAccountIdentityRow(
+        account_id=row[0],
+        owner_user_id=row[1],
+        grant_version=row[2],
+        provider=row[3],
+        display_name=row[4],
+        definition_enabled_by_default=row[5],
+        org_policy_enabled=row[6] if organization_id is not None else None,
+    )
+
+
+async def upsert_account(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    definition_id: UUID,
+    auth_kind: str,
+    status: str,
+    enabled: bool = True,
+) -> IntegrationAccountRecord:
+    account = (
+        await db.execute(
+            select(CloudIntegrationAccount)
+            .where(
+                CloudIntegrationAccount.owner_user_id == user_id,
+                CloudIntegrationAccount.definition_id == definition_id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    now = utcnow()
+    if account is None:
+        account = CloudIntegrationAccount(
+            definition_id=definition_id,
+            owner_user_id=user_id,
+            owner_scope="personal",
+            enabled=enabled,
+            status=status,
+            auth_kind=auth_kind,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(account)
+    else:
+        account.auth_kind = auth_kind
+        account.status = status
+        account.enabled = enabled
+        account.updated_at = now
+    await db.flush()
+    await db.refresh(account)
+    return _record(account)
+
+
+async def set_account_credentials(
+    db: AsyncSession,
+    *,
+    account_id: UUID,
+    credential_ciphertext: str | None,
+    credential_format: str,
+    auth_status: str,
+    token_expires_at: datetime | None,
+    expected_auth_version: int | None = None,
+) -> IntegrationAccountRecord | None:
+    account = (
+        await db.execute(
+            select(CloudIntegrationAccount)
+            .where(CloudIntegrationAccount.id == account_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if account is None:
+        return None
+    # Optimistic concurrency: bail if another writer moved the version.
+    if expected_auth_version is not None and account.auth_version != expected_auth_version:
+        return None
+    now = utcnow()
+    account.credential_ciphertext = credential_ciphertext
+    account.credential_format = credential_format
+    account.status = auth_status
+    account.token_expires_at = token_expires_at
+    account.auth_version = account.auth_version + 1
+    # Until lifecycle writers adopt the split versions, preserve the exact
+    # legacy revision on both new counters. This prevents drift between the
+    # additive migration and the stage-and-swap cutover.
+    account.grant_version = account.auth_version
+    account.credential_version = account.auth_version
+    account.last_error_code = None
+    account.updated_at = now
+    await db.flush()
+    await db.refresh(account)
+    return _record(account)
+
+
+async def compare_and_swap_oauth_refresh(
+    db: AsyncSession,
+    *,
+    account_id: UUID,
+    expected_grant_version: int,
+    expected_credential_version: int,
+    expected_definition_security_revision_id: UUID | None,
+    expected_provider_client_id: UUID | None,
+    credential_ciphertext: str,
+    token_expires_at: datetime | None,
+    effective_scopes_json: str,
+    advance_grant: bool,
+) -> IntegrationAccountRecord | None:
+    """Persist one OAuth refresh winner without conflating grant authority."""
+
+    account = await db.scalar(
+        select(CloudIntegrationAccount)
+        .where(CloudIntegrationAccount.id == account_id)
+        .with_for_update()
+    )
+    if account is None:
+        return None
+    if (
+        not account.enabled
+        or account.status != "ready"
+        or account.grant_version != expected_grant_version
+        or account.credential_version != expected_credential_version
+        or account.definition_security_revision_id != expected_definition_security_revision_id
+        or account.provider_client_id != expected_provider_client_id
+    ):
+        return None
+    now = utcnow()
+    account.credential_ciphertext = credential_ciphertext
+    account.credential_format = "oauth-bundle-v1"
+    account.token_expires_at = token_expires_at
+    account.effective_scopes_json = effective_scopes_json
+    account.auth_version += 1
+    account.credential_version += 1
+    if advance_grant:
+        account.grant_version += 1
+    account.last_error_code = None
+    account.updated_at = now
+    await db.flush()
+    await db.refresh(account)
+    return _record(account)
+
+
+async def set_account_status(
+    db: AsyncSession,
+    account_id: UUID,
+    status: str,
+    last_error_code: str | None = None,
+) -> IntegrationAccountRecord | None:
+    account = (
+        await db.execute(
+            select(CloudIntegrationAccount)
+            .where(CloudIntegrationAccount.id == account_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if account is None:
+        return None
+    account.status = status
+    account.last_error_code = last_error_code
+    account.updated_at = utcnow()
+    await db.flush()
+    await db.refresh(account)
+    return _record(account)
+
+
+async def set_account_settings(
+    db: AsyncSession,
+    account_id: UUID,
+    settings_json: str,
+) -> IntegrationAccountRecord | None:
+    account = (
+        await db.execute(
+            select(CloudIntegrationAccount)
+            .where(CloudIntegrationAccount.id == account_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if account is None:
+        return None
+    account.settings_json = settings_json
+    account.updated_at = utcnow()
+    await db.flush()
+    await db.refresh(account)
+    return _record(account)
+
+
+async def delete_account(
+    db: AsyncSession,
+    account_id: UUID,
+) -> None:
+    await db.execute(
+        delete(CloudIntegrationAccount).where(CloudIntegrationAccount.id == account_id)
+    )
+    await db.flush()

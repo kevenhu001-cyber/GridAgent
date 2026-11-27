@@ -1,0 +1,210 @@
+import { describe, expect, it } from "vitest";
+import {
+  deriveAppCapabilities,
+  resolveEffectiveContract,
+} from "#product/lib/domain/capabilities/app-capabilities";
+import type { ServerCapabilityContract } from "#product/lib/domain/capabilities/server-capability-contract";
+
+const FALLBACK = {
+  supportEmail: "support@proliferate.com",
+  pricingUrl: "https://proliferate.com/pricing",
+};
+
+function contract(
+  overrides: Partial<ServerCapabilityContract> = {},
+): ServerCapabilityContract {
+  return {
+    contractVersion: 1,
+    deployment: { mode: "self_managed", displayName: "", logoUrl: null },
+    billing: false,
+    usageMetering: false,
+    cloudWorkspaces: false,
+    agentGateway: false,
+    webApp: { available: false, baseUrl: null },
+    support: { kind: "none", email: null, url: null },
+    pricing: { available: false, url: null },
+    githubRepositoryAccess: { status: "disabled", provider: null, displayName: null },
+    managedCloud: { status: "disabled", repositoryAuthority: null, source: "legacy" },
+    ...overrides,
+  };
+}
+
+describe("deriveAppCapabilities", () => {
+  it("maps a hosted contract to full capabilities and no self-managed identity", () => {
+    const caps = deriveAppCapabilities({
+      reachable: true,
+      connectedServerHost: "app.proliferate.com",
+      contract: contract({
+        deployment: { mode: "hosted_product", displayName: "Proliferate", logoUrl: null },
+        billing: true,
+        usageMetering: true,
+        cloudWorkspaces: true,
+        agentGateway: true,
+        webApp: { available: true, baseUrl: "https://web.proliferate.com" },
+        support: { kind: "vendor", email: "support@proliferate.com", url: null },
+        pricing: { available: true, url: "https://proliferate.com/pricing" },
+      }),
+    });
+
+    expect(caps.controlPlaneReachable).toBe(true);
+    expect(caps.billingEnabled).toBe(true);
+    expect(caps.usageMeteringEnabled).toBe(true);
+    // Cloud culling (PRO-10): CLOUD_COMPUTE_TEMPORARILY_DISABLED is now `true`,
+    // so cloudComputeEnabled is forced off even for a fully-enabled hosted
+    // contract. (Pre-gate-flip this was `true`.)
+    expect(caps.cloudComputeEnabled).toBe(false);
+    expect(caps.agentGatewayEnabled).toBe(true);
+    expect(caps.isSelfManaged).toBe(false);
+    expect(caps.serverDisplayName).toBeNull();
+    expect(caps.serverLogoUrl).toBeNull();
+    expect(caps.webApp.baseUrl).toBe("https://web.proliferate.com");
+    expect(caps.support.kind).toBe("vendor");
+    expect(caps.pricing.available).toBe(true);
+  });
+
+  it("keeps every vendor/cloud surface off for a base self-managed contract", () => {
+    const caps = deriveAppCapabilities({
+      reachable: true,
+      connectedServerHost: "acme.example.com",
+      contract: contract({ deployment: { mode: "self_managed", displayName: "", logoUrl: null } }),
+    });
+
+    // Sign-in still works against a self-managed control plane.
+    expect(caps.controlPlaneReachable).toBe(true);
+    expect(caps.billingEnabled).toBe(false);
+    expect(caps.usageMeteringEnabled).toBe(false);
+    expect(caps.cloudComputeEnabled).toBe(false);
+    expect(caps.agentGatewayEnabled).toBe(false);
+    expect(caps.isSelfManaged).toBe(true);
+    // No operator name -> fall back to the connected origin host.
+    expect(caps.serverDisplayName).toBe("acme.example.com");
+    expect(caps.webApp.available).toBe(false);
+    expect(caps.support.kind).toBe("none");
+    expect(caps.pricing.available).toBe(false);
+  });
+
+  it("shows only the configured add-ons on a self-managed contract", () => {
+    const caps = deriveAppCapabilities({
+      reachable: true,
+      connectedServerHost: "acme.example.com",
+      contract: contract({
+        deployment: { mode: "self_managed", displayName: "Acme Internal", logoUrl: "https://acme.example.com/logo.svg" },
+        cloudWorkspaces: true,
+        agentGateway: true,
+      }),
+    });
+
+    expect(caps.isSelfManaged).toBe(true);
+    expect(caps.serverDisplayName).toBe("Acme Internal");
+    expect(caps.serverLogoUrl).toBe("https://acme.example.com/logo.svg");
+    // Cloud culling (PRO-10): forced off by CLOUD_COMPUTE_TEMPORARILY_DISABLED
+    // even though this self-managed contract declares cloud compute.
+    expect(caps.cloudComputeEnabled).toBe(false);
+    expect(caps.agentGatewayEnabled).toBe(true);
+    // Billing/web/pricing stay off unless declared.
+    expect(caps.billingEnabled).toBe(false);
+    expect(caps.webApp.available).toBe(false);
+  });
+
+  it("treats a missing contract as a conservative self-managed server", () => {
+    const caps = deriveAppCapabilities({
+      reachable: true,
+      connectedServerHost: "unknown.example.com",
+      contract: null,
+    });
+
+    expect(caps.controlPlaneReachable).toBe(true);
+    expect(caps.billingEnabled).toBe(false);
+    expect(caps.cloudComputeEnabled).toBe(false);
+    expect(caps.agentGatewayEnabled).toBe(false);
+    expect(caps.isSelfManaged).toBe(true);
+    expect(caps.deploymentMode).toBe("self_managed");
+    expect(caps.serverDisplayName).toBe("unknown.example.com");
+    expect(caps.webApp.available).toBe(false);
+    expect(caps.support.kind).toBe("none");
+    expect(caps.pricing.available).toBe(false);
+  });
+
+  it("surfaces the split GitHub-access and managed-Cloud statuses", () => {
+    const caps = deriveAppCapabilities({
+      reachable: true,
+      connectedServerHost: "acme.example.com",
+      contract: contract({
+        githubRepositoryAccess: { status: "ready", provider: "github_app", displayName: "acme-app" },
+        managedCloud: { status: "operator_configuration_required", repositoryAuthority: "github_app", source: "v2" },
+      }),
+    });
+
+    expect(caps.githubRepositoryAccessStatus).toBe("ready");
+    expect(caps.githubRepositoryAccessDisplayName).toBe("acme-app");
+    expect(caps.managedCloudStatus).toBe("operator_configuration_required");
+  });
+
+  it("gates capabilities on reachability", () => {
+    const caps = deriveAppCapabilities({
+      reachable: false,
+      connectedServerHost: "app.proliferate.com",
+      contract: contract({
+        deployment: { mode: "hosted_product", displayName: "Proliferate", logoUrl: null },
+        billing: true,
+        cloudWorkspaces: true,
+        agentGateway: true,
+      }),
+    });
+
+    expect(caps.controlPlaneReachable).toBe(false);
+    expect(caps.billingEnabled).toBe(false);
+    expect(caps.cloudComputeEnabled).toBe(false);
+    expect(caps.agentGatewayEnabled).toBe(false);
+  });
+});
+
+describe("resolveEffectiveContract", () => {
+  it("returns the server contract verbatim when present", () => {
+    const c = contract({ billing: true });
+    expect(
+      resolveEffectiveContract(c, { isOfficialOrigin: false, fallback: FALLBACK }),
+    ).toBe(c);
+  });
+
+  it("synthesizes the hosted posture for an older official server", () => {
+    const resolved = resolveEffectiveContract(null, {
+      isOfficialOrigin: true,
+      fallback: FALLBACK,
+    });
+
+    expect(resolved).not.toBeNull();
+    expect(resolved?.deployment.mode).toBe("hosted_product");
+    expect(resolved?.billing).toBe(true);
+    expect(resolved?.cloudWorkspaces).toBe(true);
+    expect(resolved?.agentGateway).toBe(true);
+    expect(resolved?.webApp.available).toBe(true);
+    expect(resolved?.support.email).toBe("support@proliferate.com");
+    expect(resolved?.pricing.url).toBe("https://proliferate.com/pricing");
+  });
+
+  it("stays null (conservative) for an older non-official server", () => {
+    expect(
+      resolveEffectiveContract(null, { isOfficialOrigin: false, fallback: FALLBACK }),
+    ).toBeNull();
+  });
+
+  it("preserves current hosted behavior end to end for an older official server", () => {
+    const resolved = resolveEffectiveContract(null, {
+      isOfficialOrigin: true,
+      fallback: FALLBACK,
+    });
+    const caps = deriveAppCapabilities({
+      reachable: true,
+      connectedServerHost: "app.proliferate.com",
+      contract: resolved,
+    });
+
+    expect(caps.billingEnabled).toBe(true);
+    // Cloud culling (PRO-10): forced off by CLOUD_COMPUTE_TEMPORARILY_DISABLED
+    // even for the synthesized older-official hosted contract.
+    expect(caps.cloudComputeEnabled).toBe(false);
+    expect(caps.isSelfManaged).toBe(false);
+    expect(caps.serverDisplayName).toBeNull();
+  });
+});

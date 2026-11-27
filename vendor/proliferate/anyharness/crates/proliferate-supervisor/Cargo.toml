@@ -1,0 +1,30 @@
+[package]
+name = "proliferate-supervisor"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Supervisor for AnyHarness and Proliferate Worker"
+
+[[bin]]
+name = "proliferate-supervisor"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+proliferate-runtime-update-protocol.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sentry.workspace = true
+sentry-anyhow.workspace = true
+sentry-tracing.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+toml.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+sentry = { workspace = true, features = ["test"] }

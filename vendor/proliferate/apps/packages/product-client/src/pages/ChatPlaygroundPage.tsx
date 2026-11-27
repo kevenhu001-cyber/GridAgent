@@ -1,0 +1,123 @@
+import { useSearchParams } from "react-router-dom";
+import { PlaygroundComposer } from "#product/components/playground/PlaygroundComposer";
+import { PlaygroundScenarioBar } from "#product/components/playground/PlaygroundScenarioBar";
+import { PlaygroundSidebarGitDiff } from "#product/components/playground/PlaygroundSidebarGitDiff";
+import { PlaygroundTranscript } from "#product/components/playground/transcript/PlaygroundTranscript";
+import { ChromeTab } from "#product/primitives/patterns/tabs/ChromeTab";
+// This dev-only route sits outside AuthenticatedProductClient, so load the
+// authenticated presentation rules explicitly for direct playground URLs.
+import "../app/authenticated.css";
+import {
+  resolvePlaygroundScenarioSelection,
+  type ScenarioKey,
+} from "#product/config/playground";
+import {
+  CHAT_COLUMN_CLASSNAME,
+  CHAT_SURFACE_GUTTER_CLASSNAME,
+} from "#product/config/chat-layout";
+import { useChatDockInset } from "#product/hooks/chat/ui/use-chat-dock-inset";
+import { useReplaySession } from "#product/hooks/playground/lifecycle/use-replay-session";
+import { PlaygroundAttachmentPreviewAside } from "#product/components/playground/PlaygroundAttachmentFixtures";
+
+export function ChatPlaygroundPage() {
+  const [params, setParams] = useSearchParams();
+  const selection = resolvePlaygroundScenarioSelection(params.get("s"));
+  const {
+    dockRef,
+    lowerBackdropTopPx,
+    scrollBottomInsetPx,
+    stickyBottomInsetPx,
+  } = useChatDockInset();
+  const replay = useReplaySession(
+    selection.kind === "recording" ? selection.recordingId : null,
+  );
+  const showSidebarGitDiff =
+    selection.kind === "fixture" && selection.key === "git-diff-panel";
+  const showAttachmentPreview =
+    selection.kind === "fixture" && selection.key === "attachment-previews";
+  const focusTranscript = params.get("focus") === "1"
+    && (
+      selection.kind === "recording"
+      || (
+        selection.kind === "fixture"
+        && selection.key === "markdown-presentation"
+      )
+    );
+
+  const handleSelectFixture = (key: ScenarioKey) => {
+    const next = new URLSearchParams(params);
+    next.set("s", key);
+    setParams(next, { replace: true });
+  };
+
+  const handleSelectRecording = (recordingId: string) => {
+    const next = new URLSearchParams(params);
+    next.set("s", recordingId);
+    setParams(next, { replace: true });
+  };
+
+  return (
+    <div className="chat-selection-root flex h-screen flex-col bg-background text-foreground">
+      {!focusTranscript && (
+        <>
+          <header
+            aria-label="Populated session preview"
+            className="relative flex h-[46px] shrink-0 items-stretch bg-sidebar px-3 after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-border after:content-['']"
+          >
+            <ChromeTab
+              isActive
+              width={256}
+              label="Chat playground"
+              onSelect={() => {}}
+              onClose={() => {}}
+            />
+          </header>
+          <PlaygroundScenarioBar
+            selection={selection}
+            replay={replay}
+            onSelectFixture={handleSelectFixture}
+            onSelectRecording={handleSelectRecording}
+          />
+        </>
+      )}
+      <main className="relative flex flex-1 overflow-hidden">
+        <div
+          className="flex-1 overflow-y-auto pt-6"
+          style={{ paddingBottom: scrollBottomInsetPx }}
+        >
+          <div className={CHAT_SURFACE_GUTTER_CLASSNAME}>
+            {/* Mirror the transcript root's label-size override so fixtures
+                render at product parity (text-chat resolves to message size). */}
+            <div className={`${CHAT_COLUMN_CLASSNAME} flex h-full flex-col gap-6 [--text-chat:var(--text-message)] [--text-chat--line-height:var(--text-message--line-height)] [--text-chat-meta:calc(var(--text-chat)_-_2px)]`}>
+              <PlaygroundTranscript
+                selection={selection}
+                replay={replay}
+                stickyBottomInsetPx={stickyBottomInsetPx}
+              />
+            </div>
+          </div>
+        </div>
+        <PlaygroundComposer
+          dockRef={dockRef}
+          lowerBackdropTopPx={lowerBackdropTopPx}
+          selection={selection}
+          replay={replay}
+          rightInsetPx={showAttachmentPreview ? 416 : 0}
+        />
+        {showSidebarGitDiff && (
+          <aside className="hidden w-[22rem] shrink-0 border-l border-border bg-sidebar-background lg:block">
+            <PlaygroundSidebarGitDiff />
+          </aside>
+        )}
+        {showAttachmentPreview && <PlaygroundAttachmentPreviewAside />}
+      </main>
+      {!focusTranscript && (
+        <footer className="border-t border-border px-4 py-2 text-ui-sm text-muted-foreground">
+          <code className="font-mono">?s={selection.raw}</code>
+          <span className="mx-2">·</span>
+          Dev only · import.meta.env.DEV
+        </footer>
+      )}
+    </div>
+  );
+}

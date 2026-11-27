@@ -1,0 +1,194 @@
+use tokio::sync::broadcast;
+
+use super::SessionEventSink;
+use crate::domains::sessions::model::SessionEventRecord;
+use crate::domains::sessions::runtime_event::RuntimeEventInjectionError;
+use crate::live::sessions::model::EventPersist;
+use crate::observability::transcript_phase::record_transcript_phase_event;
+use anyharness_contract::v1::{SessionEvent, SessionEventEnvelope};
+
+impl SessionEventSink {
+    pub(super) fn emit_with_ids(
+        &mut self,
+        event: SessionEvent,
+        turn_id: Option<String>,
+        item_id: Option<String>,
+    ) {
+        if !self.event_sequence_owned {
+            tracing::error!(
+                session_id = %self.session_id,
+                failure_code = "event_sequence_relinquished",
+                "event rejected after event sequence relinquishment"
+            );
+            return;
+        }
+        if self
+            .staged_terminal
+            .as_ref()
+            .is_some_and(|staged| !staged.is_drafting)
+        {
+            tracing::error!(
+                session_id = %self.session_id,
+                failure_code = "terminal_sequence_fenced",
+                "event rejected while a frozen terminal transaction is unresolved"
+            );
+            return;
+        }
+        // Anything emitted into an open engine-initiated turn (beyond its own
+        // start/end boundaries) marks it non-empty for the post-dispatch
+        // sweep (see `sweep_empty_engine_turn`).
+        if self.engine_initiated_turn
+            && turn_id.is_some()
+            && turn_id == self.current_turn_id
+            && !matches!(
+                event,
+                SessionEvent::TurnStarted(_) | SessionEvent::TurnEnded(_)
+            )
+        {
+            self.engine_turn_has_events = true;
+        }
+        if self
+            .staged_terminal
+            .as_ref()
+            .is_some_and(|staged| staged.is_drafting)
+        {
+            let envelope = build_session_event(
+                &self.session_id,
+                &mut self.next_seq,
+                event,
+                turn_id,
+                item_id,
+            );
+            self.staged_terminal
+                .as_mut()
+                .expect("terminal stage exists")
+                .input
+                .events
+                .push(envelope);
+            return;
+        }
+        let envelope = publish_session_event(
+            &self.session_id,
+            &mut self.next_seq,
+            &self.event_tx,
+            self.store.as_ref(),
+            event,
+            turn_id,
+            item_id,
+        );
+        record_transcript_phase_event(&mut self.transcript_phase_debug, &envelope);
+    }
+}
+
+pub(super) fn build_session_event(
+    session_id: &str,
+    next_seq: &mut i64,
+    event: SessionEvent,
+    turn_id: Option<String>,
+    item_id: Option<String>,
+) -> SessionEventEnvelope {
+    let seq = *next_seq;
+    *next_seq += 1;
+    SessionEventEnvelope {
+        session_id: session_id.to_string(),
+        seq,
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        turn_id,
+        item_id,
+        event,
+    }
+}
+
+pub(crate) fn publish_session_event(
+    session_id: &str,
+    next_seq: &mut i64,
+    event_tx: &broadcast::Sender<SessionEventEnvelope>,
+    store: &dyn EventPersist,
+    event: SessionEvent,
+    turn_id: Option<String>,
+    item_id: Option<String>,
+) -> SessionEventEnvelope {
+    let envelope = build_session_event(session_id, next_seq, event, turn_id, item_id);
+    let seq = envelope.seq;
+    let timestamp = envelope.timestamp.clone();
+    let event_type = envelope.event.event_type().to_string();
+    tracing::info!(
+        session_id = %session_id,
+        seq = seq,
+        event_type = %event_type,
+        "event_sink: emitting event"
+    );
+
+    let payload_json = serde_json::to_string(&envelope.event).unwrap_or_default();
+    tracing::debug!(session_id = %session_id, seq = seq, "event_sink: event persisted");
+    let record = SessionEventRecord {
+        id: 0,
+        session_id: session_id.to_string(),
+        seq,
+        timestamp,
+        event_type,
+        turn_id: envelope.turn_id.clone(),
+        item_id: envelope.item_id.clone(),
+        payload_json,
+    };
+    if let Err(e) = store.append_event(&record) {
+        tracing::warn!(error = %e, "failed to persist session event");
+    }
+
+    let _ = event_tx.send(envelope.clone());
+    envelope
+}
+
+pub(super) fn publish_session_event_strict(
+    session_id: &str,
+    next_seq: &mut i64,
+    event_tx: &broadcast::Sender<SessionEventEnvelope>,
+    store: &dyn EventPersist,
+    event: SessionEvent,
+    turn_id: Option<String>,
+    item_id: Option<String>,
+    touch_session_activity: bool,
+) -> Result<SessionEventEnvelope, RuntimeEventInjectionError> {
+    let seq = *next_seq;
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    let event_type = event.event_type().to_string();
+    let envelope = SessionEventEnvelope {
+        session_id: session_id.to_string(),
+        seq,
+        timestamp: timestamp.clone(),
+        turn_id: turn_id.clone(),
+        item_id: item_id.clone(),
+        event,
+    };
+    let payload_json = serde_json::to_string(&envelope.event)
+        .map_err(|error| RuntimeEventInjectionError::PersistenceFailed(error.to_string()))?;
+    let record = SessionEventRecord {
+        id: 0,
+        session_id: session_id.to_string(),
+        seq,
+        timestamp,
+        event_type,
+        turn_id,
+        item_id,
+        payload_json,
+    };
+    if touch_session_activity {
+        store
+            .append_event_and_touch_session(&record)
+            .map_err(|error| RuntimeEventInjectionError::PersistenceFailed(error.to_string()))?;
+    } else {
+        store
+            .append_event(&record)
+            .map_err(|error| RuntimeEventInjectionError::PersistenceFailed(error.to_string()))?;
+    }
+    *next_seq += 1;
+    tracing::info!(
+        target: "anyharness.session.event_injected",
+        session_id = %session_id,
+        seq = seq,
+        event_type = %record.event_type,
+        "event_sink: injecting runtime event"
+    );
+    let _ = event_tx.send(envelope.clone());
+    Ok(envelope)
+}

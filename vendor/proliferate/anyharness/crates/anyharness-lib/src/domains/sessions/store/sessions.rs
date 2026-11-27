@@ -1,0 +1,598 @@
+use rusqlite::{params, OptionalExtension};
+
+use super::attachments::insert_prompt_attachment_row;
+use super::events::insert_event_row;
+use super::launch_intents::insert_launch_intent_row;
+use super::live_config::{upsert_live_config_snapshot_row, upsert_pending_config_change_row};
+use super::notifications::insert_raw_notification_row;
+use super::pending_prompts::insert_pending_prompt_row;
+use super::with_launch_admission_tx;
+use super::SessionStore;
+use crate::domains::agents::launch_options::{
+    HarnessLaunchOptionStateRow, LaunchSelection, LaunchSelectionUnsupported,
+};
+use crate::domains::sessions::launch_intent::ResolvedLaunchIntent;
+use crate::domains::sessions::model::{
+    PendingConfigChangeRecord, PendingPromptRecord, PromptAttachmentRecord, SessionEventRecord,
+    SessionLiveConfigSnapshotRecord, SessionMcpBindingPolicy, SessionRawNotificationRecord,
+    SessionRecord,
+};
+use crate::origin::{decode_origin_json, encode_origin_json};
+
+impl SessionStore {
+    pub fn insert(&self, record: &SessionRecord) -> anyhow::Result<()> {
+        self.db.with_conn(|conn| {
+            insert_session_row(conn, record)?;
+            Ok(())
+        })
+    }
+
+    pub fn insert_with_launch_intent(
+        &self,
+        record: &SessionRecord,
+        intent: &ResolvedLaunchIntent,
+        harness_kind: &str,
+        basis_revision: &dyn Fn() -> String,
+        selection: &LaunchSelection,
+    ) -> Result<HarnessLaunchOptionStateRow, LaunchSelectionUnsupported> {
+        let ((), validated) =
+            with_launch_admission_tx(&self.db, harness_kind, basis_revision, selection, |conn| {
+                insert_session_row(conn, record)?;
+                insert_launch_intent_row(conn, &record.id, intent)?;
+                Ok(())
+            })
+            .map_err(super::LaunchAdmissionTxError::into_selection)?;
+        Ok(validated)
+    }
+
+    /// Deletes only session-store-owned rows. Use the session delete workflow
+    /// when dependent product-state rows must be removed in the same
+    /// transaction.
+    pub fn delete_session(&self, id: &str) -> anyhow::Result<()> {
+        self.db.with_tx(|conn| delete_session_rows_in_tx(conn, id))
+    }
+
+    pub fn find_by_id(&self, id: &str) -> anyhow::Result<Option<SessionRecord>> {
+        self.db.with_conn(|conn| {
+            conn.query_row("SELECT * FROM sessions WHERE id = ?1", [id], |row| {
+                map_session(row)
+            })
+            .optional()
+        })
+    }
+
+    pub fn update_mcp_bindings(
+        &self,
+        id: &str,
+        mcp_bindings_ciphertext: Option<String>,
+        mcp_binding_summaries_json: Option<String>,
+    ) -> anyhow::Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE sessions
+                 SET mcp_bindings_ciphertext = ?1,
+                     mcp_binding_summaries_json = ?2,
+                     updated_at = ?3
+                 WHERE id = ?4",
+                params![mcp_bindings_ciphertext, mcp_binding_summaries_json, now, id],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn update_mcp_binding_summaries(
+        &self,
+        id: &str,
+        mcp_binding_summaries_json: Option<String>,
+    ) -> anyhow::Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE sessions
+                 SET mcp_binding_summaries_json = ?1,
+                     updated_at = ?2
+                 WHERE id = ?3",
+                params![mcp_binding_summaries_json, now, id],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn update_action_capabilities_json(
+        &self,
+        id: &str,
+        action_capabilities_json: Option<String>,
+        now: &str,
+    ) -> anyhow::Result<()> {
+        self.db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE sessions
+                 SET action_capabilities_json = ?1,
+                     updated_at = ?2
+                 WHERE id = ?3",
+                params![action_capabilities_json, now, id],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn list_by_workspace(&self, workspace_id: &str) -> anyhow::Result<Vec<SessionRecord>> {
+        self.db.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT * FROM sessions WHERE workspace_id = ?1 ORDER BY updated_at DESC",
+            )?;
+            let rows = stmt.query_map([workspace_id], |row| map_session(row))?;
+            rows.collect()
+        })
+    }
+
+    pub fn estimate_workspace_storage_bytes(&self, workspace_id: &str) -> anyhow::Result<u64> {
+        self.db
+            .with_conn(|conn| estimate_workspace_storage_bytes_in_tx(conn, workspace_id))
+    }
+
+    pub fn list_all(&self) -> anyhow::Result<Vec<SessionRecord>> {
+        self.db.with_conn(|conn| {
+            let mut stmt = conn.prepare("SELECT * FROM sessions ORDER BY updated_at DESC")?;
+            let rows = stmt.query_map([], |row| map_session(row))?;
+            rows.collect()
+        })
+    }
+
+    pub fn list_visible_by_workspace(
+        &self,
+        workspace_id: &str,
+    ) -> anyhow::Result<Vec<SessionRecord>> {
+        self.db.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT * FROM sessions
+                 WHERE workspace_id = ?1 AND dismissed_at IS NULL AND closed_at IS NULL
+                 ORDER BY updated_at DESC",
+            )?;
+            let rows = stmt.query_map([workspace_id], map_session)?;
+            rows.collect()
+        })
+    }
+
+    pub fn list_with_dismissed_by_workspace(
+        &self,
+        workspace_id: &str,
+    ) -> anyhow::Result<Vec<SessionRecord>> {
+        self.db.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT * FROM sessions
+                 WHERE workspace_id = ?1 AND closed_at IS NULL
+                 ORDER BY updated_at DESC",
+            )?;
+            let rows = stmt.query_map([workspace_id], map_session)?;
+            rows.collect()
+        })
+    }
+
+    pub fn list_visible_all(&self) -> anyhow::Result<Vec<SessionRecord>> {
+        self.db.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT * FROM sessions
+                 WHERE dismissed_at IS NULL AND closed_at IS NULL
+                 ORDER BY updated_at DESC",
+            )?;
+            let rows = stmt.query_map([], map_session)?;
+            rows.collect()
+        })
+    }
+
+    pub fn list_with_dismissed_all(&self) -> anyhow::Result<Vec<SessionRecord>> {
+        self.db.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT * FROM sessions
+                 WHERE closed_at IS NULL
+                 ORDER BY updated_at DESC",
+            )?;
+            let rows = stmt.query_map([], map_session)?;
+            rows.collect()
+        })
+    }
+
+    pub fn update_status(&self, id: &str, status: &str, now: &str) -> anyhow::Result<()> {
+        self.db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE sessions
+                 SET status = ?1, updated_at = ?2
+                 WHERE id = ?3 AND closed_at IS NULL",
+                params![status, now, id],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn update_native_session_id(
+        &self,
+        id: &str,
+        native_session_id: &str,
+        now: &str,
+    ) -> anyhow::Result<()> {
+        self.db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE sessions
+                 SET native_session_id = ?1, updated_at = ?2
+                 WHERE id = ?3 AND closed_at IS NULL",
+                params![native_session_id, now, id],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn clear_native_session_id(&self, id: &str, now: &str) -> anyhow::Result<()> {
+        self.db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE sessions SET native_session_id = NULL, updated_at = ?1 WHERE id = ?2",
+                params![now, id],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn update_last_prompt_at(&self, id: &str, now: &str) -> anyhow::Result<()> {
+        self.db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE sessions SET last_prompt_at = ?1, updated_at = ?1 WHERE id = ?2",
+                params![now, id],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn update_requested_configuration(
+        &self,
+        id: &str,
+        requested_model_id: Option<&str>,
+        requested_mode_id: Option<&str>,
+        now: &str,
+    ) -> anyhow::Result<()> {
+        self.db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE sessions
+                 SET requested_model_id = ?1, requested_mode_id = ?2, updated_at = ?3
+                 WHERE id = ?4",
+                params![requested_model_id, requested_mode_id, now, id],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn update_current_configuration(
+        &self,
+        id: &str,
+        current_model_id: Option<&str>,
+        current_mode_id: Option<&str>,
+        now: &str,
+    ) -> anyhow::Result<()> {
+        self.db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE sessions
+                 SET current_model_id = ?1, current_mode_id = ?2, updated_at = ?3
+                 WHERE id = ?4",
+                params![current_model_id, current_mode_id, now, id],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn mark_closed(&self, id: &str, now: &str) -> anyhow::Result<()> {
+        self.db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE sessions
+                 SET status = 'closed',
+                     closed_at = COALESCE(closed_at, ?1),
+                     updated_at = CASE WHEN closed_at IS NULL THEN ?1 ELSE updated_at END
+                 WHERE id = ?2",
+                params![now, id],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn mark_dismissed(&self, id: &str, now: &str) -> anyhow::Result<()> {
+        self.db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE sessions
+                 SET dismissed_at = COALESCE(dismissed_at, ?1),
+                     updated_at = CASE WHEN dismissed_at IS NULL THEN ?1 ELSE updated_at END
+                 WHERE id = ?2",
+                params![now, id],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn clear_dismissed(&self, id: &str, now: &str) -> anyhow::Result<()> {
+        self.db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE sessions SET dismissed_at = NULL, updated_at = ?1 WHERE id = ?2",
+                params![now, id],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn pop_last_dismissed_in_workspace(
+        &self,
+        workspace_id: &str,
+        expected_session_id: Option<&str>,
+        now: &str,
+    ) -> anyhow::Result<Option<SessionRecord>> {
+        self.db.with_tx(|conn| {
+            let record = conn
+                .query_row(
+                    "SELECT * FROM sessions
+                     WHERE workspace_id = ?1 AND dismissed_at IS NOT NULL AND closed_at IS NULL
+                     ORDER BY dismissed_at DESC, updated_at DESC
+                     LIMIT 1",
+                    [workspace_id],
+                    map_session,
+                )
+                .optional()?;
+
+            let Some(record) = record else {
+                return Ok(None);
+            };
+            if expected_session_id.is_some_and(|expected| record.id != expected) {
+                return Ok(None);
+            }
+
+            conn.execute(
+                "UPDATE sessions SET dismissed_at = NULL, updated_at = ?1 WHERE id = ?2",
+                params![now, record.id],
+            )?;
+
+            let restored = conn
+                .query_row(
+                    "SELECT * FROM sessions WHERE id = ?1",
+                    [&record.id],
+                    map_session,
+                )
+                .optional()?;
+            Ok(restored)
+        })
+    }
+
+    pub fn find_last_dismissed_in_workspace(
+        &self,
+        workspace_id: &str,
+    ) -> anyhow::Result<Option<SessionRecord>> {
+        self.db.with_conn(|conn| {
+            conn.query_row(
+                "SELECT * FROM sessions
+                 WHERE workspace_id = ?1 AND dismissed_at IS NOT NULL AND closed_at IS NULL
+                 ORDER BY dismissed_at DESC, updated_at DESC
+                 LIMIT 1",
+                [workspace_id],
+                map_session,
+            )
+            .optional()
+        })
+    }
+
+    pub fn import_bundle(
+        &self,
+        session: &SessionRecord,
+        pending_prompt_seq_cursor: i64,
+        live_config_snapshot: Option<&SessionLiveConfigSnapshotRecord>,
+        pending_config_changes: &[PendingConfigChangeRecord],
+        pending_prompts: &[PendingPromptRecord],
+        prompt_attachments: &[PromptAttachmentRecord],
+        events: &[SessionEventRecord],
+        raw_notifications: &[SessionRawNotificationRecord],
+    ) -> anyhow::Result<()> {
+        self.db.with_tx(|conn| {
+            insert_session_row(conn, session)?;
+            // Same emptiness rule as the 0076 backfill: the source runtime's
+            // requested values were validated against the source target's
+            // observations, which do not authorize launches on this target.
+            // Live values restore from the carried live snapshot; the intent
+            // must stay startable here.
+            insert_launch_intent_row(
+                conn,
+                &session.id,
+                &ResolvedLaunchIntent {
+                    model_id: None,
+                    control_values: Default::default(),
+                    created_at: session.created_at.clone(),
+                },
+            )?;
+            super::mobility::restore_pending_prompt_seq_cursor(
+                conn,
+                &session.id,
+                pending_prompt_seq_cursor,
+            )?;
+            if let Some(snapshot) = live_config_snapshot {
+                upsert_live_config_snapshot_row(conn, snapshot)?;
+            }
+            for change in pending_config_changes {
+                upsert_pending_config_change_row(conn, change)?;
+            }
+            for prompt in pending_prompts {
+                insert_pending_prompt_row(conn, prompt)?;
+            }
+            for attachment in prompt_attachments {
+                insert_prompt_attachment_row(conn, attachment)?;
+            }
+            for event in events {
+                insert_event_row(conn, event)?;
+            }
+            for notification in raw_notifications {
+                insert_raw_notification_row(conn, notification)?;
+            }
+            Ok(())
+        })
+    }
+}
+
+pub(crate) fn list_session_ids_by_workspace_in_tx(
+    conn: &rusqlite::Connection,
+    workspace_id: &str,
+) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT id FROM sessions WHERE workspace_id = ?1")?;
+    let rows = stmt.query_map([workspace_id], |row| row.get::<_, String>(0))?;
+    rows.collect()
+}
+
+pub(crate) fn estimate_workspace_storage_bytes_in_tx(
+    conn: &rusqlite::Connection,
+    workspace_id: &str,
+) -> rusqlite::Result<u64> {
+    let session_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sessions WHERE workspace_id = ?1",
+        [workspace_id],
+        |row| row.get(0),
+    )?;
+    let mut total = (session_count.max(0) as u64).saturating_mul(512);
+
+    for sql in [
+        "SELECT COALESCE(SUM(LENGTH(payload_json) + LENGTH(event_type) + LENGTH(timestamp) + 64), 0)
+           FROM session_events
+          WHERE session_id IN (SELECT id FROM sessions WHERE workspace_id = ?1)",
+        "SELECT COALESCE(SUM(LENGTH(payload_json) + LENGTH(notification_kind) + LENGTH(timestamp) + 64), 0)
+           FROM session_raw_notifications
+          WHERE session_id IN (SELECT id FROM sessions WHERE workspace_id = ?1)",
+        "SELECT COALESCE(SUM(LENGTH(COALESCE(text, '')) + LENGTH(COALESCE(blocks_json, '')) + LENGTH(COALESCE(provenance_json, '')) + 128), 0)
+           FROM session_pending_prompts
+          WHERE session_id IN (SELECT id FROM sessions WHERE workspace_id = ?1)",
+        "SELECT COALESCE(SUM(LENGTH(COALESCE(raw_config_options_json, '')) + LENGTH(COALESCE(normalized_controls_json, '')) + 128), 0)
+           FROM session_live_config_snapshots
+          WHERE session_id IN (SELECT id FROM sessions WHERE workspace_id = ?1)",
+        "SELECT COALESCE(SUM(LENGTH(config_id) + LENGTH(value) + 96), 0)
+           FROM session_pending_config_changes
+          WHERE session_id IN (SELECT id FROM sessions WHERE workspace_id = ?1)",
+        "SELECT COALESCE(SUM(LENGTH(tool_call_id) + LENGTH(COALESCE(turn_id, '')) + LENGTH(tracker_kind) + LENGTH(source_agent_kind) + LENGTH(COALESCE(agent_id, '')) + LENGTH(COALESCE(output_file, '')) + 128), 0)
+           FROM session_background_work
+          WHERE session_id IN (SELECT id FROM sessions WHERE workspace_id = ?1)",
+        "SELECT COALESCE(SUM(LENGTH(attachment_id) + LENGTH(kind) + LENGTH(source) + LENGTH(COALESCE(mime_type, '')) + LENGTH(COALESCE(display_name, '')) + LENGTH(COALESCE(source_uri, '')) + LENGTH(COALESCE(storage_path, '')) + LENGTH(content) + 128), 0)
+           FROM session_prompt_attachments
+          WHERE session_id IN (SELECT id FROM sessions WHERE workspace_id = ?1)",
+    ] {
+        let bytes: i64 = conn.query_row(sql, [workspace_id], |row| row.get(0))?;
+        total = total.saturating_add(bytes.max(0) as u64);
+    }
+
+    Ok(total)
+}
+
+pub(crate) fn delete_session_rows_in_tx(
+    conn: &rusqlite::Connection,
+    id: &str,
+) -> rusqlite::Result<()> {
+    // These tables are owned by the session store and do not all cascade from
+    // sessions today, so the store keeps their low-level SQL cleanup.
+    conn.execute(
+        "DELETE FROM session_background_work WHERE session_id = ?1",
+        [id],
+    )?;
+    conn.execute(
+        "DELETE FROM session_pending_prompts WHERE session_id = ?1",
+        [id],
+    )?;
+    conn.execute(
+        "DELETE FROM session_prompt_attachments WHERE session_id = ?1",
+        [id],
+    )?;
+    conn.execute(
+        "DELETE FROM session_pending_config_changes WHERE session_id = ?1",
+        [id],
+    )?;
+    conn.execute(
+        "DELETE FROM session_live_config_snapshots WHERE session_id = ?1",
+        [id],
+    )?;
+    conn.execute(
+        "DELETE FROM session_raw_notifications WHERE session_id = ?1",
+        [id],
+    )?;
+    conn.execute("DELETE FROM session_events WHERE session_id = ?1", [id])?;
+    conn.execute(
+        "DELETE FROM session_adapter_markers WHERE session_id = ?1",
+        [id],
+    )?;
+    conn.execute("DELETE FROM sessions WHERE id = ?1", [id])?;
+    Ok(())
+}
+
+pub(super) fn map_session(row: &rusqlite::Row) -> rusqlite::Result<SessionRecord> {
+    let id: String = row.get("id")?;
+    let origin_json: Option<String> = row.get("origin_json")?;
+    Ok(SessionRecord {
+        id: id.clone(),
+        workspace_id: row.get("workspace_id")?,
+        agent_kind: row.get("agent_kind")?,
+        native_session_id: row.get("native_session_id")?,
+        agent_auth_contexts: row.get("agent_auth_contexts")?,
+        requested_model_id: row.get("requested_model_id")?,
+        current_model_id: row.get("current_model_id")?,
+        requested_mode_id: row.get("requested_mode_id")?,
+        current_mode_id: row.get("current_mode_id")?,
+        title: row.get("title")?,
+        thinking_level_id: row.get("thinking_level_id")?,
+        thinking_budget_tokens: row.get("thinking_budget_tokens")?,
+        status: row.get("status")?,
+        created_at: row.get("created_at")?,
+        updated_at: row.get("updated_at")?,
+        last_prompt_at: row.get("last_prompt_at")?,
+        closed_at: row.get("closed_at")?,
+        dismissed_at: row.get("dismissed_at")?,
+        mcp_bindings_ciphertext: row.get("mcp_bindings_ciphertext")?,
+        mcp_binding_summaries_json: row.get("mcp_binding_summaries_json")?,
+        mcp_binding_policy: SessionMcpBindingPolicy::parse(
+            &row.get::<_, String>("mcp_binding_policy")?,
+        ),
+        system_prompt_append: row.get("system_prompt_append")?,
+        subagents_enabled: row.get::<_, i64>("subagents_enabled")? != 0,
+        action_capabilities_json: row.get("action_capabilities_json")?,
+        origin: decode_origin_json("sessions", &id, origin_json),
+    })
+}
+
+pub(crate) fn insert_session_row(
+    conn: &rusqlite::Connection,
+    record: &SessionRecord,
+) -> rusqlite::Result<()> {
+    let origin_json = encode_origin_json(&record.origin)?;
+    conn.execute(
+        "INSERT INTO sessions (id, workspace_id, agent_kind, native_session_id,
+         agent_auth_contexts,
+         requested_model_id, current_model_id, requested_mode_id, current_mode_id,
+         title, thinking_level_id, thinking_budget_tokens, status, created_at,
+         updated_at, last_prompt_at, closed_at, dismissed_at, mcp_bindings_ciphertext,
+         mcp_binding_summaries_json, mcp_binding_policy, system_prompt_append,
+         subagents_enabled, action_capabilities_json, origin_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
+        params![
+            record.id,
+            record.workspace_id,
+            record.agent_kind,
+            record.native_session_id,
+            record.agent_auth_contexts,
+            record.requested_model_id,
+            record.current_model_id,
+            record.requested_mode_id,
+            record.current_mode_id,
+            record.title,
+            record.thinking_level_id,
+            record.thinking_budget_tokens,
+            record.status,
+            record.created_at,
+            record.updated_at,
+            record.last_prompt_at,
+            record.closed_at,
+            record.dismissed_at,
+            record.mcp_bindings_ciphertext,
+            record.mcp_binding_summaries_json,
+            record.mcp_binding_policy.as_str(),
+            record.system_prompt_append,
+            if record.subagents_enabled { 1 } else { 0 },
+            record.action_capabilities_json,
+            origin_json,
+        ],
+    )?;
+    Ok(())
+}

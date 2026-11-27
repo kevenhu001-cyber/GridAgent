@@ -1,0 +1,414 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { test } from "node:test";
+
+import {
+  deriveActorKeyAlias,
+  derivePersonalActorKeyAlias,
+  GATEWAY_CAPABLE_HARNESS_KINDS,
+  QualificationLiteLlmController,
+  QualificationLiteLlmError,
+  selectCheapestEligibleModel,
+  selectCheapestEligibleClaudeModel,
+  selectQualificationGatewayModel,
+  type ActorKeyIdentity,
+  type FetchLike,
+  type HttpResponseLike,
+} from "./qualification-litellm.js";
+
+const CONFIG = { adminBaseUrl: "http://admin", publicBaseUrl: "http://public", masterKey: "sk-master" };
+
+function response(status: number, body: unknown): HttpResponseLike {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body,
+    text: async () => (typeof body === "string" ? body : JSON.stringify(body)),
+  };
+}
+
+/** A routing fake: match on `${method} ${pathWithQuery}` prefix. */
+function fakeFetch(routes: Record<string, () => HttpResponseLike>): { fetch: FetchLike; calls: string[] } {
+  const calls: string[] = [];
+  const fetch: FetchLike = async (url, init) => {
+    const method = init?.method ?? "GET";
+    const pathWithQuery = url.replace(CONFIG.adminBaseUrl, "");
+    const key = `${method} ${pathWithQuery}`;
+    calls.push(key);
+    for (const [prefix, make] of Object.entries(routes)) {
+      if (key.startsWith(prefix)) {
+        return make();
+      }
+    }
+    return response(404, { error: { message: "not found" } });
+  };
+  return { fetch, calls };
+}
+
+test("selectCheapestEligibleClaudeModel intersects, excludes fable, and picks the cheapest tier", () => {
+  const allow = ["claude-opus-4-5", "claude-haiku-4-5", "claude-sonnet-4-5", "claude-fable-5", "gpt-4"];
+  const probe = ["claude-opus-4-5", "claude-haiku-4-5", "claude-sonnet-4-5", "claude-fable-5"];
+  assert.equal(selectCheapestEligibleClaudeModel(allow, probe), "claude-haiku-4-5");
+});
+
+test("selectCheapestEligibleClaudeModel returns null when the intersection is empty or all-fable", () => {
+  assert.equal(selectCheapestEligibleClaudeModel(["claude-haiku-4-5"], ["gpt-4"]), null);
+  assert.equal(selectCheapestEligibleClaudeModel(["claude-fable-5"], ["claude-fable-5"]), null);
+});
+
+test("selectCheapestEligibleModel selects bounded non-Claude harness models", () => {
+  const allow = ["gpt-5.2", "gpt-5-mini", "grok-4", "grok-4-fast", "claude-fable-5"];
+  assert.equal(selectCheapestEligibleModel(allow, ["gpt-5.2", "gpt-5-mini"]), "gpt-5-mini");
+  assert.equal(selectCheapestEligibleModel(allow, ["grok-4", "grok-4-fast"]), "grok-4-fast");
+  assert.equal(
+    selectCheapestEligibleModel(["claude-opus-4-6", "gpt-5.2"], ["claude-opus-4-6", "gpt-5.2"]),
+    "gpt-5.2",
+  );
+  assert.equal(selectCheapestEligibleModel(allow, ["claude-fable-5"]), null);
+});
+
+test("selectQualificationGatewayModel pins Codex to gpt-5.2 without changing other harness ranking", () => {
+  const allow = ["gpt-5.2", "gpt-5-mini", "grok-4", "grok-4-fast"];
+  assert.equal(selectQualificationGatewayModel("codex", allow, ["gpt-5.2", "gpt-5-mini"]), "gpt-5.2");
+  assert.equal(selectQualificationGatewayModel("codex", allow, ["gpt-5-mini"]), null);
+  assert.equal(selectQualificationGatewayModel("grok", allow, ["grok-4", "grok-4-fast"]), "grok-4-fast");
+});
+
+test("deriveActorKeyAlias is the frozen vk-{subject_label}-{harness_kind}-{enrollment[:8]} contract (R2, drift protection for Gate G1)", () => {
+  assert.equal(deriveActorKeyAlias("user-u123", "claude", "abcdef0123456789"), "vk-user-u123-claude-abcdef01");
+  assert.equal(deriveActorKeyAlias("org-org1-user-u123", "codex", "abcdef0123456789"), "vk-org-org1-user-u123-codex-abcdef01");
+});
+
+test("derivePersonalActorKeyAlias is the personal-enrollment shorthand (subjectLabel = user-<userId>)", () => {
+  assert.equal(derivePersonalActorKeyAlias("u123", "claude", "abcdef0123456789"), "vk-user-u123-claude-abcdef01");
+});
+
+test("deriveActorKeyAlias covers every gateway-capable harness kind (AGENT_AUTH_HARNESS_KINDS)", () => {
+  for (const harnessKind of GATEWAY_CAPABLE_HARNESS_KINDS) {
+    assert.equal(
+      derivePersonalActorKeyAlias("u1", harnessKind, "abcdef0123456789"),
+      `vk-user-u1-${harnessKind}-abcdef01`,
+    );
+  }
+});
+
+test("preflight requires non-empty inputs", async () => {
+  const controller = new QualificationLiteLlmController(
+    { ...CONFIG, masterKey: "  " },
+    { fetch: fakeFetch({}).fetch },
+  );
+  await assert.rejects(controller.preflight(), QualificationLiteLlmError);
+});
+
+test("preflight verifies liveness + an eligible non-Fable Claude model", async () => {
+  const { fetch } = fakeFetch({
+    "GET /health/liveliness": () => response(200, { status: "connected" }),
+    "GET /v1/models": () =>
+      response(200, { data: [{ id: "claude-haiku-4-5" }, { id: "claude-fable-5" }, { id: "gpt-4" }] }),
+  });
+  const result = await new QualificationLiteLlmController(CONFIG, { fetch }).preflight();
+  assert.deepEqual(result.eligibleClaudeModels, ["claude-haiku-4-5"]);
+  assert.equal(result.adminReachable, true);
+});
+
+test("preflight throws when the allowlist has no eligible Claude model", async () => {
+  const { fetch } = fakeFetch({
+    "GET /health/liveliness": () => response(200, { status: "connected" }),
+    "GET /v1/models": () => response(200, { data: [{ id: "claude-fable-5" }, { id: "gpt-4" }] }),
+  });
+  await assert.rejects(new QualificationLiteLlmController(CONFIG, { fetch }).preflight(), /no eligible/i);
+});
+
+const ALIAS = derivePersonalActorKeyAlias("u1", "claude", "enroll-9999-aaaa");
+const TOKEN = "tok_hash_abc";
+
+function actor(): ActorKeyIdentity {
+  return {
+    userId: "u1",
+    enrollmentId: "enroll-9999-aaaa",
+    teamId: "team_1",
+    litellmUserId: "user-u1",
+    keyAlias: ALIAS,
+    tokenId: TOKEN,
+    tokenIdHash: createHash("sha256").update(TOKEN).digest("hex"),
+  };
+}
+
+test("resolveActorKey reads token/team/user from /key/list by alias", async () => {
+  const { fetch } = fakeFetch({
+    "GET /key/list": () =>
+      response(200, { keys: [{ key_alias: ALIAS, token: TOKEN, team_id: "team_1", user_id: "user-u1" }] }),
+  });
+  const resolved = await new QualificationLiteLlmController(CONFIG, { fetch }).resolveActorKey({
+    userId: "u1",
+    enrollmentId: "enroll-9999-aaaa",
+    harnessKind: "claude",
+  });
+  assert.equal(resolved.keyAlias, ALIAS);
+  assert.equal(resolved.tokenId, TOKEN);
+  assert.equal(resolved.teamId, "team_1");
+  assert.equal(resolved.litellmUserId, "user-u1");
+  assert.equal(resolved.tokenIdHash, actor().tokenIdHash);
+});
+
+test("resolveActorKey throws when no key matches the alias", async () => {
+  const { fetch } = fakeFetch({
+    "GET /key/list": () => response(200, { keys: [{ key_alias: "other", token: "x" }] }),
+  });
+  await assert.rejects(
+    new QualificationLiteLlmController(CONFIG, { fetch }).resolveActorKey({
+      userId: "u1",
+      enrollmentId: "enroll-9999-aaaa",
+      harnessKind: "claude",
+    }),
+    /No LiteLLM key resolved/,
+  );
+});
+
+test("resolveActorKey fails closed when the exact deterministic alias is ambiguous", async () => {
+  const { fetch } = fakeFetch({
+    "GET /key/list": () => response(200, { keys: [
+      { key_alias: ALIAS, token: "token-a", team_id: "team_1", user_id: "user-u1" },
+      { key_alias: ALIAS, token: "token-b", team_id: "team_2", user_id: "user-u1" },
+    ] }),
+  });
+  await assert.rejects(
+    new QualificationLiteLlmController(CONFIG, { fetch }).resolveActorKey({
+      userId: "u1",
+      enrollmentId: "enroll-9999-aaaa",
+      harnessKind: "claude",
+    }),
+    /multiple keys.*ambiguous/i,
+  );
+});
+
+test("resolveActorKey fails closed when the exact alias row omits its token identity", async () => {
+  const { fetch } = fakeFetch({
+    "GET /key/list": () => response(200, { keys: [{ key_alias: ALIAS, team_id: "team_1" }] }),
+  });
+  await assert.rejects(
+    new QualificationLiteLlmController(CONFIG, { fetch }).resolveActorKey({
+      userId: "u1",
+      enrollmentId: "enroll-9999-aaaa",
+      harnessKind: "claude",
+    }),
+    /omitted its exact token identity/i,
+  );
+});
+
+const WINDOW_START = "2026-07-14T12:00:00.000Z";
+const WINDOW_END = "2026-07-14T12:05:00.000Z";
+const IN_WINDOW = "2026-07-14T12:02:00.000Z";
+
+function spendRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    request_id: "req-1",
+    api_key: TOKEN,
+    model: "claude-haiku-4-5",
+    spend: 0.0004,
+    prompt_tokens: 8,
+    completion_tokens: 5,
+    total_tokens: 13,
+    startTime: IN_WINDOW,
+    ...overrides,
+  };
+}
+
+async function correlate(
+  rows: Array<Record<string, unknown>>,
+  before: string[] = [],
+  acceptedModelId = "claude-haiku-4-5",
+): Promise<unknown> {
+  const { fetch } = fakeFetch({ "GET /spend/logs": () => response(200, rows) });
+  const controller = new QualificationLiteLlmController(CONFIG, {
+    fetch,
+    spendCorrelationTimeoutMs: 0,
+  });
+  return controller.correlateTurn({
+    actor: actor(),
+    before: { tokenIdHash: actor().tokenIdHash, requestIds: before, takenAt: WINDOW_START },
+    acceptedModelId,
+    windowStartedAt: WINDOW_START,
+    windowFinishedAt: WINDOW_END,
+  });
+}
+
+test("correlateTurn accepts one new in-window row and sums token/spend", async () => {
+  const result = (await correlate([spendRow()])) as {
+    requestIds: string[];
+    totalTokens: number;
+    spendUsd: number;
+    modelId: string;
+  };
+  assert.deepEqual(result.requestIds, ["req-1"]);
+  assert.equal(result.totalTokens, 13);
+  assert.ok(result.spendUsd > 0);
+  assert.equal(result.modelId, "claude-haiku-4-5");
+});
+
+test("correlateTurn uses LiteLLM's safe call id when the provider request id is unsafe", async () => {
+  const result = (await correlate([
+    spendRow({
+      request_id: "provider request id with spaces",
+      metadata: JSON.stringify({ litellm_call_id: "call-safe-123" }),
+    }),
+  ])) as { requestIds: string[] };
+  assert.deepEqual(result.requestIds, ["call-safe-123"]);
+});
+
+test("correlateTurn fails closed when no evidence-safe request identity exists", async () => {
+  await assert.rejects(
+    correlate([
+      spendRow({
+        request_id: "provider request id with spaces",
+        metadata: JSON.stringify({ litellm_call_id: "also unsafe" }),
+      }),
+    ]),
+    /omitted both a safe provider request id and a safe litellm_call_id/,
+  );
+});
+
+test("correlateTurn rejects when only a wrong-key row exists", async () => {
+  await assert.rejects(correlate([spendRow({ api_key: "other-token" })]), /No new in-window/);
+});
+
+test("correlateTurn ignores a pre-existing request id (present before the turn)", async () => {
+  await assert.rejects(correlate([spendRow({ request_id: "old" })], ["old"]), /No new in-window/);
+});
+
+test("correlateTurn rejects an out-of-window row", async () => {
+  await assert.rejects(correlate([spendRow({ startTime: "2026-07-14T13:00:00.000Z" })]), /No new in-window/);
+});
+
+test("correlateTurn rejects a wrong-model row", async () => {
+  await assert.rejects(correlate([spendRow({ model: "claude-opus-4-5" })]), /expected "claude-haiku-4-5"/);
+});
+
+test("correlateTurn accepts the provider-prefixed dated snapshot of the accepted model", async () => {
+  // LiteLLM logs the resolved provider model; the alias "claude-haiku-4-5"
+  // resolves to "anthropic/claude-haiku-4-5-20251001".
+  const result = (await correlate([
+    spendRow({ model: "anthropic/claude-haiku-4-5-20251001" }),
+  ])) as { totalTokens: number };
+  assert.equal(result.totalTokens, 13);
+});
+
+test("correlateTurn accepts the configured Grok fast alias's concrete xAI model", async () => {
+  const result = (await correlate(
+    [spendRow({ model: "xai/grok-4-1-fast" })],
+    [],
+    "grok-4-fast",
+  )) as { modelId: string };
+  assert.equal(result.modelId, "grok-4-fast");
+});
+
+test("correlateTurn accepts xAI's observed grok-4.5 response for the configured fast alias", async () => {
+  const result = (await correlate(
+    [spendRow({ model: "xai/grok-4.5" })],
+    [],
+    "grok-4-fast",
+  )) as { modelId: string };
+  assert.equal(result.modelId, "grok-4-fast");
+});
+
+test("correlateTurn does not generalize the Grok fast alias to another model", async () => {
+  await assert.rejects(
+    correlate([spendRow({ model: "xai/grok-4" })], [], "grok-4-fast"),
+    /expected "grok-4-fast"/,
+  );
+});
+
+test("correlateTurn still rejects a same-family but different dated model", async () => {
+  await assert.rejects(
+    correlate([spendRow({ model: "anthropic/claude-opus-4-5-20251001" })]),
+    /expected "claude-haiku-4-5"/,
+  );
+});
+
+test("correlateTurn rejects zero/inconsistent tokens", async () => {
+  await assert.rejects(
+    correlate(
+      [spendRow({ model: "xai/grok-4.5", prompt_tokens: 8, completion_tokens: 0, total_tokens: 8 })],
+      [],
+      "grok-4-fast",
+    ),
+    /model=xai\/grok-4\.5, prompt=8, completion=0, total=8/,
+  );
+});
+
+test("correlateTurn waits for an asynchronously enriched spend row", async () => {
+  let reads = 0;
+  const fetch: FetchLike = async () => {
+    reads += 1;
+    return response(200, [
+      spendRow(
+        reads === 1
+          ? {
+              model: "xai/grok-4.5",
+              prompt_tokens: 0,
+              completion_tokens: 0,
+              total_tokens: 0,
+              spend: 0,
+            }
+          : { model: "xai/grok-4.5" },
+      ),
+    ]);
+  };
+  const controller = new QualificationLiteLlmController(CONFIG, {
+    fetch,
+    spendCorrelationTimeoutMs: 1_000,
+    spendCorrelationPollMs: 0,
+  });
+  const result = await controller.correlateTurn({
+    actor: actor(),
+    before: { tokenIdHash: actor().tokenIdHash, requestIds: [], takenAt: WINDOW_START },
+    acceptedModelId: "grok-4-fast",
+    windowStartedAt: WINDOW_START,
+    windowFinishedAt: WINDOW_END,
+  });
+
+  assert.equal(reads, 2);
+  assert.equal(result.totalTokens, 13);
+  assert.ok(result.spendUsd > 0);
+});
+
+test("correlateTurn rejects zero spend", async () => {
+  await assert.rejects(correlate([spendRow({ spend: 0 })]), /spend/);
+});
+
+test("correlateTurn rejects an unbounded/ambiguous result set", async () => {
+  const rows = Array.from({ length: 17 }, (_, i) => spendRow({ request_id: `req-${i}` }));
+  await assert.rejects(correlate(rows), /unbounded\/ambiguous/);
+});
+
+test("deleteActorSubjects deletes key + user + team and is idempotent on 404", async () => {
+  const deleted: string[] = [];
+  const fetch: FetchLike = async (url, init) => {
+    const path = url.replace(CONFIG.adminBaseUrl, "");
+    deleted.push(path);
+    if (path === "/team/delete") {
+      return response(404, "not found"); // already gone → still counts as deleted.
+    }
+    return response(200, {});
+  };
+  const result = await new QualificationLiteLlmController(CONFIG, { fetch }).deleteActorSubjects(actor());
+  assert.equal(result.virtualKeyDeleted, true);
+  assert.equal(result.litellmSubjectsDeleted, true);
+  assert.deepEqual(deleted.sort(), ["/key/delete", "/team/delete", "/user/delete"]);
+});
+
+test("deleteActorSubjects fails closed when the team_id is absent", async () => {
+  const deleted: string[] = [];
+  const fetch: FetchLike = async (url) => {
+    deleted.push(url.replace(CONFIG.adminBaseUrl, ""));
+    return response(200, {});
+  };
+  const result = await new QualificationLiteLlmController(CONFIG, { fetch }).deleteActorSubjects({
+    ...actor(),
+    teamId: "",
+  });
+  // No /team/delete is issued because we have no identifier, and the missing
+  // team must not be reported as a successful deletion (would falsely stay green).
+  assert.equal(result.litellmSubjectsDeleted, false);
+  assert.ok(!deleted.includes("/team/delete"));
+});

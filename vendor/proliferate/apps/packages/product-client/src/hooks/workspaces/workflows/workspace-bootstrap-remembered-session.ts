@@ -1,0 +1,151 @@
+import type { WorkspaceSession } from "#product/hooks/access/anyharness/sessions/use-workspace-session-cache";
+import type { useSessionSelectionActions } from "#product/hooks/sessions/facade/use-session-selection-actions";
+import type { useSessionHistoryHydration } from "#product/hooks/sessions/lifecycle/use-session-history-hydration";
+import { selectSessionWithShellIntentRollback } from "#product/hooks/sessions/workflows/session-shell-selection";
+import {
+  choosePreferredWorkspaceSession,
+} from "#product/lib/domain/workspaces/selection/selection";
+import {
+  elapsedMs,
+  logLatency,
+} from "#product/lib/infra/measurement/measurement-port";
+import {
+  recordMeasurementWorkflowStep,
+} from "#product/lib/infra/measurement/measurement-port";
+import type { MeasurementOperationId } from "#product/lib/domain/telemetry/debug-measurement-catalog";
+import {
+  resolveLastViewedSessionForWorkspace,
+} from "#product/lib/domain/workspaces/selection/workspace-bootstrap-selection";
+import type { SessionRuntimeRecord } from "#product/stores/sessions/session-types";
+import { isWorkspaceSetupSessionId } from "#product/lib/domain/workspaces/selection/setup-session";
+
+export async function handleRememberedWorkspaceSessionBootstrap(
+  input: {
+    lastViewedSessionByWorkspace: Record<string, string>;
+    latencyFlowId?: string | null;
+    logicalWorkspaceId: string;
+    measurementOperationId: MeasurementOperationId | null;
+    requestHeaders?: HeadersInit;
+    sessions: WorkspaceSession[];
+    startedAt: number;
+    workspaceId: string;
+    isCurrent: () => boolean;
+  },
+  deps: {
+    clearLastViewedSession: (workspaceId: string, sessionId?: string) => void;
+    getActiveSessionId: () => string | null;
+    getSessionRecord: (sessionId: string) => SessionRuntimeRecord | null;
+    patchSessionRecord: (sessionId: string, patch: Partial<SessionRuntimeRecord>) => void;
+    rehydrateSessionSlotFromHistory: ReturnType<
+      typeof useSessionHistoryHydration
+    >["rehydrateSessionSlotFromHistory"];
+    removeSessionRecord: (sessionId: string) => void;
+    selectSession: ReturnType<typeof useSessionSelectionActions>["selectSession"];
+    setActiveSessionId: (sessionId: string | null) => void;
+  },
+): Promise<{ shouldReturn: boolean; contentStableSessionId?: string }> {
+  const rememberedSession = resolveLastViewedSessionForWorkspace(
+    input.lastViewedSessionByWorkspace,
+    input.logicalWorkspaceId,
+    input.workspaceId,
+  );
+  const rememberedSessionId = rememberedSession.sessionId;
+  const targetSession = choosePreferredWorkspaceSession(
+    input.sessions,
+    rememberedSessionId,
+  );
+  if (rememberedSessionId && targetSession?.id !== rememberedSessionId) {
+    deps.clearLastViewedSession(rememberedSession.sourceKey ?? input.logicalWorkspaceId, rememberedSessionId);
+  }
+
+  if (!targetSession || !input.isCurrent()) {
+    return { shouldReturn: false };
+  }
+
+  const currentActiveSessionId = deps.getActiveSessionId();
+  const currentActiveIsSetupSession = currentActiveSessionId
+    ? isWorkspaceSetupSessionId(currentActiveSessionId)
+    : false;
+  if (currentActiveSessionId && currentActiveSessionId !== targetSession.id) {
+    const currentActiveSession = deps.getSessionRecord(currentActiveSessionId);
+    if (!currentActiveSession || currentActiveSession.workspaceId !== input.workspaceId) {
+      deps.setActiveSessionId(null);
+      logLatency("workspace.select.stale_active_session_cleared", {
+        workspaceId: input.workspaceId,
+        sessionId: targetSession.id,
+        currentActiveSessionId,
+        currentActiveWorkspaceId: currentActiveSession?.workspaceId ?? null,
+        reason: currentActiveSession ? "workspace_mismatch" : "missing_slot",
+        totalElapsedMs: elapsedMs(input.startedAt),
+      });
+    } else if (!currentActiveIsSetupSession) {
+      logLatency("workspace.select.session_select.skipped", {
+        workspaceId: input.workspaceId,
+        sessionId: targetSession.id,
+        currentActiveSessionId,
+        reason: "active_session_changed",
+        totalElapsedMs: elapsedMs(input.startedAt),
+      });
+      return { shouldReturn: false };
+    }
+  }
+  logLatency("workspace.select.session_select.start", {
+    workspaceId: input.workspaceId,
+    sessionId: targetSession.id,
+    totalElapsedMs: elapsedMs(input.startedAt),
+  });
+  const sessionSelectStartedAt = performance.now();
+  const selectionOutcome = await selectSessionWithShellIntentRollback({
+    workspaceId: input.workspaceId,
+    sessionId: targetSession.id,
+    options: { latencyFlowId: input.latencyFlowId },
+    selectSession: deps.selectSession,
+  });
+  if (selectionOutcome?.result === "stale" || !input.isCurrent()) {
+    return { shouldReturn: true };
+  }
+  if (currentActiveIsSetupSession && currentActiveSessionId) {
+    deps.removeSessionRecord(currentActiveSessionId);
+  }
+  recordMeasurementWorkflowStep({
+    operationId: input.measurementOperationId,
+    step: "workspace.bootstrap.session_select",
+    startedAt: sessionSelectStartedAt,
+  });
+  // UX-latency R14: transcript hydration is OFF the workspace-switch critical
+  // path. Session selection above stays on it, but the history fetch does not:
+  // we kick rehydration fire-and-forget (never awaited) so bootstrap can finish
+  // the non-transcript work immediately. SessionTranscriptPane's own
+  // self-hydration effect owns the transcript for the selected session; the
+  // in-flight dedupe in use-session-history-hydration collapses this kickoff and
+  // the pane's fetch into a single request. This kickoff exists so hydration
+  // starts the instant the session is selected (even before the pane mounts) and
+  // so transcriptHydrated is set on the record even if this fetch wins the race
+  // and the pane's effect returns early.
+  void Promise.resolve(deps.rehydrateSessionSlotFromHistory(targetSession.id, {
+    replace: true,
+    requestHeaders: input.requestHeaders,
+    measurementOperationId: input.measurementOperationId,
+    isCurrent: () =>
+      input.isCurrent()
+      && deps.getActiveSessionId() === targetSession.id,
+  })).then((hydrated) => {
+    if (
+      hydrated
+      && input.isCurrent()
+      && deps.getActiveSessionId() === targetSession.id
+    ) {
+      deps.patchSessionRecord(targetSession.id, { transcriptHydrated: true });
+    }
+  });
+  logLatency("workspace.select.success", {
+    workspaceId: input.workspaceId,
+    sessionId: targetSession.id,
+    sessionCount: input.sessions.length,
+    totalElapsedMs: elapsedMs(input.startedAt),
+  });
+  // The bootstrap must NOT finish content_stable at its own completion now that
+  // the transcript is hydrated off the critical path. Hand the mark to the
+  // transcript pane, which fires it when this session's transcript commits.
+  return { shouldReturn: false, contentStableSessionId: targetSession.id };
+}

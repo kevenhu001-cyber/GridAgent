@@ -1,0 +1,262 @@
+"""Team checkout Stripe activation flow."""
+
+from __future__ import annotations
+
+from uuid import UUID
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from proliferate.constants.organizations import (
+    ORGANIZATION_CHECKOUT_ACTIVATION_FAILED_BILLING_STATE,
+    ORGANIZATION_CHECKOUT_ACTIVATION_FAILED_BUSINESS_STATE,
+    ORGANIZATION_CHECKOUT_INTENT_STATUS_PENDING,
+    ORGANIZATION_STATUS_PENDING_CHECKOUT,
+)
+from proliferate.db import session_ops as db_session
+from proliferate.db.models.billing import BillingSubscription
+from proliferate.db.store import billing_subscriptions
+from proliferate.db.store import users as user_store
+from proliferate.integrations import stripe as stripe_billing
+from proliferate.server.agent_auth.signup_hook import (
+    schedule_agent_gateway_org_enrollment,
+)
+from proliferate.server.billing.domain.pricing import (
+    monthly_subscription_price_ids,
+    overage_subscription_price_ids,
+)
+from proliferate.server.billing.domain.webhooks import (
+    id_from_expandable as _stripe_id_from_expandable,
+)
+from proliferate.server.billing.domain.webhooks import metadata as _stripe_metadata
+from proliferate.server.billing.domain.webhooks import (
+    subscription_item_details as _stripe_subscription_item_details,
+)
+from proliferate.server.billing.domain.webhooks import (
+    subscription_period as _stripe_subscription_period,
+)
+from proliferate.server.billing.errors import BillingServiceError
+from proliferate.server.billing.models import coerce_utc
+from proliferate.server.billing.pricing import billing_price_ids_from_settings
+from proliferate.server.organizations import service as organization_service
+
+
+def _map_stripe_error(error: stripe_billing.StripeBillingError) -> BillingServiceError:
+    return BillingServiceError(error.code, error.message, status_code=error.status_code)
+
+
+async def _upsert_team_subscription_from_stripe(
+    db: AsyncSession,
+    *,
+    subscription: dict,
+    billing_subject_id: UUID,
+) -> BillingSubscription:
+    subscription_id = subscription.get("id")
+    customer_id = _stripe_id_from_expandable(subscription.get("customer"))
+    status = subscription.get("status")
+    if not isinstance(subscription_id, str) or not isinstance(customer_id, str):
+        raise BillingServiceError(
+            "stripe_invalid_subscription",
+            "Stripe subscription is missing an id or customer.",
+            status_code=502,
+        )
+    if not isinstance(status, str):
+        raise BillingServiceError(
+            "stripe_invalid_subscription",
+            "Stripe subscription is missing a status.",
+            status_code=502,
+        )
+    details = _stripe_subscription_item_details(
+        subscription,
+        monthly_price_ids=monthly_subscription_price_ids(billing_price_ids_from_settings()),
+        overage_price_ids=overage_subscription_price_ids(billing_price_ids_from_settings()),
+    )
+    current_period_start, current_period_end = _stripe_subscription_period(
+        subscription,
+        monthly_item_id=details.monthly_item_id,
+        metered_item_id=details.metered_item_id,
+    )
+    return await billing_subscriptions.upsert_billing_subscription(
+        db,
+        billing_subject_id=billing_subject_id,
+        stripe_subscription_id=subscription_id,
+        stripe_customer_id=customer_id,
+        status=status,
+        cancel_at_period_end=bool(subscription.get("cancel_at_period_end")),
+        canceled_at=coerce_utc(None),
+        current_period_start=current_period_start,
+        current_period_end=current_period_end,
+        cloud_monthly_price_id=details.monthly_price_id,
+        overage_price_id=details.overage_price_id,
+        monthly_subscription_item_id=details.monthly_item_id,
+        metered_subscription_item_id=details.metered_item_id,
+        latest_invoice_id=_stripe_id_from_expandable(subscription.get("latest_invoice")),
+        latest_invoice_status=None,
+        hosted_invoice_url=None,
+        seat_quantity=details.seat_quantity,
+    )
+
+
+async def activate_team_checkout_from_stripe_session(
+    *,
+    session: dict,
+    webhook_event_id: str | None = None,
+) -> None:
+    metadata = _stripe_metadata(session)
+    if metadata.get("purpose") != "team_subscription":
+        return
+    intent_id_value = metadata.get("organization_checkout_intent_id")
+    organization_id_value = metadata.get("organization_id")
+    created_by_user_id_value = metadata.get("created_by_user_id")
+    billing_subject_id_value = metadata.get("billing_subject_id")
+    if not (
+        intent_id_value
+        and organization_id_value
+        and created_by_user_id_value
+        and billing_subject_id_value
+    ):
+        raise BillingServiceError(
+            "team_checkout_metadata_missing",
+            "Team checkout metadata is incomplete.",
+            status_code=400,
+        )
+    try:
+        intent_id = UUID(intent_id_value)
+        organization_id = UUID(organization_id_value)
+        created_by_user_id = UUID(created_by_user_id_value)
+        billing_subject_id = UUID(billing_subject_id_value)
+    except ValueError as exc:
+        raise BillingServiceError(
+            "team_checkout_metadata_invalid",
+            "Team checkout metadata is invalid.",
+            status_code=400,
+        ) from exc
+    subscription_id = _stripe_id_from_expandable(session.get("subscription"))
+    customer_id = _stripe_id_from_expandable(session.get("customer"))
+    if subscription_id is None or customer_id is None:
+        raise BillingServiceError(
+            "team_checkout_subscription_missing",
+            "Team checkout session is missing its subscription.",
+            status_code=400,
+        )
+    try:
+        subscription = await stripe_billing.retrieve_subscription(subscription_id)
+    except stripe_billing.StripeBillingError as error:
+        raise _map_stripe_error(error) from error
+    subscription_metadata = _stripe_metadata(subscription)
+    for key, expected in {
+        "purpose": "team_subscription",
+        "organization_checkout_intent_id": intent_id_value,
+        "organization_id": organization_id_value,
+        "created_by_user_id": created_by_user_id_value,
+        "billing_subject_id": billing_subject_id_value,
+    }.items():
+        if subscription_metadata.get(key) != expected:
+            raise BillingServiceError(
+                "team_checkout_subscription_metadata_mismatch",
+                "Team checkout subscription metadata does not match the checkout session.",
+                status_code=409,
+            )
+    status = subscription.get("status")
+    if status not in {"active", "trialing"}:
+        async with db_session.open_async_transaction() as db:
+            await organization_service.fail_team_checkout_activation(
+                db,
+                intent_id=intent_id,
+                activation_status=ORGANIZATION_CHECKOUT_ACTIVATION_FAILED_BILLING_STATE,
+                error_code="subscription_not_active",
+                error_message="Team subscription is not active or trialing.",
+                webhook_event_id=webhook_event_id,
+            )
+        return
+
+    staged_invites: tuple[UUID, str, UUID, str, str | None] | None = None
+    async with db_session.open_async_transaction() as db:
+        activation = await organization_service.load_team_checkout_activation(
+            db,
+            intent_id=intent_id,
+        )
+        if activation is None:
+            raise BillingServiceError(
+                "team_checkout_intent_not_found",
+                "Team checkout intent was not found.",
+                status_code=404,
+            )
+        intent = activation.intent
+        organization = activation.organization
+        if (
+            intent.organization_id != organization_id
+            or intent.created_by_user_id != created_by_user_id
+            or intent.billing_subject_id != billing_subject_id
+            or organization.id != organization_id
+        ):
+            raise BillingServiceError(
+                "team_checkout_intent_mismatch",
+                "Team checkout intent does not match Stripe metadata.",
+                status_code=409,
+            )
+        if intent.status != ORGANIZATION_CHECKOUT_INTENT_STATUS_PENDING:
+            return
+        if organization.status != ORGANIZATION_STATUS_PENDING_CHECKOUT:
+            await organization_service.fail_team_checkout_activation(
+                db,
+                intent_id=intent_id,
+                activation_status=ORGANIZATION_CHECKOUT_ACTIVATION_FAILED_BUSINESS_STATE,
+                error_code="organization_not_pending_checkout",
+                error_message="Team checkout organization is not pending checkout.",
+                webhook_event_id=webhook_event_id,
+            )
+            return
+        creator = await user_store.get_user_by_id(db, created_by_user_id)
+        if creator is None:
+            await organization_service.fail_team_checkout_activation(
+                db,
+                intent_id=intent_id,
+                activation_status=ORGANIZATION_CHECKOUT_ACTIVATION_FAILED_BUSINESS_STATE,
+                error_code="checkout_creator_not_found",
+                error_message="Checkout creator account was not found.",
+                webhook_event_id=webhook_event_id,
+            )
+            return
+        await organization_service.begin_team_checkout_activation(
+            db,
+            intent_id=intent_id,
+            created_by_user_id=created_by_user_id,
+            stripe_subscription_id=subscription_id,
+        )
+        await _upsert_team_subscription_from_stripe(
+            db,
+            subscription=subscription,
+            billing_subject_id=billing_subject_id,
+        )
+        activated = await organization_service.complete_team_checkout_activation(
+            db,
+            intent_id=intent_id,
+            stripe_subscription_id=subscription_id,
+            stripe_customer_id=customer_id,
+            webhook_event_id=webhook_event_id,
+        )
+        staged_invites = (
+            activated.organization.id,
+            activated.organization.name,
+            created_by_user_id,
+            creator.email,
+            intent.invite_emails_json,
+        )
+    if staged_invites is not None:
+        (
+            activated_organization_id,
+            activated_organization_name,
+            activated_created_by_user_id,
+            activated_creator_email,
+            activated_invite_emails_json,
+        ) = staged_invites
+        schedule_agent_gateway_org_enrollment(
+            activated_organization_id, activated_created_by_user_id
+        )
+        await organization_service.send_staged_team_checkout_invitations(
+            organization_id=activated_organization_id,
+            organization_name=activated_organization_name,
+            invited_by_user_id=activated_created_by_user_id,
+            inviter_email=activated_creator_email,
+            invite_emails_json=activated_invite_emails_json,
+        )
