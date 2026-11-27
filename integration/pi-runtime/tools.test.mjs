@@ -27,3 +27,42 @@ test("public projection drops thought and raw tool payloads", () => {
   assert.deepEqual(projectEvent({type: "tool_execution_start", toolCallId: "1", toolName: "read", args: {secret: "x"}}),
     {kind: "tool_started", id: "1", name: "read"});
 });
+
+import { defaultTools } from "./default-tools.mjs";
+import { isolatedShell } from "./isolated-shell.mjs";
+import { resolve } from "node:path";
+
+test("Pi default tools retained and file operations use native IPC", async () => {
+  const calls = [];
+  const workspace = resolve("test-workspace");
+  const client = {request: async (method, args) => {
+    calls.push({method, args});
+    if (method === "workspace.files") return {files: [{path: "study.py"}]};
+    if (method === "workspace.read") return {text: "print(1)\n", sha256: "a".repeat(64), next_offset: null};
+    if (method === "workspace.write") return {sha256: "b".repeat(64)};
+    throw new Error("Unexpected native operation");
+  }};
+  const tools = defaultTools(client, {workspace, allowTasks: true});
+  for (const name of ["read", "write", "edit", "bash", "powershell", "grep", "find", "ls"])
+    assert.ok(tools.some(t => t.name === name), name);
+  const read = tools.find(t => t.name === "read");
+  const result = await read.execute("1", {path: "study.py"});
+  assert.match(result.content[0].text, /print\(1\)/);
+  await assert.rejects(() => read.execute("2", {path: "../secret.txt"}));
+  await tools.find(t => t.name === "write").execute("3", {path: "study.py", content: "print(2)"});
+  assert.equal(calls.find(c => c.method === "workspace.write").args.expected_sha256, "a".repeat(64));
+});
+
+test("Pi shell routes to native job, not host command", async () => {
+  const calls = [];
+  let output = "";
+  const shell = isolatedShell({request: async (method, args) => {
+    calls.push({method, args});
+    return {status: "ok", exit_code: 0, stdout_stderr_tail: "42"};
+  }});
+  const result = await shell("powershell", "Write-Output 42", {onData: b => {output += b.toString();}});
+  assert.equal(calls[0].method, "job.submit_shell");
+  assert.equal(calls[0].args.shell, "powershell");
+  assert.equal(result.exitCode, 0);
+  assert.equal(output, "42");
+});
