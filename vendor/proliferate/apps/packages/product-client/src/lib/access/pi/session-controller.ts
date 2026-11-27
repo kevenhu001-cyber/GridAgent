@@ -1,4 +1,4 @@
-import type { DesktopPiBridge, PiEvent } from "../../../host/desktop-bridge";
+import type { DesktopPiBridge, PiEvent, PiModelSelection } from "../../../host/desktop-bridge";
 
 export type PiSessionStatus = "closed" | "opening" | "ready" | "sending" | "running" | "cancelling" | "failed";
 
@@ -40,11 +40,11 @@ export class PiSessionController {
     for (const listener of this.listeners) listener(this.snapshot, events);
   }
 
-  async open(workspacePath: string) {
+  async open(workspacePath: string, selection?: PiModelSelection) {
     if (this.snapshot.status !== "closed") throw new Error("Pi session is not closed");
     this.publish({status: "opening", failure: null});
     try {
-      const sessionId = await this.bridge.open(workspacePath);
+      const sessionId = await this.bridge.open(workspacePath, selection);
       this.publish({sessionId});
       const deadline = Date.now() + 30_000;
       while (this.getSnapshot().status === "opening") {

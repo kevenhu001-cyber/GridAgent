@@ -374,6 +374,7 @@ export type PiEvent =
   | { kind: "tool_finished"; id: string; tool_id: string; name: string; error: boolean };
 
 export type PiProvider = "openai" | "anthropic" | "google";
+export interface PiModelSelection { provider: PiProvider; modelId: string }
 export interface PiModelRecord { provider: PiProvider; id: string; name: string }
 export interface PiCredentialStatus { provider: PiProvider; configured: boolean }
 export interface DesktopPiCredentialBridge {
@@ -388,7 +389,7 @@ export interface DesktopPiBridge {
   listModels?(): Promise<PiModelRecord[]>;
   mode(): Promise<boolean>;
   matchesWorkspace(path: string): Promise<boolean>;
-  open(workspacePath: string): Promise<string>;
+  open(workspacePath: string, selection?: PiModelSelection): Promise<string>;
   prompt(sessionId: string, text: string): Promise<string>;
   abort(sessionId: string, id: string): Promise<void>;
   poll(sessionId: string): Promise<PiEvent[]>;

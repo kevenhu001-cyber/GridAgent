@@ -1,4 +1,4 @@
-import type { PiCredentialStatus, PiModelRecord, PiProvider } from "../../../host/desktop-bridge";
+import type { PiCredentialStatus, PiModelRecord, PiProvider, PiModelSelection } from "../../../host/desktop-bridge";
 import type { ModelSelectorGroup, ModelSelectorProps, ModelSelectorSelection } from "../../domain/chat/models/model-selector-types";
 
 const labels: Record<PiProvider, string> = {openai: "OpenAI", anthropic: "Anthropic", google: "Google"};
@@ -29,4 +29,29 @@ export function buildPiModelSelector(input: {
       if (model && !model.isUnsupported) input.onSelect(selection);
     },
   };
+}
+
+// Reuse the existing persisted map. The reserved Pi slot is deliberately
+// separate from legacy harness preferences and never becomes an Agent kind.
+export const PI_MODEL_PREFERENCE_KEY = "gridagent.pi.model";
+export function readPiModelPreference(defaults: Record<string,string>): PiModelSelection | null {
+  const raw = defaults[PI_MODEL_PREFERENCE_KEY];
+  if (typeof raw !== "string") return null;
+  const delimiter = raw.indexOf(":");
+  const provider = raw.slice(0, delimiter);
+  const modelId = raw.slice(delimiter + 1);
+  if (delimiter < 1 || !Object.hasOwn(labels, provider) || !modelId || modelId.length > 512 || modelId.trim() !== modelId || /[\x00-\x1f\x7f]/.test(modelId)) return null;
+  return {provider: provider as PiProvider, modelId};
+}
+
+export function updatePiModelPreference(defaults: Record<string,string>, selection: ModelSelectorSelection): Record<string,string> {
+  if (!Object.hasOwn(labels,selection.kind) || !selection.modelId || selection.modelId.length>512 || selection.modelId.trim()!==selection.modelId || /[\x00-\x1f\x7f]/.test(selection.modelId)) throw new Error("Invalid native Pi model selection");
+  return {...defaults,[PI_MODEL_PREFERENCE_KEY]:selection.kind+":"+selection.modelId};
+}
+
+export function resolvePiModelPreference(defaults: Record<string,string>, models: readonly PiModelRecord[], credentials: readonly PiCredentialStatus[]): ModelSelectorSelection | null {
+  const selected = readPiModelPreference(defaults);
+  if (!selected || !models.some(m=>m.provider===selected.provider && m.id===selected.modelId)
+    || !credentials.some(c=>c.provider===selected.provider && c.configured)) return null;
+  return {kind:selected.provider,modelId:selected.modelId};
 }

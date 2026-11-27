@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildPiModelSelector } from "../../vendor/proliferate/apps/packages/product-client/src/lib/access/pi/model-selector.ts";
+import { buildPiModelSelector, readPiModelPreference, updatePiModelPreference, resolvePiModelPreference } from "../../vendor/proliferate/apps/packages/product-client/src/lib/access/pi/model-selector.ts";
 
 test("Pi data uses original picker grouping and blocks unconfigured credentials", () => {
   const selections=[];
@@ -16,4 +16,16 @@ test("Pi data uses original picker grouping and blocks unconfigured credentials"
   props.onSelect({kind:"openai",modelId:"unknown"});
   props.onSelect({kind:"openai",modelId:"a"});
   assert.deepEqual(selections,[{kind:"openai",modelId:"a"}]);
+});
+
+test("native choice reuses persisted preference map without changing legacy launch defaults",()=>{
+ const legacy={claude:"legacy-model"};
+ const saved=updatePiModelPreference(legacy,{kind:"openai",modelId:"model:variant"});
+ assert.equal(saved.claude,"legacy-model");
+ assert.deepEqual(readPiModelPreference(saved),{provider:"openai",modelId:"model:variant"});
+ const models=[{provider:"openai",id:"model:variant",name:"Model"}];
+ assert.equal(resolvePiModelPreference(saved,models,[]),null);
+ assert.deepEqual(resolvePiModelPreference(saved,models,[{provider:"openai",configured:true}]),{kind:"openai",modelId:"model:variant"});
+ assert.equal(readPiModelPreference({"gridagent.pi.model":"claude:legacy"}),null);
+ assert.throws(()=>updatePiModelPreference(legacy,{kind:"claude",modelId:"legacy"}));
 });
