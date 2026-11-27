@@ -49,7 +49,10 @@ Use list_scientific_runs to find prior results and
 promote_scientific_artifact when a verified-by-hash (not physically verified) output is needed as a subsequent input.
 If an unresolved sandbox session blocks execution, request user recovery; never bypass it.
 Use native library APIs directly in authorized isolated execution; typed tools are optional shortcuts.
-Use list_scientific_libraries for installed versions and inspect_native_api for real signatures/docstrings when needed.
+Use list_scientific_libraries for installed versions, search_native_documentation for exact-version local references,
+and inspect_installed_api_source for static signatures/docstrings without spending a numerical attempt.
+Use inspect_native_api for real import behavior when static source is absent or ambiguous.
+Static source and version-matched reference text are not proof of runtime behavior. Cite distribution, version and source.
 Select compatible managed plugins with plugin_ids when combining solvers. Inspect distribution conflicts first.
 If incompatible, choose separate runs with explicit artifact promotion or ask the user to manage dependencies.
 Metadata compatibility does not establish working imports, ABI compatibility or physical correctness.
