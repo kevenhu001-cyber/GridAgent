@@ -282,6 +282,7 @@ export function SettingsScreen({
                   onSelectRepo,
                   onSelectRepoContext,
                   onSelectCloudEnvironment,
+                  host.desktop?.pi,
                 )}
               </SettingsContentBoundary>
             </div>

@@ -1,4 +1,7 @@
-import { type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import type { DesktopPiBridge } from "@proliferate/product-client/host/desktop-bridge";
+import { SettingsPageBody } from "#product/primitives/patterns/settings/SettingsPageBody";
+import { SettingsEmptyState } from "#product/primitives/patterns/settings/SettingsEmptyState";
 import { type SettingsSection } from "#product/config/settings";
 import { AccountPane } from "#product/components/settings/panes/AccountPane";
 import { ArchivedWorkspacesPane } from "#product/components/settings/panes/archived/ArchivedWorkspacesPane";
@@ -34,6 +37,21 @@ function renderCloudGatedPane(flags: CloudGateFlags, pane: () => ReactNode): Rea
   return <CloudGuard flags={flags}>{pane()}</CloudGuard>;
 }
 
+function ApiKeysRoute({pi, flags}: {pi: DesktopPiBridge; flags: CloudGateFlags}) {
+  const [mode, setMode] = useState<"checking" | "native" | "legacy" | "failed">("checking");
+  useEffect(() => {
+    let live = true;
+    void pi.mode().then(enabled => {if (live) setMode(enabled ? "native" : "legacy");},
+      () => {if (live) setMode("failed");});
+    return () => {live = false;};
+  }, [pi]);
+  if (mode === "legacy") return <CloudGuard flags={flags}><ApiKeysPane /></CloudGuard>;
+  if (mode === "native" && pi.credentials) return <ApiKeysPane local={pi.credentials} />;
+  return <SettingsPageBody><SettingsEmptyState size="compact"
+    title={mode === "checking" ? "Checking native credential storage…" : "Native credential storage unavailable"} />
+  </SettingsPageBody>;
+}
+
 export function renderSettingsSection(
   activeSection: SettingsSection,
   repoSelection: RepoScopeSelection,
@@ -47,6 +65,7 @@ export function renderSettingsSection(
   onSelectRepo: (sourceRoot: string) => void,
   onSelectRepoContext: (context: RepoSettingsContext) => void,
   onSelectCloudEnvironment: (gitOwner: string, gitRepoName: string) => void,
+  pi?: DesktopPiBridge,
 ): ReactNode {
   // Control-plane gate: surfaces that only need a reachable, signed-in control
   // plane (not cloud compute/E2B). These are the ADR FM6/Q9 control-plane
@@ -66,7 +85,7 @@ export function renderSettingsSection(
     return <HarnessPane harnessKind={getHarnessKindForSettingsSection(activeSection)} />;
   }
   if (activeSection === "agent-api-keys") {
-    return renderCloudGatedPane(authGate, () => <ApiKeysPane />);
+    return pi ? <ApiKeysRoute pi={pi} flags={authGate} /> : renderCloudGatedPane(authGate, () => <ApiKeysPane />);
   }
   if (activeSection === "general") {
     return <GeneralPane />;

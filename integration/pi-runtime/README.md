@@ -48,6 +48,23 @@ No external executable extension discovery is enabled.
 
 `ProductClient` now receives the typed native Pi capability via `DesktopBridge.pi`. The shared `PiSessionController` owns the host session ID, prompt ID, readiness, cancellation, event batches and settlement; it does not import Tauri or start any external Agent. `drainTurn` drives a future session transport consumer. The `PiEventAdapter` translates admitted prompts and public Pi events into existing SDK SessionEventEnvelope objects; it holds only active transport identity and sequence, not transcript history. Existing SDK reducers and stores remain the presentation authority. Node contract tests and a shared reducer test are provided. Full session lifecycle dispatch and live GUI integration are still pending.
 
+## Model and credential data adapters
+
+The pinned SDK model registry supplies OpenAI, Anthropic and Google chat
+catalog metadata; `pi_list_models` runs a bounded credential-free discovery
+process. The existing model picker contract is projected by
+`buildPiModelSelector`; the production session/model selection flow is not yet
+wired. The original API Keys settings pane, modal, rows and confirmation UI
+are shared with an opt-in local credential data source in Pi development mode.
+This source stores one key per supported provider using the existing serialized
+keyring worker with Windows/macOS native features. The renderer can only list
+configured status, write or delete; it cannot read secret values. Windows/macOS
+credential backend tests and desktop compilation remain required. Explicit
+developer environment configuration remains available for test runs; a stored
+key takes precedence for the configured provider at worker startup. Removing
+a local credential does not remotely revoke it or change an already-open
+worker's credential. Linux secure-vault UI is unavailable, not a plaintext fallback.
+
 ## Remaining integration
 
 Follow the [reuse-first inventory](../../docs/proliferate-reuse-audit.md).
