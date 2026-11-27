@@ -17,7 +17,8 @@ public partial class MainWindow
                 var packs = data.EnumerateArray().Select(x => new Entry(x.GetProperty("id").GetString()!,
                     x.GetProperty("title").GetString()!, Summary: x.GetProperty("entries").GetInt32() + " references")).ToList();
                 KnowledgePacks.ItemsSource = packs;
-                KnowledgeEmpty.Visibility = packs.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+                _knowledgeLoaded = true;
+                RefreshEmptyStates();
                 break;
             case "knowledge_pack": _knowledgePage = data.Clone(); break;
             case "workbench_result": Notify(data.GetString() ?? "Operation completed."); break;
@@ -27,6 +28,7 @@ public partial class MainWindow
                 break;
             case "session": _session = data.GetString(); break;
             case "sessions":
+                _sessionsLoaded = true;
                 SetSessions(data.EnumerateArray().Select(x =>
                     new Entry(x.GetProperty("id").GetString()!,
                         x.GetProperty("title").GetString() ?? "Conversation",
@@ -73,6 +75,7 @@ public partial class MainWindow
                         $"{diff.GetProperty("before")} → {diff.GetProperty("value")}\nParent run {x.GetProperty("parent_run")}\n" +
                         $"SHA-256 {x.GetProperty("sha256")}", Summary: $"{diff.GetProperty("element")} · {diff.GetProperty("field")}");
                 }).ToList();
+                RefreshEmptyStates();
                 break;
             case "scientific_view":
                 var scientificView = new ScientificChartArtifact(data.GetProperty("run_id").GetString()!,
@@ -122,7 +125,7 @@ public partial class MainWindow
             case "artifact_preview": if (RunPreview.Parse(data) is RunPreview preview) _conversation.Preview(preview); break;
             case "result": Append(data.ValueKind == JsonValueKind.String ? data.GetString() ?? "" : "A structured result is available in the workspace."); break;
             case "status": StatusText.Text = data.GetString() ?? "Working…"; break;
-            case "error": _operationError = true; Append(data.GetString() ?? "Operation failed.", "Error"); Notify("The operation reported an error. See the conversation for details.", InfoBarSeverity.Error); break;
+            case "error": _operationError = true; ReportOperationError(data.GetString() ?? "Operation failed."); break;
         }
     }
 
