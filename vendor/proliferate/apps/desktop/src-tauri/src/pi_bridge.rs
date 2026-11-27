@@ -109,6 +109,44 @@ pub fn pi_matches_workspace(path: String) -> bool {
     pi_enabled() && matches_workspace(&path)
 }
 
+// Catalog discovery uses the same pinned worker installation, but does not
+// start an agent or pass a provider secret. Bound stdout before parsing.
+#[tauri::command]
+pub async fn pi_list_models() -> Result<Vec<Value>, String> {
+    if !pi_enabled() { return Err("Native Pi development mode is disabled".into()); }
+    let node = configured_path("GRIDAGENT_PI_NODE", true)?;
+    let worker = configured_path("GRIDAGENT_PI_WORKER", true)?;
+    let script = worker.with_file_name("model-catalog-cli.mjs");
+    if !script.is_file() { return Err("Pi model catalog script unavailable".into()); }
+    let mut command = Command::new(node);
+    command.arg(&script).current_dir(worker.parent().ok_or("Invalid worker directory")?)
+        .env_clear().stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).kill_on_drop(true);
+    for (key, value) in std::env::vars_os() {
+        let name = key.to_string_lossy().to_ascii_uppercase();
+        if matches!(name.as_str(), "PATH" | "SYSTEMROOT" | "WINDIR" | "TEMP" | "TMP" | "LANG" | "LC_ALL" | "LD_LIBRARY_PATH" | "COMSPEC" | "PATHEXT") {
+            command.env(key, value);
+        }
+    }
+    let mut child = command.spawn().map_err(|_| "Cannot start Pi model catalog")?;
+    let mut output = child.stdout.take().ok_or("Pi catalog stdout unavailable")?.take(1024 * 1024 + 1);
+    let rows = timeout(Duration::from_secs(15), async {
+        let mut bytes = Vec::new();
+        output.read_to_end(&mut bytes).await.map_err(|_| "Cannot read Pi catalog")?;
+        if bytes.len() > 1024 * 1024 { return Err("Pi catalog exceeds limit"); }
+        if !child.wait().await.map_err(|_| "Pi catalog process failed")?.success() { return Err("Pi catalog process failed"); }
+        serde_json::from_slice::<Vec<Value>>(&bytes).map_err(|_| "Invalid Pi catalog")
+    }).await.map_err(|_| "Pi catalog timed out")??;
+    let mut result = Vec::new();
+    for row in rows {
+        let provider = row["provider"].as_str().ok_or("Invalid Pi catalog provider")?;
+        crate::pi_credentials::validate_provider(provider)?;
+        let id = row["id"].as_str().filter(|s| !s.is_empty() && s.len() <= 512).ok_or("Invalid Pi model ID")?;
+        let name = row["name"].as_str().filter(|s| !s.is_empty() && s.len() <= 512).ok_or("Invalid Pi model name")?;
+        result.push(json!({"provider":provider,"id":id,"name":name}));
+    }
+    Ok(result)
+}
+
 impl PiProcess {
     fn start() -> Result<Self, String> {
         if !pi_enabled() {

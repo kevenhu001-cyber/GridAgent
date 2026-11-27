@@ -7,6 +7,9 @@ on:
       - 'vendor/proliferate/apps/packages/product-client/src/lib/access/pi/**'
       - 'vendor/proliferate/apps/packages/product-client/src/host/desktop-bridge.ts'
       - 'vendor/proliferate/apps/desktop/src-tauri/src/pi_bridge.rs'
+      - 'vendor/proliferate/apps/desktop/src-tauri/src/pi_credentials.rs'
+      - 'vendor/proliferate/apps/desktop/src-tauri/src/commands/keychain.rs'
+      - 'vendor/proliferate/apps/desktop/src-tauri/Cargo.toml'
       - 'vendor/proliferate/apps/desktop/src/lib/access/scientific/**'
       - '.github/workflows/pi-runtime.yml'
   push:
@@ -17,6 +20,9 @@ on:
       - 'vendor/proliferate/apps/packages/product-client/src/lib/access/pi/**'
       - 'vendor/proliferate/apps/packages/product-client/src/host/desktop-bridge.ts'
       - 'vendor/proliferate/apps/desktop/src-tauri/src/pi_bridge.rs'
+      - 'vendor/proliferate/apps/desktop/src-tauri/src/pi_credentials.rs'
+      - 'vendor/proliferate/apps/desktop/src-tauri/src/commands/keychain.rs'
+      - 'vendor/proliferate/apps/desktop/src-tauri/Cargo.toml'
       - 'vendor/proliferate/apps/desktop/src/lib/access/scientific/**'
       - '.github/workflows/pi-runtime.yml'
 permissions:

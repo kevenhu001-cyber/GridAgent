@@ -374,6 +374,7 @@ export type PiEvent =
   | { kind: "tool_finished"; id: string; tool_id: string; name: string; error: boolean };
 
 export type PiProvider = "openai" | "anthropic" | "google";
+export interface PiModelRecord { provider: PiProvider; id: string; name: string }
 export interface PiCredentialStatus { provider: PiProvider; configured: boolean }
 export interface DesktopPiCredentialBridge {
   list(): Promise<PiCredentialStatus[]>;
@@ -384,6 +385,7 @@ export interface DesktopPiCredentialBridge {
 export interface DesktopPiBridge {
   /** Write-only native credential operations, independent of the cloud vault. */
   credentials?: DesktopPiCredentialBridge;
+  listModels?(): Promise<PiModelRecord[]>;
   mode(): Promise<boolean>;
   matchesWorkspace(path: string): Promise<boolean>;
   open(workspacePath: string): Promise<string>;

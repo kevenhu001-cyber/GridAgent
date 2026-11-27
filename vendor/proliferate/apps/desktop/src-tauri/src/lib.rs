@@ -276,6 +276,7 @@ pub fn run() {
         .manage(window_chrome::WindowChromeZoom::default())
         .invoke_handler(tauri::generate_handler![
             pi_bridge::pi_mode,
+            pi_bridge::pi_list_models,
             pi_credentials::pi_list_credentials,
             pi_credentials::pi_save_credential,
             pi_credentials::pi_delete_credential,

@@ -8,6 +8,7 @@ export const embeddedPi: DesktopPiBridge = {
     save: (provider, value) => invoke("pi_save_credential", { provider, value }),
     remove: provider => invoke("pi_delete_credential", { provider }),
   },
+  listModels: () => invoke("pi_list_models"),
   mode: () => invoke<boolean>("pi_mode"),
   matchesWorkspace: path => invoke<boolean>("pi_matches_workspace", { path }),
   open: workspacePath => invoke<string>("pi_open", { workspacePath }),
