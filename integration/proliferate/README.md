@@ -1,4 +1,10 @@
-# GridAgent / Proliferate integration — phase 1
+# GridAgent / Proliferate integration
+
+## First-party native integration (current direction)
+
+[ADR 0003](../../docs/adr/0003-native-scientific-runtime.md) supersedes core MCP. The initial native read-only protocol is implemented in `src/gridagent/native_service.py` and registered in the Tauri host; no model-generated writes or execution are exposed by this lane. For developer-only testing set absolute `GRIDAGENT_NATIVE_PYTHON` (installed Python interpreter) and `GRIDAGENT_NATIVE_WORKSPACE` (existing explicitly chosen directory) before starting the desktop. Install `.[core]` in that interpreter. `scientific_read` is the direct Tauri command; the TypeScript client lives in `apps/desktop/src/lib/access/scientific/client.ts` inside the vendor tree. The host retains the child for successive requests and discards failed connections without replay. Packaged discovery, user workspace selection, agent registration, mutation lanes and UI remain pending.
+
+## Historical MCP integration (optional external compatibility)
 
 The desktop baseline is the preserved Proliferate 0.4.27 monorepo at
 `vendor/proliferate/`, imported from the public mirror
@@ -11,8 +17,7 @@ Review combined distribution and network-source obligations before release.
 ## Architecture
 
 Proliferate's Tauri/React desktop and AnyHarness own the conversation,
-provider selection and general Agent lifecycle. GridAgent supplies the Python
-scientific runtime as a workspace-scoped MCP server, not another LLM Agent.
+provider selection and general Agent lifecycle. GridAgent supplies Python scientific capability; the original workspace-scoped MCP server remains available as optional external interoperability, not another LLM Agent.
 The owner requested removal of WinUI and WPF; historical code remains in Git history.
 
 ## Developer connection (manual first)
@@ -47,7 +52,7 @@ unrestricted host execution of generated scientific code.
 
 - Import and verify the source tree and license.
 - Run the real stdio protocol and permission regression tests.
-- Build the desktop locally and register the MCP server in an actual harness.
+- Build the desktop locally and register native scientific tools in a verified harness; test MCP separately for compatibility.
 - Validate workspace selection, cancellation, permission prompts and data boundaries.
 - Remove upstream cloud endpoints, update channels, telemetry and trademark
   assets from the distributable application; retain original attribution.
