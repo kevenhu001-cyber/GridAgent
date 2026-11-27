@@ -3,6 +3,11 @@ import type { DesktopPiBridge, PiEvent } from "@proliferate/product-client/host/
 
 /** Debug bridge only; the native host selects the executable and workspace. */
 export const embeddedPi: DesktopPiBridge = {
+  credentials: {
+    list: () => invoke("pi_list_credentials"),
+    save: (provider, value) => invoke("pi_save_credential", { provider, value }),
+    remove: provider => invoke("pi_delete_credential", { provider }),
+  },
   mode: () => invoke<boolean>("pi_mode"),
   matchesWorkspace: path => invoke<boolean>("pi_matches_workspace", { path }),
   open: workspacePath => invoke<string>("pi_open", { workspacePath }),

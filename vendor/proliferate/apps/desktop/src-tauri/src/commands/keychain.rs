@@ -190,8 +190,8 @@ fn keychain_sender() -> &'static mpsc::Sender<KeychainRequest> {
                             value,
                             response,
                         } => {
-                            // The only writer left is the anyharness data key
-                            // (RUNTIME_SERVICE), which must never be pre-deleted —
+                            // The runtime data key and GridAgent provider credentials
+                            // must never be pre-deleted —
                             // losing it in a delete-add window would orphan the
                             // data it encrypts. So this is a plain set.
                             let result = get_or_create_entry(&mut entries, &service, &account)
@@ -220,7 +220,7 @@ fn keychain_sender() -> &'static mpsc::Sender<KeychainRequest> {
     })
 }
 
-fn read_password(service: &str, account: &str) -> Result<Option<String>, String> {
+pub(crate) fn read_password(service: &str, account: &str) -> Result<Option<String>, String> {
     let (response_tx, response_rx) = mpsc::sync_channel(1);
     keychain_sender()
         .send(KeychainRequest::Read {
@@ -234,7 +234,7 @@ fn read_password(service: &str, account: &str) -> Result<Option<String>, String>
         .map_err(|_| "Keychain worker did not return a result.".to_string())?
 }
 
-fn set_password(service: &str, account: &str, value: &str) -> Result<(), String> {
+pub(crate) fn set_password(service: &str, account: &str, value: &str) -> Result<(), String> {
     let (response_tx, response_rx) = mpsc::sync_channel(1);
     keychain_sender()
         .send(KeychainRequest::Set {
@@ -249,7 +249,7 @@ fn set_password(service: &str, account: &str, value: &str) -> Result<(), String>
         .map_err(|_| "Keychain worker did not return a result.".to_string())?
 }
 
-fn delete_password(service: &str, account: &str) -> Result<(), String> {
+pub(crate) fn delete_password(service: &str, account: &str) -> Result<(), String> {
     let (response_tx, response_rx) = mpsc::sync_channel(1);
     keychain_sender()
         .send(KeychainRequest::Delete {

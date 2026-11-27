@@ -33,7 +33,7 @@ impl Drop for PiProcess {
     }
 }
 
-fn configured_path(key: &str, file: bool) -> Result<PathBuf, String> {
+pub(crate) fn configured_path(key: &str, file: bool) -> Result<PathBuf, String> {
     let path = std::env::var_os(key).map(PathBuf::from)
         .ok_or_else(|| format!("Missing Pi development configuration: {key}"))?;
     if !path.is_absolute() || (if file { !path.is_file() } else { !path.is_dir() }) {
@@ -85,7 +85,7 @@ fn public_event(value: Value) -> Option<Value> {
     }
 }
 
-fn pi_enabled() -> bool {
+pub(crate) fn pi_enabled() -> bool {
     cfg!(debug_assertions) && std::env::var("GRIDAGENT_PI_DEV").as_deref() == Ok("1")
 }
 
@@ -125,6 +125,13 @@ impl PiProcess {
             .kill_on_drop(true);
         for (key, value) in std::env::vars_os() {
             if allowed_env(&key.to_string_lossy().to_ascii_uppercase()) { command.env(key, value); }
+        }
+        // Native credential lookup is host-only; no secret is returned to UI.
+        // Explicit developer environment remains supported if no stored key exists.
+        let provider = std::env::var("GRIDAGENT_PI_PROVIDER").map_err(|_| "Pi provider is not configured")?;
+        crate::pi_credentials::validate_provider(&provider)?;
+        if let Some(key) = crate::pi_credentials::read_provider_key(&provider)? {
+            command.env("GRIDAGENT_PI_API_KEY", key);
         }
         let mut child = command.spawn().map_err(|_| "Cannot start embedded Pi worker")?;
         let input = child.stdin.take().ok_or("Pi stdin unavailable")?;

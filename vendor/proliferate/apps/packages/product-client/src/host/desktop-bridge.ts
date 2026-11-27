@@ -373,7 +373,17 @@ export type PiEvent =
   | { kind: "tool_started"; id: string; tool_id: string; name: string }
   | { kind: "tool_finished"; id: string; tool_id: string; name: string; error: boolean };
 
+export type PiProvider = "openai" | "anthropic" | "google";
+export interface PiCredentialStatus { provider: PiProvider; configured: boolean }
+export interface DesktopPiCredentialBridge {
+  list(): Promise<PiCredentialStatus[]>;
+  save(provider: PiProvider, value: string): Promise<void>;
+  remove(provider: PiProvider): Promise<void>;
+}
+
 export interface DesktopPiBridge {
+  /** Write-only native credential operations, independent of the cloud vault. */
+  credentials?: DesktopPiCredentialBridge;
   mode(): Promise<boolean>;
   matchesWorkspace(path: string): Promise<boolean>;
   open(workspacePath: string): Promise<string>;

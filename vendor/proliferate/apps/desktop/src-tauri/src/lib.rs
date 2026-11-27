@@ -10,6 +10,7 @@ mod runtime_version_assert;
 mod sidecar;
 mod scientific;
 mod pi_bridge;
+mod pi_credentials;
 mod state;
 mod telemetry;
 mod updater_owned;
@@ -275,6 +276,9 @@ pub fn run() {
         .manage(window_chrome::WindowChromeZoom::default())
         .invoke_handler(tauri::generate_handler![
             pi_bridge::pi_mode,
+            pi_credentials::pi_list_credentials,
+            pi_credentials::pi_save_credential,
+            pi_credentials::pi_delete_credential,
             pi_bridge::pi_matches_workspace,
             pi_bridge::pi_open,
             pi_bridge::pi_prompt,

@@ -1,8 +1,5 @@
 import { Agent } from "@earendil-works/pi-agent-core";
-import { createModels } from "@earendil-works/pi-ai";
-import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
-import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
-import { googleProvider } from "@earendil-works/pi-ai/providers/google";
+import { modelRegistry } from "./model-catalog.mjs";
 import { scientificTools } from "./tools.mjs";
 import { defaultTools } from "./default-tools.mjs";
 
@@ -14,10 +11,7 @@ export const SYSTEM_PROMPT = "You are GridAgent, an LLM-led scientific engineeri
   "Preserve fixed user requirements and ask for authorization when needed.";
 
 export function createGridAgent({client, provider, modelId, apiKey, workspace, allowTasks = false, runShell}) {
-  const models = createModels();
-  const factories = {openai: openaiProvider, anthropic: anthropicProvider, google: googleProvider};
-  if (!Object.hasOwn(factories, provider)) throw new Error("Unsupported model provider");
-  models.setProvider(factories[provider]());
+  const models = modelRegistry(provider);
   const model = models.getModel(provider, modelId);
   if (!model) throw new Error("Unknown model for selected provider");
   const tools = [...defaultTools(client, {workspace, allowTasks, runShell}),
