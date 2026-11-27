@@ -6,10 +6,10 @@ import sys
 import pytest
 
 pytest.importorskip("mcp")
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+from mcp import ClientSession, StdioServerParameters  # noqa: E402
+from mcp.client.stdio import stdio_client  # noqa: E402
 
-from gridagent.scientific_workspace import set_enabled
+from gridagent.scientific_workspace import set_enabled  # noqa: E402
 
 
 def test_local_mcp_workspace_and_permissions(tmp_path):
