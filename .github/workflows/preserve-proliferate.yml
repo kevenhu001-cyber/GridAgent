@@ -1,0 +1,49 @@
+name: Preserve pinned Proliferate source
+on:
+  push:
+    branches: [migration/proliferate]
+    paths: ['.github/workflows/preserve-proliferate.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: preserve-proliferate
+  cancel-in-progress: false
+jobs:
+  preserve:
+    if: github.ref == 'refs/heads/migration/proliferate'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: migration/proliferate
+          fetch-depth: 1
+      - name: Preserve verified source tree without executing upstream code
+        shell: bash
+        env:
+          SOURCE: https://github.com/kumpraj/proliferate.git
+          PIN: 7c95cc94974290dbf06251e0f4a6db446ac18a47
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 "$SOURCE" "$PIN"
+          test "$(git rev-parse FETCH_HEAD)" = "$PIN"
+          tree="$(git rev-parse "$PIN^{tree}")"
+          if git ls-tree -r "$tree" | grep '^160000 ' > /tmp/proliferate-gitlinks; then
+            echo "Upstream contains submodules; separate archival review required."
+            exit 1
+          fi
+          git cat-file -e "$PIN:LICENSE"
+          if git cat-file -e HEAD:vendor/proliferate 2>/dev/null; then
+            test "$(git rev-parse HEAD:vendor/proliferate)" = "$tree"
+            echo "Exact snapshot already present."
+            exit 0
+          fi
+          git read-tree --prefix=vendor/proliferate/ "$tree"
+          test "$(git rev-parse "$(git write-tree):vendor/proliferate")" = "$tree"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "vendor: preserve Proliferate 0.4.27 at $PIN"
+          test "$(git rev-parse HEAD:vendor/proliferate)" = "$tree"
+          git push origin HEAD:refs/heads/migration/proliferate
+          echo "Preserved exact upstream Git tree $tree" >> "$GITHUB_STEP_SUMMARY"
