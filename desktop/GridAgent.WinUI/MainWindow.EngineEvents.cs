@@ -21,7 +21,8 @@ public partial class MainWindow
             case "sessions":
                 SetSessions(data.EnumerateArray().Select(x =>
                     new Entry(x.GetProperty("id").GetString()!,
-                        x.GetProperty("title").GetString() + " · " + x.GetProperty("tasks").GetInt32())).ToList());
+                        x.GetProperty("title").GetString() ?? "Conversation",
+                        x.GetProperty("tasks").GetInt32() + " tasks")).ToList());
                 break;
             case "studies":
                 StudyList.ItemsSource = data.EnumerateArray().Select(x =>
