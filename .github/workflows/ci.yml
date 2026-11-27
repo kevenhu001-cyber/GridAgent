@@ -91,6 +91,13 @@ jobs:
         run: |
           ./desktop/msix/verify-portable-pri.ps1 -Directory winui-ui-smoke
           ./desktop/msix/test-portable-startup.ps1 -PortableDirectory winui-ui-smoke -UiOnly
+      - name: Preserve native XAML visual evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: GridAgent-UI-snapshots
+          path: winui-ui-smoke/ui-snapshots/*.png
+          if-no-files-found: warn
   windows:
     needs: winui-build
     runs-on: windows-latest
