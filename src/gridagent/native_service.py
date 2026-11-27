@@ -9,6 +9,7 @@ import re
 import sys
 from contextlib import redirect_stdout
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -67,6 +68,11 @@ class JobSubmit(JobRef):
     plugin_ids: list[str] = Field(default_factory=list, max_length=4)
 
 
+class ShellSubmit(JobRef):
+    shell: Literal['bash', 'powershell']
+    command: str = Field(min_length=1, max_length=8000)
+
+
 class Frame(Strict):
     version: int
     id: str = Field(pattern=r"^[a-f0-9]{32}$")
@@ -87,7 +93,8 @@ METHODS = {
 }
 
 
-TASK_METHODS = {"workspace.write": ProjectWrite, "job.submit": JobSubmit, "job.cancel": JobRef}
+TASK_METHODS = {"workspace.write": ProjectWrite, "job.submit": JobSubmit, "job.cancel": JobRef,
+                "job.submit_shell": ShellSubmit}
 
 
 def dispatch(root: Path, method: str, params: dict, *, allow_tasks=False):
@@ -117,7 +124,7 @@ def dispatch(root: Path, method: str, params: dict, *, allow_tasks=False):
         from . import native_jobs
 
         handler = {"job.status": native_jobs.status, "job.submit": native_jobs.submit,
-                   "job.cancel": native_jobs.cancel}[method]
+                   "job.cancel": native_jobs.cancel, "job.submit_shell": native_jobs.submit_shell}[method]
         return handler(root, **args)
     if method == "scientific.runs":
         return ws.list_scientific_runs(root, **args)
