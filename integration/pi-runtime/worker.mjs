@@ -8,7 +8,8 @@ const allowTasks = process.env.GRIDAGENT_NATIVE_TASKS === "1";
 const client = openNativeClient({python: process.env.GRIDAGENT_NATIVE_PYTHON,
   workspace: process.env.GRIDAGENT_NATIVE_WORKSPACE, allowTasks});
 const agent = createGridAgent({client, provider: process.env.GRIDAGENT_PI_PROVIDER,
-  modelId: process.env.GRIDAGENT_PI_MODEL, apiKey: process.env.GRIDAGENT_PI_API_KEY, allowTasks});
+  modelId: process.env.GRIDAGENT_PI_MODEL, apiKey: process.env.GRIDAGENT_PI_API_KEY,
+  workspace: process.env.GRIDAGENT_NATIVE_WORKSPACE, allowTasks});
 const emit = (event) => process.stdout.write(JSON.stringify(event) + "\n");
 let active = null;
 let stopping = false;
