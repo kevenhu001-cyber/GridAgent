@@ -1,0 +1,10 @@
+{
+  "identifier": "main-local",
+  "description": "Local workbench window; no shell, filesystem or HTTP plugin permissions.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default"
+  ]
+}
