@@ -59,7 +59,7 @@ def _launch_worker(root, job_id):
     Thread(target=child.wait, daemon=True).start()
 
 
-def submit(root, job_id, entry, arguments, plugin_ids, *, launch=_launch_worker):
+def submit(root, job_id, entry, arguments, plugin_ids, *, launch=_launch_worker, shell_command=None):
     ws.require_grant(root)
     ws.safe_parts(entry)
     if not entry.endswith(".py"):
@@ -69,6 +69,11 @@ def submit(root, job_id, entry, arguments, plugin_ids, *, launch=_launch_worker)
     base = _base(root)
     folder = base / job_id
     request = {"entry": entry, "arguments": arguments, "plugin_ids": plugin_ids}
+    if shell_command is not None:
+        from .scientific_runtime import isolated_shell_source
+
+        isolated_shell_source(shell_command["shell"], shell_command["command"])
+        request["shell_command"] = shell_command
     with FileLock(str(base / "submit.lock"), timeout=2):
         if folder.exists():
             folder = _folder(root, job_id)
@@ -90,6 +95,11 @@ def submit(root, job_id, entry, arguments, plugin_ids, *, launch=_launch_worker)
             _save(folder, "state.json", {"job_id": job_id, "status": "failed",
                                          "reason": "Worker could not start"})
         return status(root, job_id)
+
+
+def submit_shell(root, job_id, shell, command):
+    return submit(root, job_id, "internal-shell.py", [], [],
+                  shell_command={"shell": shell, "command": command})
 
 
 def cancel(root, job_id):
@@ -117,7 +127,9 @@ def run_worker(root, job_id, *, execute=None):
             else:
                 result = (execute or run)(root, **request, run_id=job_id, cancelled=cancelled)
             final = {"job_id": job_id, "status": result["status"], "reason": result.get("reason"),
-                     "run_id": result.get("run_id"), "verification": result.get("verification")}
+                     "run_id": result.get("run_id"), "verification": result.get("verification"),
+                     "exit_code": result.get("exit_code"),
+                     "stdout_stderr_tail": result.get("stdout_stderr_tail", "")}
             if final["status"] not in TERMINAL:
                 final["status"] = "failed"
         except Exception as exc:  # noqa: BLE001 - job boundary, no host path disclosure
