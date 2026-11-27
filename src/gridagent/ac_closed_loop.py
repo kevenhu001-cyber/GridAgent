@@ -94,7 +94,12 @@ def next_index(spec, observations):
         aligned = sum(direction * (value - before) > 0
                       for variable, value, before in zip(spec.optimization.variables, values, current, strict=True)
                       if variable.parameter == "voltage_pu")
-        return (-aligned, sum(abs(value-before) for value, before in zip(values, current, strict=True)), index)
+        distance = 0.0
+        for variable, value, before in zip(spec.optimization.variables, values, current, strict=True):
+            span = (variable.maximum-variable.minimum if variable.kind == "continuous"
+                    else variable.choices[-1]-variable.choices[0])
+            distance += abs(value-before)/span
+        return (-aligned, distance, index)
 
     return min(available, key=rank, default=None)
 
