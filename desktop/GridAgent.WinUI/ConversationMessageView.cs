@@ -118,15 +118,14 @@ public sealed class ConversationMessageView : UserControl
             var open = new Button { Content = "Open research task", HorizontalAlignment = HorizontalAlignment.Left };
             open.Click += (_, _) => { if (message.Research is ResearchSnapshot task) message.OpenTask?.Invoke(task.Id); };
             taskPanel.Children.Add(open);
-            layout.Children.Add(new Border { Style = (Style)Application.Current.Resources["EngineeringCardStyle"], Padding = new Thickness(16),
-                BorderThickness = new Thickness(1), Child = taskPanel });
+            layout.Children.Add(new Border { Style = (Style)Application.Current.Resources["EngineeringCardStyle"], Child = taskPanel });
             message.PropertyChanged += MessageChanged;
             UpdateResearch();
         }
         else if (message.Role == "You")
         {
             var text = Plain(message.Body);
-            var bubble = new Border { Style = (Style)Application.Current.Resources["UserMessageCardStyle"], CornerRadius = new CornerRadius(18), Padding = new Thickness(16, 10, 16, 10), Child = text };
+            var bubble = new Border { Style = (Style)Application.Current.Resources["UserMessageCardStyle"], Child = text };
             AutomationProperties.SetName(bubble, "Your message");
             layout.Children.Add(bubble);
         }
