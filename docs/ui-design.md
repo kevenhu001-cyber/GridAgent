@@ -11,9 +11,9 @@ Do not recreate the retired WinUI/WPF UI or build another desktop shell.
   not new UI milestones. Adapt their data/transport owners; do not recreate
   controls to work around an old backend. No broad layout or visual redesign
   without separate owner approval.
-- Temporary native Pi preview is for qualification only; restore original
-  ChatView/ChatInput/SessionTranscriptPane behavior through the shared contracts,
-  then retire parallel preview UI/state.
+- The temporary native Pi preview has been removed. Adapt original
+  ChatView/ChatInput/SessionTranscriptPane through shared contracts; do not
+  reintroduce parallel preview UI/state.
 - Use shared design tokens, accessible controls and restrained visual hierarchy.
 - Keep the assistant primary; scientific workspaces, files, model data and
   execution results should extend the existing workbench rather than compete
