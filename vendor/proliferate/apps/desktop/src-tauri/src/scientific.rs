@@ -28,7 +28,11 @@ fn configured_path(key: &str, file: bool) -> Result<PathBuf, String> {
     if !path.is_absolute() || (if file { !path.is_file() } else { !path.is_dir() }) {
         return Err(format!("Invalid scientific development configuration: {key}"));
     }
-    path.canonicalize().map_err(|_| "Cannot resolve scientific configuration".to_string())
+    // Keep the selected interpreter path: resolving a venv Python symlink can
+    // bypass the virtual environment. Canonicalize the workspace only.
+    if file { Ok(path) } else {
+        path.canonicalize().map_err(|_| "Cannot resolve scientific configuration".to_string())
+    }
 }
 
 impl ScientificProcess {
