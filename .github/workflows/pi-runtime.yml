@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'integration/pi-runtime/**'
+      - 'vendor/proliferate/anyharness/sdk/src/**'
       - 'vendor/proliferate/apps/packages/product-client/src/lib/access/pi/**'
       - 'vendor/proliferate/apps/packages/product-client/src/host/desktop-bridge.ts'
       - 'vendor/proliferate/apps/desktop/src-tauri/src/pi_bridge.rs'
@@ -12,6 +13,7 @@ on:
     branches: [main]
     paths:
       - 'integration/pi-runtime/**'
+      - 'vendor/proliferate/anyharness/sdk/src/**'
       - 'vendor/proliferate/apps/packages/product-client/src/lib/access/pi/**'
       - 'vendor/proliferate/apps/packages/product-client/src/host/desktop-bridge.ts'
       - 'vendor/proliferate/apps/desktop/src-tauri/src/pi_bridge.rs'
@@ -33,3 +35,7 @@ jobs:
           node-version: '22.19.0'
       - run: npm install --ignore-scripts --no-audit --no-fund
       - run: npm test
+      - name: Compile retained AnyHarness SDK contracts and reducer
+        run: npm exec --yes --package=typescript@5.7.3 -- tsc -p ../../vendor/proliferate/anyharness/sdk/tsconfig.json
+      - name: Verify Pi events using original transcript reducer
+        run: node --test product-reducer.integration.mjs
