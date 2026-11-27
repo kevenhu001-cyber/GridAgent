@@ -41,6 +41,8 @@ public partial class App : Application
             StartupDiagnostics.Record("window.activate.complete");
             if (smoke)
                 _ = MsixSmoke.RunAsync();
+            else if (uiOnly)
+                _ = _window.RunUiSmokeAsync();
         }
         catch (Exception ex)
         {

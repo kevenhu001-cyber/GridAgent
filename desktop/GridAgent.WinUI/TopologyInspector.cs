@@ -37,7 +37,7 @@ internal sealed class TopologyInspector : Grid
         ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(300) });
         var header = new StackPanel { Spacing = 4 };
-        header.Children.Add(new TextBlock { Text = "Network topology", FontSize = 24, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        header.Children.Add(ScientificVisualStyle.Title("Network topology"));
         header.Children.Add(new TextBlock { Text = $"{nodes.Length} buses · {links.Length} branches · dashed lines indicate open branches", TextWrapping = TextWrapping.Wrap });
         SetColumnSpan(header, 2); Children.Add(header);
         var left = new Grid { RowSpacing = 8 };
@@ -45,7 +45,7 @@ internal sealed class TopologyInspector : Grid
         left.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         var toolbar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         toolbar.Children.Add(_layout);
-        var reset = new Button { Content = "Reset zoom" }; toolbar.Children.Add(reset);
+        var reset = ScientificVisualStyle.Action("Reset zoom", "\uE72C"); toolbar.Children.Add(reset);
         left.Children.Add(toolbar);
         _viewport = new ScrollViewer { Content = _diagram, ZoomMode = ZoomMode.Enabled, MinZoomFactor = 0.5f, MaxZoomFactor = 5,
             HorizontalScrollMode = ScrollMode.Enabled, VerticalScrollMode = ScrollMode.Enabled,
@@ -60,6 +60,17 @@ internal sealed class TopologyInspector : Grid
         _save.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
         var scroll = new ScrollViewer { Content = inspector, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         SetRow(scroll, 1); SetColumn(scroll, 1); Children.Add(scroll);
+        RowDefinitions.Add(new RowDefinition { Height = new GridLength(0) });
+        SizeChanged += (_, e) =>
+        {
+            bool narrow = e.NewSize.Width < 760;
+            ColumnDefinitions[1].Width = new GridLength(narrow ? 0 : 300);
+            RowDefinitions[2].Height = narrow ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+            SetRow(scroll, narrow ? 2 : 1);
+            SetColumn(scroll, narrow ? 0 : 1);
+            SetColumnSpan(left, narrow ? 2 : 1);
+            SetColumnSpan(scroll, narrow ? 2 : 1);
+        };
         AutomationProperties.SetName(_diagram, "Power network diagram");
         AutomationProperties.SetName(_parameters, "Editable model parameter");
         AutomationProperties.SetName(_search, "Search editable model parameters");
@@ -141,8 +152,8 @@ internal sealed class TopologyInspector : Grid
             }
         }
         _diagram.Width = width; _diagram.Height = height;
-        var ink = new SolidColorBrush(ActualTheme == ElementTheme.Dark ? Microsoft.UI.Colors.White : Microsoft.UI.Colors.Black);
-        var accent = new SolidColorBrush(Microsoft.UI.Colors.DodgerBlue);
+        var ink = new SolidColorBrush(ScientificVisualStyle.Ink(ActualTheme));
+        var accent = new SolidColorBrush(ScientificVisualStyle.Series(ActualTheme, 0));
         var muted = new SolidColorBrush(Microsoft.UI.Colors.Gray);
         foreach (var link in _links)
         {

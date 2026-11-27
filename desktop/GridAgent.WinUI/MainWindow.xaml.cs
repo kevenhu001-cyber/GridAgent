@@ -25,21 +25,27 @@ public partial class MainWindow : Window
     private bool _loadingTheme;
     private bool _busy;
     private bool _operationError;
+    private bool _conversationOperation;
+    private bool _sessionsLoaded;
+    private bool _knowledgeLoaded;
     private EngineSettings? _activeEngine;
     private string? _activeResearch;
     private bool _cancellingResearch;
     private JsonElement _pluginCatalog;
     private JsonElement _topology;
-    private sealed record Entry(string Id, string Label, string? Info = null);
+    private JsonElement _knowledgePage;
+    private sealed record Entry(string Id, string Label, string? Info = null, string? Summary = null);
 
     private bool _layoutReady;
     private bool _launchInitialized;
+    private bool _uiSmokeActive;
     public MainWindow(bool skipOnboarding = false)
     {
         StartupDiagnostics.Record("window.xaml.begin");
         InitializeComponent();
         StartupDiagnostics.Record("window.xaml.complete");
         _layoutReady = true;
+        ChatPage.SizeChanged += (_, e) => ChatPage.Padding = new Thickness(e.NewSize.Width < 560 ? 8 : 16, 16, e.NewSize.Width < 560 ? 8 : 16, 16);
         RuntimeStatus.Text = File.Exists(BundledPython) ? "Bundled Python · ready" : "Developer runtime";
         WorkspacePath.Text = SetupPreferences.LoadWorkspace() ?? AppDataPaths.DefaultWorkspace;
         ModelName.Text = Environment.GetEnvironmentVariable("GRIDAGENT_MODEL") ?? "";
@@ -92,14 +98,17 @@ public partial class MainWindow : Window
         var tag = args.IsSettingsSelected ? "settings" : (args.SelectedItemContainer as NavigationViewItem)?.Tag as string ?? "chat";
         foreach (var (page, key) in new (UIElement, string)[] { (ChatPage,"chat"),(TasksPage,"tasks"),(ModelsPage,"models"),(RunsPage,"runs"),(StudiesPage,"studies"),(ToolsPage,"tools"),(PluginsPage,"plugins"),(KnowledgePage,"knowledge"),(SettingsPage,"settings") })
             page.Visibility = tag == key ? Visibility.Visible : Visibility.Collapsed;
-        if (!_initialized) return;
+        if (!_initialized || _uiSmokeActive) return;
         if (tag == "plugins" && _pluginCatalog.ValueKind != JsonValueKind.Array && !_busy) PluginCenter(this, new RoutedEventArgs());
+        else if (tag == "knowledge" && !_busy) await Execute(new { action = "knowledge-packs" });
         else await EnsureWorkspaceIndex();
     }
     private async void NavigationInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)
     {
-        if (args.InvokedItemContainer is NavigationViewItem item && item.Tag is Entry session)
-            await OpenSessionById(session.Id);
+        if (args.InvokedItemContainer is not NavigationViewItem item) return;
+        if (item.Tag is Entry session) await OpenSessionById(session.Id);
+        else if (item.Tag as string == "new-chat") NewSession(sender, new RoutedEventArgs());
+        else if (item.Tag as string == "search-chat") OpenConversationHistory(sender, new RoutedEventArgs());
     }
     private void SearchSessions(object sender, TextChangedEventArgs args)
     {
@@ -112,6 +121,7 @@ public partial class MainWindow : Window
         var visible = _sessions.Where(s => s.Label.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
         SessionList.ItemsSource = visible;
         SessionList.SelectedItem = visible.FirstOrDefault(s => s.Id == _session);
+        SetEmpty(SessionsEmpty, _sessionsLoaded && visible.Count == 0, query.Length == 0 ? "No conversations yet." : "No matching conversations.");
     }
     private void SetSessions(List<Entry> sessions)
     {
@@ -120,7 +130,7 @@ public partial class MainWindow : Window
         RecentConversations.MenuItems.Clear();
         foreach (var session in sessions.Take(12))
         {
-            var item = new NavigationViewItem { Content = session.Label, Tag = session, SelectsOnInvoked = false };
+            var item = new NavigationViewItem { Content = new TextBlock { Text = session.Label, TextTrimming = TextTrimming.CharacterEllipsis, MaxLines = 1 }, Tag = session, SelectsOnInvoked = false };
             ToolTipService.SetToolTip(item, session.Label);
             RecentConversations.MenuItems.Add(item);
         }
@@ -212,17 +222,51 @@ public partial class MainWindow : Window
         _busy = busy;
         BusyRing.IsActive = busy;
         BusyRing.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
-        SendButton.IsEnabled = !busy;
+        UpdateSendState();
+        OperationStatus.Visibility = busy || _operationError ? Visibility.Visible : Visibility.Collapsed;
         CancelButton.Visibility = busy && _activeResearch != null ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void PromptChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_layoutReady) UpdateSendState();
+    }
+    private void UpdateSendState() => SendButton.IsEnabled = !_busy && !string.IsNullOrWhiteSpace(Prompt.Text);
+    private static void SetEmpty(TextBlock view, bool show, string message)
+    {
+        view.Text = message;
+        view.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+    }
+    private void RefreshEmptyStates()
+    {
+        SetEmpty(ResearchEmpty, _workspaceIndexLoaded && ResearchList.Items.Count == 0, "No research tasks yet.");
+        SetEmpty(ModelsEmpty, _workspaceIndexLoaded && ModelRevisions.Items.Count == 0, "No model revisions yet.");
+        SetEmpty(RunsEmpty, _workspaceIndexLoaded && RunList.Items.Count == 0, "No simulation results yet.");
+        SetEmpty(StudiesEmpty, _workspaceIndexLoaded && StudyList.Items.Count == 0, "No saved studies yet.");
+        SetEmpty(KnowledgeEmpty, _knowledgeLoaded && KnowledgePacks.Items.Count == 0, "No reference packs imported.");
     }
 
     private async Task Execute(object request)
     {
         if (_busy) { Notify("Another operation is running.", InfoBarSeverity.Warning); return; }
-        SetBusy(true);
         _operationError = false;
+        // Freeze the presentation destination when the operation begins, not when a response arrives.
+        var action = JsonSerializer.SerializeToElement(request).GetProperty("action").GetString();
+        _conversationOperation = action is "ask" or "history" or "research" ||
+            action == "local" && ChatPage.Visibility == Visibility.Visible;
+        Notice.IsOpen = false;
+        SetBusy(true);
         _conversation.BeginOperation();
-        StatusText.Text = "Working…";
+        StatusText.Text = action switch
+        {
+            "ask" => "Waiting for assistant…",
+            "history" => "Loading conversation…",
+            "refresh" => "Loading workspace…",
+            "plugins" => "Loading plugins…",
+            "knowledge-packs" or "knowledge-pack" => "Loading references…",
+            "initialize" => "Opening workspace…",
+            _ => "Working…"
+        };
         try
         {
             var root = Path.GetFullPath(WorkspacePath.Text.Trim());
@@ -232,6 +276,10 @@ public partial class MainWindow : Window
                 _workspaceIndexLoaded = false;
                 _pluginCatalog = default;
                 PluginRows.Children.Clear();
+                KnowledgePacks.ItemsSource = null;
+                _knowledgeLoaded = false;
+                _sessionsLoaded = false;
+                _knowledgePage = default;
                 _boundWorkspace = root;
                 _session = null;
                 SetSessions(new List<Entry>());
@@ -239,21 +287,21 @@ public partial class MainWindow : Window
                 RunList.ItemsSource = null;
                 ResearchList.ItemsSource = null;
                 ModelRevisions.ItemsSource = null;
+                RefreshEmptyStates();
             }
             var settings = new EngineSettings(ResolvePython(), root, ModelName.Text.Trim(), BaseUrl.Text.Trim(), ApiKey.Password);
             _activeEngine = settings;
             await _engine.RunAsync(settings, request, Handle);
             StatusText.Text = _operationError ? "Operation failed" : "Ready";
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             _operationError = true;
-            // Do not display raw process diagnostics or provider payloads.
-            Append("Operation could not complete (" + ex.GetType().Name + "). Check application installation, workspace and model settings.");
+            // Keep raw provider payloads and exception details out of ordinary UI.
+            ReportOperationError("Operation could not complete. Check the workspace, runtime and model provider.");
             StatusText.Text = "Check configuration";
-            Notify("Operation could not complete. Check the workspace, runtime and provider.", InfoBarSeverity.Error);
         }
-        finally { InterruptStream(); SetBusy(false); _activeEngine = null; _activeResearch = null; }
+        finally { InterruptStream(); SetBusy(false); RefreshEmptyStates(); _activeEngine = null; _activeResearch = null; }
     }
 
     private bool WorkspaceChanged()
@@ -288,7 +336,10 @@ public partial class MainWindow : Window
     {
         if (_busy) return;
         ClearMessages(); ShowChat();
+        Mode.SelectedIndex = 0;
+        Prompt.Text = "";
         await Execute(new { action = "new", lightweight = true });
+        Prompt.Focus(FocusState.Programmatic);
     }
 
     private async void OpenSession(object sender, RoutedEventArgs e)
@@ -326,6 +377,16 @@ public partial class MainWindow : Window
         if (_busy) return;
         var picker = await PickFile(".json");
         if (picker != null) await Research("research-manifest", picker);
+    }
+
+    private async void ScientificExecutionSettings(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        var result = await new ContentDialog { XamlRoot = Root.XamlRoot, Title = "Scientific execution (preview)",
+            Content = "Authorize the assistant to create and edit project files and execute Python in Windows Sandbox. Network is disabled; each run has an isolated input snapshot and output folder. This preview does not enforce a hard CPU, process or disk quota. Only enable for a trusted research workspace.",
+            PrimaryButtonText = "Enable", SecondaryButtonText = "Disable", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close }.ShowAsync();
+        if (result != ContentDialogResult.None)
+            await Local("scientific-execution", result == ContentDialogResult.Primary ? "enable" : "disable");
     }
 
     private async void PythonSettings(object sender, RoutedEventArgs e)
@@ -445,9 +506,10 @@ public partial class MainWindow : Window
             await Execute(new { action = "save-model-revision", run = row.Id, edit });
         else if (edit != null) Notify("Workspace changed before the revision could be saved.", InfoBarSeverity.Warning);
     }
-    private void ModelRevisionDiff(object sender, RoutedEventArgs e)
+    private async void ModelRevisionDiff(object sender, RoutedEventArgs e)
     {
-        if (!WorkspaceChanged() && ModelRevisions.SelectedItem is Entry row && row.Info != null) { ShowChat(); Append(row.Info); }
+        if (!_busy && !WorkspaceChanged() && ModelRevisions.SelectedItem is Entry row && row.Info != null)
+            await new ContentDialog { XamlRoot = Root.XamlRoot, Title = row.Label, Content = Text(row.Info), CloseButtonText = "Close" }.ShowAsync();
     }
     private async void RunModelRevision(object sender, RoutedEventArgs e)
     {
@@ -476,15 +538,20 @@ public partial class MainWindow : Window
     {
         if (_busy) return;
         _pluginCatalog = default;
+        RenderPlugins();
         await Execute(new { action = "plugins" });
-        if (_pluginCatalog.ValueKind != JsonValueKind.Array) return;
+        if (_pluginCatalog.ValueKind != JsonValueKind.Array) { RenderPlugins(); return; }
         RenderPlugins();
     }
     private async void RegisterNgspice(object sender, RoutedEventArgs e)
     {
         if (_busy) return;
         var picker = await PickFile(".exe");
-        if (picker != null) await Local("register-ngspice", picker);
+        if (picker != null)
+        {
+            await Execute(new { action = "local", command = "register-ngspice", args = new[] { picker } });
+            if (!_operationError) await Execute(new { action = "plugins" });
+        }
     }
     private async void ReviewScript(object sender, RoutedEventArgs e)
     {
@@ -537,9 +604,46 @@ public partial class MainWindow : Window
     {
         if (_busy) return;
         var picker = await PickFile(".json");
-        if (picker != null) await Local("import-knowledge", picker);
+        if (picker != null)
+        {
+            await Execute(new { action = "local", command = "import-knowledge", args = new[] { picker } });
+            if (!_operationError) await Execute(new { action = "knowledge-packs" });
+        }
     }
-    private async void Knowledge(object sender, RoutedEventArgs e) => await Local("knowledge");
+    private async void Knowledge(object sender, RoutedEventArgs e) => await Execute(new { action = "knowledge-packs" });
+    private async void OpenKnowledgePack(object sender, RoutedEventArgs e)
+    {
+        if (_busy || WorkspaceChanged() || KnowledgePacks.SelectedItem is not Entry pack) return;
+        var workspace = _boundWorkspace;
+        var offset = 0;
+        while (!_busy && !WorkspaceChanged() && workspace == _boundWorkspace)
+        {
+            _knowledgePage = default;
+            await Execute(new { action = "knowledge-pack", id = pack.Id, offset });
+            if (_knowledgePage.ValueKind != JsonValueKind.Object) return;
+            var page = _knowledgePage;
+            var content = new StackPanel { Spacing = 16 };
+            int total = page.GetProperty("total").GetInt32();
+            content.Children.Add(ConversationMessageView.Metadata($"References {offset+1}–{Math.Min(offset+10,total)} of {total} · imported, not independently verified"));
+            foreach (var reference in page.GetProperty("entries").EnumerateArray())
+            {
+                var section = new StackPanel { Spacing = 4 };
+                var name = Text(reference.GetProperty("function").GetString()!, 15);
+                name.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+                section.Children.Add(name);
+                section.Children.Add(Text(reference.GetProperty("description").GetString()!, 14));
+                section.Children.Add(ConversationMessageView.Metadata(reference.GetProperty("source").GetString() + " · " + reference.GetProperty("version").GetString()));
+                content.Children.Add(section);
+            }
+            var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = pack.Label, CloseButtonText = "Close",
+                Content = new ScrollViewer { Content = content, MaxHeight = 440, VerticalScrollBarVisibility = ScrollBarVisibility.Auto },
+                PrimaryButtonText = offset + 10 < total ? "Next" : "", SecondaryButtonText = offset > 0 ? "Previous" : "" };
+            var choice = await dialog.ShowAsync();
+            if (choice == ContentDialogResult.Primary) offset += 10;
+            else if (choice == ContentDialogResult.Secondary) offset = Math.Max(0, offset-10);
+            else return;
+        }
+    }
     private async void PaperMitigation(object sender, RoutedEventArgs e)
     {
         if (_busy) return;

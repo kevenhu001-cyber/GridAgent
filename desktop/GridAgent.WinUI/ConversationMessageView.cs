@@ -19,7 +19,9 @@ namespace GridAgent.Windows;
 public sealed class ConversationMessageView : UserControl
 {
     private ConversationMessage? _message;
-    private Expander? _activity;
+    private Button? _activity;
+    private TextBlock? _activityLabel;
+    private FontIcon? _activityChevron;
     private StackPanel? _details;
     private TextBlock? _streamText;
     private TextBlock? _researchStage;
@@ -41,19 +43,43 @@ public sealed class ConversationMessageView : UserControl
     private void Bind(ConversationMessage? message)
     {
         if (ReferenceEquals(message, _message)) return;
-        Detach(); _activity = null; _details = null; _streamText = null; _researchStage = null; _researchSummary = null; _researchProgress = null; _artifactHost = null; Content = null;
+        Detach(); _activity = null; _activityLabel = null; _activityChevron = null; _details = null; _streamText = null; _researchStage = null; _researchSummary = null; _researchProgress = null; _artifactHost = null; Content = null;
         if (message == null) return;
         _message = message;
         var layout = new Grid { MaxWidth = 820, HorizontalAlignment = HorizontalAlignment.Stretch, Padding = new Thickness(8, 8, 8, 14) };
         if (message.Role == "Activity")
         {
-            _details = new StackPanel { Spacing = 8 };
-            _activity = new Expander { HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, Content = _details };
-            _activity.Expanding += (_, _) => UpdateActivity();
-            _activity.Collapsed += (_, _) => _details?.Children.Clear();
-            layout.Children.Add(_activity);
+            _details = new StackPanel { Spacing = 8, Margin = new Thickness(12, 4, 0, 8), Visibility = Visibility.Collapsed };
+            var header = new Grid { ColumnSpacing = 8 };
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            _activityLabel = Metadata("");
+            _activityLabel.TextWrapping = TextWrapping.NoWrap;
+            _activityLabel.TextTrimming = TextTrimming.CharacterEllipsis;
+            _activityLabel.IsTextSelectionEnabled = false;
+            _activityChevron = new FontIcon { Glyph = "\uE76C", FontSize = 12 };
+            Grid.SetColumn(_activityChevron, 1);
+            header.Children.Add(_activityLabel); header.Children.Add(_activityChevron);
+            _activity = new Button { Style = (Style)Application.Current.Resources["ConversationActivityButtonStyle"], Content = header };
+            _activity.Click += (_, _) => message.SetActivityExpanded(!message.ActivityExpanded);
+            var activityPanel = new StackPanel { Spacing = 2 };
+            activityPanel.Children.Add(_activity); activityPanel.Children.Add(_details);
+            layout.Children.Add(activityPanel);
             message.PropertyChanged += MessageChanged;
             UpdateActivity();
+        }
+        else if (message.ScientificChart is ScientificChartArtifact chart)
+        {
+            var panel = new StackPanel { Spacing = 8 };
+            panel.Children.Add(new TextBlock { Text = chart.Title, FontSize = 18,
+                FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+            panel.Children.Add(Plain(chart.ViewKind == "chart" ? $"{chart.XLabel} · {chart.YLabel} · {chart.SeriesCount} series · {chart.Points} samples" : $"{chart.ViewKind} · {chart.Summary}", 13));
+            panel.Children.Add(Metadata("Unverified script output · Run " + chart.RunId[..8]));
+            var open = new Button { Content = "Open scientific view", HorizontalAlignment = HorizontalAlignment.Left };
+            open.Click += (_, _) => message.OpenScientificChart?.Invoke(chart);
+            panel.Children.Add(open);
+            layout.Children.Add(new Border { Style = (Style)Application.Current.Resources["EngineeringCardStyle"],
+                Child = panel });
         }
         else if (message.Artifact != null)
         {
@@ -61,6 +87,14 @@ public sealed class ConversationMessageView : UserControl
             layout.Children.Add(_artifactHost);
             message.PropertyChanged += MessageChanged;
             RefreshArtifact();
+        }
+        else if (message.Role == "Error")
+        {
+            var panel = new StackPanel { Spacing = 4 };
+            var heading = new TextBlock { Text = "Could not complete the operation", FontWeight = FontWeights.SemiBold, FontSize = 15 };
+            panel.Children.Add(heading);
+            panel.Children.Add(Plain(message.Body));
+            layout.Children.Add(panel);
         }
         else if (message.Role == "Streaming")
         {
@@ -84,15 +118,14 @@ public sealed class ConversationMessageView : UserControl
             var open = new Button { Content = "Open research task", HorizontalAlignment = HorizontalAlignment.Left };
             open.Click += (_, _) => { if (message.Research is ResearchSnapshot task) message.OpenTask?.Invoke(task.Id); };
             taskPanel.Children.Add(open);
-            layout.Children.Add(new Border { Style = (Style)Application.Current.Resources["EngineeringCardStyle"], Padding = new Thickness(16),
-                BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12), Child = taskPanel });
+            layout.Children.Add(new Border { Style = (Style)Application.Current.Resources["EngineeringCardStyle"], Child = taskPanel });
             message.PropertyChanged += MessageChanged;
             UpdateResearch();
         }
         else if (message.Role == "You")
         {
             var text = Plain(message.Body);
-            var bubble = new Border { Style = (Style)Application.Current.Resources["UserMessageCardStyle"], CornerRadius = new CornerRadius(18), Padding = new Thickness(16, 10, 16, 10), Child = text };
+            var bubble = new Border { Style = (Style)Application.Current.Resources["UserMessageCardStyle"], Child = text };
             AutomationProperties.SetName(bubble, "Your message");
             layout.Children.Add(bubble);
         }
@@ -102,7 +135,7 @@ public sealed class ConversationMessageView : UserControl
             if (message.Role != "Assistant") stack.Children.Add(new TextBlock { Text = message.Role, FontWeight = FontWeights.SemiBold, FontSize = 12 });
             try { stack.Children.Add(NativeMarkdown.Render(message.Body)); }
             catch (Exception) { stack.Children.Add(Plain(message.Body)); }
-            var copy = new Button { Content = new SymbolIcon(Symbol.Copy), Style = (Style)Application.Current.Resources["SubtleButtonStyle"], HorizontalAlignment = HorizontalAlignment.Left };
+            var copy = new Button { Content = new SymbolIcon(Symbol.Copy), Style = (Style)Application.Current.Resources["ConversationIconButtonStyle"], HorizontalAlignment = HorizontalAlignment.Left };
             AutomationProperties.SetName(copy, "Copy response");
             ToolTipService.SetToolTip(copy, "Copy response");
             copy.Click += (_, _) => Copy(message.Body);
@@ -140,13 +173,22 @@ public sealed class ConversationMessageView : UserControl
     }
     private void UpdateActivity()
     {
-        if (_activity == null || _message == null || _details == null) return;
-        _activity.Header = $"{_message.ActivityCount} engineering actions · {_message.Latest}";
-        if (!_activity.IsExpanded) return;
+        if (_activity == null || _message == null || _details == null || _activityLabel == null || _activityChevron == null) return;
+        _activityLabel.Text = $"{_message.ActivityCount} actions · {_message.Latest}";
+        _activityChevron.Glyph = _message.ActivityExpanded ? "\uE70D" : "\uE76C";
+        AutomationProperties.SetName(_activity, (_message.ActivityExpanded ? "Hide" : "Show") + " engineering actions. " + _activityLabel.Text);
+        _details.Visibility = _message.ActivityExpanded ? Visibility.Visible : Visibility.Collapsed;
         _details.Children.Clear();
+        if (!_message.ActivityExpanded) return;
         if (_message.ActivityCount > _message.Activity.Count)
             _details.Children.Add(Plain("Showing the most recent 100 summaries."));
         foreach (var line in _message.Activity) _details.Children.Add(Plain(line, 13));
+    }
+    internal static TextBlock Metadata(string text)
+    {
+        var block = Plain(text, 13);
+        block.Style = (Style)Application.Current.Resources["ConversationMetadataStyle"];
+        return block;
     }
     internal static TextBlock Plain(string text, double size = 15) => new()
     { Text = text, FontSize = size, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, LineHeight = size * 1.45 };
@@ -168,7 +210,7 @@ internal static class NativeMarkdown
         switch (block)
         {
             case HeadingBlock heading:
-                var title = InlineText(heading.Inline); title.FontSize = heading.Level <= 2 ? 22 : 18;
+                var title = InlineText(heading.Inline); title.FontSize = heading.Level == 1 ? 22 : heading.Level == 2 ? 18 : 16;
                 title.FontWeight = FontWeights.SemiBold; panel.Children.Add(title); break;
             case ParagraphBlock paragraph:
                 panel.Children.Add(InlineText(paragraph.Inline)); break;
@@ -203,7 +245,7 @@ internal static class NativeMarkdown
                         Grid.SetRow(cell, i); Grid.SetColumn(cell, j); grid.Children.Add(cell);
                     }
                 }
-                panel.Children.Add(Card(new ScrollViewer { Content = grid, HorizontalScrollMode = ScrollMode.Enabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollMode = ScrollMode.Disabled })); break;
+                panel.Children.Add(new ScrollViewer { Content = grid, HorizontalScrollMode = ScrollMode.Enabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollMode = ScrollMode.Disabled }); break;
             case ListBlock list:
                 int index = 1;
                 if (list.IsOrdered && int.TryParse(list.OrderedStart, out int start)) index = start;
@@ -222,7 +264,7 @@ internal static class NativeMarkdown
                 var quoted = new StackPanel { Spacing = 6 };
                 foreach (var child in quote) AddBlock(quoted, child, source, depth + 1);
                 panel.Children.Add(Card(quoted)); break;
-            case ThematicBreakBlock: panel.Children.Add(new Border { Height = 1, Style = (Style)Application.Current.Resources["EngineeringCardStyle"], BorderThickness = new Thickness(0, 0, 0, 1) }); break;
+            case ThematicBreakBlock: panel.Children.Add(new Border { Height = 1, Padding = new Thickness(0), Style = (Style)Application.Current.Resources["EngineeringCardStyle"], BorderThickness = new Thickness(0, 0, 0, 1) }); break;
             default: panel.Children.Add(ConversationMessageView.Plain(Raw(block, source))); break;
         }
     }

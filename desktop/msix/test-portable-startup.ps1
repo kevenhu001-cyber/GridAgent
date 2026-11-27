@@ -17,7 +17,7 @@ try {
         $process = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru
     }
     $null = $process.Handle
-    $deadline = (Get-Date).AddSeconds(45)
+    $deadline = (Get-Date).AddSeconds($(if ($UiOnly) { 100 } else { 45 }))
     do {
         $process.Refresh()
         if ($process.HasExited) { throw "Portable GridAgent exited before its main window (exit $($process.ExitCode))." }
@@ -30,7 +30,19 @@ try {
             foreach ($stage in @("application.initialize.complete", "window.xaml.complete", "window.construct.complete", "window.activate.complete", "window.loaded")) {
                 if (!$stages.Contains($stage)) { throw "Missing startup milestone: $stage" }
             }
-            if ($stages -match 'application.unhandled|application.initialize.failed|launch.failed') { throw "Managed startup exception recorded." }
+            if ($stages -match 'application.unhandled|application.initialize.failed|launch.failed|ui.smoke.failed') { throw "Managed UI exception recorded." }
+            if ($UiOnly) {
+                if (!$stages.Contains("ui.smoke.complete")) { continue }
+                foreach ($page in @("chat", "tasks", "models", "runs", "studies", "tools", "plugins", "knowledge", "settings")) {
+                    if (!$stages.Contains("ui.page.$page")) { throw "Missing native page smoke milestone: $page" }
+                }
+                foreach ($view in @("chart", "heatmap", "surface", "topology", "table")) {
+                    if (!$stages.Contains("ui.viewer.$view")) { throw "Missing scientific viewer milestone: $view" }
+                }
+                $snapshots = @(Get-ChildItem (Join-Path $root "ui-snapshots") -Filter "*.png" -File -ErrorAction SilentlyContinue | Where-Object Length -gt 0)
+                Write-Host "Native page and scientific viewer smoke passed; captured $($snapshots.Count) XAML snapshots."
+                if ($snapshots.Count -eq 0) { Write-Warning "Snapshot readback unavailable; visual review remains pending." }
+            }
             Write-Host "Portable GridAgent XAML loaded, window activated and remained responsive."
             return
         }

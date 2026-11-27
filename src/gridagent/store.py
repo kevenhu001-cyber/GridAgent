@@ -60,8 +60,14 @@ class ResearchStore:
     def sessions(self):
         with self.connect() as db:
             return [dict(row) for row in db.execute(
-                """SELECT s.*, (SELECT COUNT(*) FROM tasks t WHERE t.session_id=s.id) AS tasks
-                   FROM sessions s ORDER BY s.created_at DESC, s.id"""
+                """SELECT s.id, s.created_at,
+                          CASE WHEN s.title='New research session' THEN COALESCE(
+                            (SELECT substr(trim(replace(replace(t.prompt, char(10), ' '), char(13), ' ')),1,80)
+                             FROM tasks t WHERE t.session_id=s.id ORDER BY t.created_at,t.id LIMIT 1),
+                            s.title) ELSE s.title END AS title,
+                          (SELECT COUNT(*) FROM tasks t WHERE t.session_id=s.id) AS tasks
+                   FROM sessions s ORDER BY COALESCE(
+                     (SELECT MAX(t.created_at) FROM tasks t WHERE t.session_id=s.id),s.created_at) DESC, s.id"""
             )]
 
     def require_session(self, sid):
@@ -93,7 +99,7 @@ class ResearchStore:
                                    (isinstance(block, dict) and block.get("type") == "text")]
             safe.append(item)
         payload = {"messages": safe}
-        for key in ("used", "calls", "rounds", "model_metrics"):
+        for key in ("used", "calls", "rounds", "model_metrics", "context_metrics"):
             if key in update:
                 payload[key] = update[key]
         with self.connect() as db:
@@ -116,6 +122,42 @@ class ResearchStore:
         with self.connect() as db:
             rows = list(db.execute("SELECT * FROM events WHERE task_id=? ORDER BY id", (tid,)))
         return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+
+    def session_evidence(self, sid, task_id=None, event_id=None, offset=0, limit=8000):
+        """Read bounded public audit data, scoped to the active session."""
+        self.require_session(sid)
+        if not 0 <= offset <= 10_000_000 or not 1 <= limit <= 12000:
+            raise ValueError("Invalid evidence pagination")
+        with self.connect() as db:
+            if task_id is None:
+                if event_id is not None:
+                    raise ValueError("Select a task before requesting an event")
+                rows = db.execute(
+                    "SELECT id,status,created_at,substr(prompt,1,500) AS prompt "
+                    "FROM tasks WHERE session_id=? ORDER BY created_at DESC,id LIMIT 21 OFFSET ?",
+                    (sid, offset)).fetchall()
+                return {"status": "ok", "tasks": [dict(row) for row in rows[:20]],
+                        "next_offset": offset+20 if len(rows) > 20 else None}
+            task = db.execute("SELECT * FROM tasks WHERE session_id=? AND id=?", (sid, task_id)).fetchone()
+            if task is None:
+                raise ValueError("Task is not in the active session")
+            if event_id is None:
+                rows = db.execute(
+                    "SELECT id,node,created_at FROM events WHERE task_id=? ORDER BY id LIMIT 51 OFFSET ?",
+                    (task_id, offset)).fetchall()
+                return {"status": "ok", "task_id": task_id, "task_status": task["status"],
+                        "prompt_preview": task["prompt"][:2000], "error": task["error"],
+                        "events": [dict(row) for row in rows[:50]],
+                        "next_offset": offset+50 if len(rows) > 50 else None}
+            row = db.execute("SELECT payload,node FROM events WHERE id=? AND task_id=?",
+                             (event_id, task_id)).fetchone()
+            if row is None:
+                raise ValueError("Event is not in the selected task")
+            raw = row["payload"]
+            return {"status": "ok", "task_id": task_id, "event_id": event_id, "node": row["node"],
+                    "text": raw[offset:offset+limit],
+                    "next_offset": offset+limit if offset+limit < len(raw) else None,
+                    "scope": "historical public audit data; not a new execution"}
 
     def history(self, sid):
         from langchain_core.messages import HumanMessage, messages_from_dict

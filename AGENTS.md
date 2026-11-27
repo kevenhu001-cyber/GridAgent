@@ -20,6 +20,10 @@ The LLM owns requirements interpretation, assumptions and clarification, mathema
 - Keep numerical optimization, deterministic verifiers, caching, task recovery, parallel numerical execution and plugin management as reusable infrastructure. Domain rules, fixed candidate policies, trained rankers and predefined benchmarks are optional research tools or historical experiments, not primary agent intelligence.
 - Maintain native WinUI desktop, shared Python execution core, local-first project files and on-demand solver plugins. No second runtime in the UI; no unnecessary framework or mandatory agent-to-agent orchestration.
 
+## Mandatory UI design contract
+
+Follow [docs/ui-design.md](docs/ui-design.md) for every native UI change. ChatGPT-inspired neutral, minimal, content-first design is an owner requirement, not optional styling. Reuse native shared design resources; do not introduce inconsistent layouts, ornamental gradients or nested cards. Preserve accessibility and visible evidence provenance. Real visual acceptance requires Windows screenshots and interaction checks; do not claim fidelity based only on source code.
+
 ## Review and implementation discipline
 
 Before opening or merging a PR, ask: does this increase the LLM's ability to solve an engineering problem that the developers did not anticipate? Prefer reusable tools and safe native-library access over adding a hardcoded domain procedure. If a solver-specific adapter is useful, justify its scope and show that it does not block general code execution.

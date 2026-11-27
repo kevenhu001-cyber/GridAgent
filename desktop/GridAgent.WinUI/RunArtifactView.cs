@@ -48,9 +48,8 @@ internal static class RunArtifactView
         var open = new Button { Content = "Open simulation result" };
         open.Click += (_, _) => message.OpenRun?.Invoke(artifact.Id);
         actions.Children.Add(open); panel.Children.Add(actions);
-        panel.Children.Add(ConversationMessageView.Plain("Run " + artifact.Id[..8], 12));
-        return new Border { Style = (Style)Application.Current.Resources["EngineeringCardStyle"], Padding = new Thickness(16),
-            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12), Child = panel };
+        panel.Children.Add(ConversationMessageView.Metadata("Run " + artifact.Id[..8]));
+        return new Border { Style = (Style)Application.Current.Resources["EngineeringCardStyle"], Child = panel };
     }
 
     private static UIElement Preview(RunPreview data)
@@ -67,9 +66,9 @@ internal static class RunArtifactView
             double xmin = data.X.Min(), xmax = data.X.Max(), ymin = data.Y.Min(), ymax = data.Y.Max();
             double dx = xmax == xmin ? 1 : xmax - xmin, dy = ymax == ymin ? 1 : ymax - ymin;
             if (!double.IsFinite(dx) || !double.IsFinite(dy)) return;
-            var brush = new SolidColorBrush(canvas.ActualTheme == ElementTheme.Dark ? Microsoft.UI.Colors.LightSkyBlue : Microsoft.UI.Colors.RoyalBlue);
+            var brush = new SolidColorBrush(ScientificVisualStyle.Series(canvas.ActualTheme, 0));
             Point Map(int i) => new(12 + (data.X[i] - xmin) / dx * w, 10 + (ymax - data.Y[i]) / dy * h);
-            var axis = new Line { X1 = 12, X2 = w + 12, Y1 = h + 10, Y2 = h + 10, Stroke = new SolidColorBrush(Microsoft.UI.Colors.Gray) };
+            var axis = new Line { X1 = 12, X2 = w + 12, Y1 = h + 10, Y2 = h + 10, Stroke = new SolidColorBrush(ScientificVisualStyle.Gridline) };
             canvas.Children.Add(axis);
             if (data.Scatter)
             {

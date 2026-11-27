@@ -8,12 +8,13 @@ internal sealed class ConversationState
 {
     private readonly ObservableCollection<ConversationMessage> _items = new();
     private readonly Dictionary<string, ConversationMessage> _artifacts = new(StringComparer.Ordinal);
+    private readonly HashSet<(string, string, string)> _scientificCharts = new();
     private ConversationMessage? _activity, _stream, _research;
     public ReadOnlyObservableCollection<ConversationMessage> Messages { get; }
     public ConversationState() => Messages = new(_items);
     public void Clear()
     {
-        _items.Clear(); _artifacts.Clear(); _activity = _stream = _research = null;
+        _items.Clear(); _artifacts.Clear(); _scientificCharts.Clear(); _activity = _stream = _research = null;
     }
     public void BeginOperation() { _research = null; _activity = null; }
     public void Append(string role, string text)
@@ -79,6 +80,12 @@ internal sealed class ConversationState
         _artifacts.Add(artifact.Id, item);
         _items.Add(item);
         _activity = null;
+    }
+    public void ScientificChart(ScientificChartArtifact chart, Action<ScientificChartArtifact> open)
+    {
+        if (!_scientificCharts.Add((chart.RunId, chart.Path, chart.Sha256))) return;
+        _activity = null;
+        _items.Add(new ConversationMessage("Scientific chart", "") { ScientificChart = chart, OpenScientificChart = open });
     }
     public void Preview(RunPreview preview)
     {

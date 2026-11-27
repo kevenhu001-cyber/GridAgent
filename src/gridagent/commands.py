@@ -13,7 +13,39 @@ def workspace_command(root, command, args, *, model_factory=None):
     def create_model(*, settings=None):
         return model_factory(settings=settings) if model_factory else model_from_env(root, settings=settings)
 
-    if command == "research" or command.startswith("research-"):
+    if command == "scientific-execution" and len(args) == 1:
+        from .scientific_workspace import enabled, set_enabled
+
+        if args[0] not in {"enable", "disable", "status"}:
+            raise ValueError("Select enable, disable or status")
+        if args[0] != "status":
+            set_enabled(root, args[0] == "enable")
+        yield "General scientific project and isolated Python authorization: " + ("enabled" if enabled(root) else "disabled")
+    elif command in {"scientific-runs", "scientific-status", "scientific-recover"}:
+        import json
+
+        from filelock import Timeout
+
+        from .scientific_runtime import recover
+        from .scientific_workspace import list_scientific_runs, run_status
+
+        try:
+            if command == "scientific-runs" and not args:
+                result = list_scientific_runs(root)
+            elif command == "scientific-status" and len(args) == 1:
+                result = run_status(root, args[0])
+            elif command == "scientific-recover" and not args:
+                result = recover(root)
+            else:
+                raise ValueError("Invalid scientific run command")
+        except Timeout as exc:
+            raise ValueError("Scientific execution is still active; request cancellation first") from exc
+        yield json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False)
+    elif command == "scientific-cancel" and len(args) == 1:
+        from .scientific_workspace import cancel
+
+        yield cancel(root, args[0])
+    elif command == "research" or command.startswith("research-"):
         from .research import format_status, task_command
 
         for row in task_command(root, command, args, model_factory=create_model):

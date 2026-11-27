@@ -16,6 +16,7 @@ from .commands import workspace_command
 from .store import recorded_task
 
 WORKSPACE_COMMANDS = {
+    "/scientific-execution", "/scientific-cancel", "/scientific-runs", "/scientific-status", "/scientific-recover",
     "/runs", "/study", "/wave", "/study-wave", "/eigen", "/sweep", "/resume-dsr", "/optimize", "/andes-batch",
     "/paper-rank", "/paper-kpi", "/paper-edit", "/paper-dmq", "/paper-dsr", "/paper-mitigate", "/paper-trials",
     "/models", "/import-model", "/knowledge", "/import-knowledge", "/backends", "/native-program", "/native-table",
@@ -282,6 +283,8 @@ class GridApp(App):
             chat.write(Text("/adaptive-ac-experiment PATH · /adaptive-ac-experiment-resume ID"))
             chat.write(Text("/ac-evidence-repair PATH · /ac-evidence-repair-resume ID"))
             chat.write(Text("/remember-ac-repair ID · /search-ac-experience ID"))
+            chat.write(Text("/scientific-execution enable|disable|status · /scientific-cancel RUN_ID"))
+            chat.write(Text("/scientific-runs · /scientific-status RUN_ID · /scientific-recover"))
             chat.write(Text("/research-python MANIFEST · /research-sandbox enable|disable|status · "
                             "/research-benchmark [TASK [MODE]] · /andes-batch PATH"))
             chat.write(Text("/new · new session | /sessions · list | /open ID · reopen | /dsr PATH · screen faults | /dmq · model review | /studies · list | /runs | /study ID | /wave ID CHANNEL | /study-wave ID PATH CHANNEL | /eigen | /sweep BUS DURATIONS | /resume-dsr ID | /optimize [BUDGET] | /paper-dmq PROFILE | /paper-dsr PROFILE | /paper-mitigate PROFILE | /paper-trials TASK COUNT [PROFILE] | /modeling-benchmark TASK | /model-repair MANIFEST | /experience | /plugins | /plugin-install ID | /plugin-remove ID | /drafts | /backends | /native-program JSON | /native-table RUN TABLE | /knowledge | /import-knowledge JSON | /models | /import-model PATH | /paper-rank | /paper-kpi CSV CLEARING_S | /paper-edit Kqp Kqi Kvp Kvi | Ctrl+E Studies | Ctrl+Q · quit"))
@@ -371,7 +374,8 @@ class GridApp(App):
             from .simulator import AndesSimulator
 
             graph = build_agent(self._configured_model(), AndesSimulator(self.workspace / "runs"),
-                                budget=self.budget, workspace=self.workspace)
+                                budget=self.budget, workspace=self.workspace,
+                                session_store=self.store, session_id=self.sid)
             for event in recorded_task(graph, self.store, self.sid, question):
                 for node, update in event.items():
                     if "used" in update:

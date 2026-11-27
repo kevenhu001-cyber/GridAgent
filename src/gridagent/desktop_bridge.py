@@ -41,7 +41,19 @@ def dispatch(root, request, emit):
         emit("tool", summary)
         if request.get("presentation") == 1:
             from .artifact_presentation import artifact_from_tool
+            from .scientific_views import view_from_tool
+            from .scientific_visualization import chart_from_tool
 
+            if message.name == "present_scientific_view":
+                view = view_from_tool(root, message)
+                if view is not None:
+                    emit("scientific_view", view)
+                return
+            if message.name == "present_scientific_chart":
+                chart = chart_from_tool(root, message)
+                if chart is not None:
+                    emit("scientific_chart", chart)
+                return
             artifact = artifact_from_tool(root, message)
             if artifact is not None:
                 emit("artifact", artifact)
@@ -67,6 +79,14 @@ def dispatch(root, request, emit):
         from .plugins import status
 
         emit("plugins", status())
+    elif action == "knowledge-packs":
+        from .knowledge_store import list_packs
+
+        emit("knowledge_packs", list_packs(root))
+    elif action == "knowledge-pack":
+        from .knowledge_store import pack_page
+
+        emit("knowledge_pack", pack_page(root, request["id"], request.get("offset", 0)))
     elif action in {"model-settings", "model-save", "model-test"}:
         from .model_settings import ModelSettings, check_connection, save_settings, stored_settings
 
@@ -116,8 +136,9 @@ def dispatch(root, request, emit):
         budget = int(request.get("budget", 3))
         streaming = request.get("stream", False) is True
         on_delta = (lambda text: emit("assistant_delta", text)) if streaming else None
-        graph = build_agent(model, AndesSimulator(root / "runs"), budget=budget, workspace=root, on_delta=on_delta)
         sid = store.require_session(request["session"]) if request.get("session") else store.create_session()
+        graph = build_agent(model, AndesSimulator(root / "runs"), budget=budget, workspace=root, on_delta=on_delta,
+                            session_store=store, session_id=sid)
         emit("session", sid)
         prompt = request["prompt"].strip()
         if not prompt:
@@ -128,13 +149,28 @@ def dispatch(root, request, emit):
                     emit("status", f"{update['used']}/{budget} simulation attempts")
                 for msg in update.get("messages", []):
                     if node == "tools":
-                        emit("tool", tool_summary(msg))
+                        if msg.name in {"present_scientific_chart", "present_scientific_view"}:
+                            tool_event(msg, tool_summary(msg))
+                        else:
+                            emit("tool", tool_summary(msg))
                     elif streaming:
                         # The complete stored message is authoritative; reconcile the preview even if empty.
                         emit("assistant_end", text_content(msg))
                     elif text_content(msg):
                         emit("assistant", text_content(msg))
         refresh()
+    elif action == "scientific-view-open":
+        from .scientific_views import view_artifact
+
+        descriptor, view = view_artifact(root, request["run"], request["path"], request["sha256"])
+        emit("scientific_view_data", {**view, "run_id": descriptor["run_id"],
+                                      "verification": descriptor["verification"]})
+    elif action == "scientific-chart-open":
+        from .scientific_visualization import chart_artifact
+
+        descriptor, chart = chart_artifact(root, request["run"], request["path"], request["sha256"])
+        chart["title"] += " · unverified script output · " + descriptor["run_id"][:8]
+        emit("analysis_charts", [chart])
     elif action == "artifact-preview":
         from .artifact_presentation import preview_run
 
@@ -186,8 +222,11 @@ def dispatch(root, request, emit):
     elif action == "local":
         from .commands import workspace_command
 
-        for line in workspace_command(root, request["command"], request.get("args", [])):
-            emit("result", line)
+        command = request["command"]
+        destination = ("workbench_result" if command.startswith("plugin-") or command in {"import-knowledge", "register-ngspice"}
+                       else "result")
+        for line in workspace_command(root, command, request.get("args", [])):
+            emit(destination, line)
         refresh()
     elif action == "dmq":
         from .agent import model_from_env

@@ -16,17 +16,13 @@ namespace GridAgent.Windows;
 // One native Direct2D drawing surface instead of one XAML visual per sample.
 internal sealed class ScientificPlotView : Grid
 {
-    private static readonly Color[] Palette =
-    {
-        Microsoft.UI.Colors.DodgerBlue, Microsoft.UI.Colors.OrangeRed, Microsoft.UI.Colors.MediumSeaGreen,
-        Microsoft.UI.Colors.MediumOrchid, Microsoft.UI.Colors.Goldenrod, Microsoft.UI.Colors.Teal
-    };
     private readonly ChartData[] _charts;
     private readonly CanvasControl _canvas = new() { MinWidth = 300, MinHeight = 220 };
     private readonly ComboBox _selector;
-    private readonly TextBlock _summary = new() { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
+    private readonly TextBlock _summary = ConversationMessageView.Metadata("");
     private readonly TextBlock _cursor = new() { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, FontSize = 13 };
-    private readonly StackPanel _legend = new() { Spacing = 4 };
+    private readonly StackPanel _legend = new() { Spacing = 2 };
+    private readonly List<Border> _legendSwatches = new();
     private readonly ScrollViewer _scroll;
     private TraceData[] _traces = Array.Empty<TraceData>();
     private ChartData? _chart;
@@ -70,16 +66,20 @@ internal sealed class ScientificPlotView : Grid
         RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        _selector = new ComboBox { ItemsSource = charts.Select(c => c.Title).ToArray(), Header = "Scientific chart", HorizontalAlignment = HorizontalAlignment.Stretch };
-        Children.Add(_selector);
-        var panel = new StackPanel { Spacing = 6 };
+        _selector = new ComboBox { ItemsSource = charts.Select(c => c.Title).ToArray(), HorizontalAlignment = HorizontalAlignment.Stretch };
+        var header = new StackPanel { Spacing = 8 };
+        header.Children.Add(ScientificVisualStyle.Title("Scientific results"));
+        AutomationProperties.SetName(_selector, "Select scientific chart");
+        header.Children.Add(_selector);
+        Children.Add(header);
+        var panel = new StackPanel { Spacing = 4 };
         panel.Children.Add(_summary); panel.Children.Add(_cursor);
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        var reset = new Button { Content = "Reset zoom" };
-        var copy = new Button { Content = "Copy plotted CSV" };
+        var reset = ScientificVisualStyle.Action("Reset zoom", "\uE72C");
+        var copy = ScientificVisualStyle.Action("Copy visible plotted CSV", "\uE8C8");
         actions.Children.Add(reset); actions.Children.Add(copy);
         panel.Children.Add(actions);
-        var legendExpander = new Expander { Header = "Series visibility", Content = new ScrollViewer { Content = _legend, MaxHeight = 140 }, IsExpanded = false };
+        var legendExpander = new Expander { Header = "Series", Content = new ScrollViewer { Content = _legend, MaxHeight = 140 }, IsExpanded = false };
         panel.Children.Add(legendExpander);
         SetRow(panel, 1); Children.Add(panel);
         _scroll = new ScrollViewer { Content = _canvas, ZoomMode = ZoomMode.Enabled, MinZoomFactor = 1, MaxZoomFactor = 8,
@@ -102,13 +102,18 @@ internal sealed class ScientificPlotView : Grid
                 t.Nearest(x) is { } s ? $"{t.Source.Name}: {s.X:G6}, {s.Y:G6}" : "").Where(s => s.Length > 0));
             _canvas.Invalidate();
         };
-        _canvas.PointerExited += (_, _) => { _pointerX = null; _canvas.Invalidate(); };
+        _canvas.PointerExited += (_, _) => { _pointerX = null; _cursor.Text = "Move the pointer over the plot to inspect nearby samples."; _canvas.Invalidate(); };
         _scroll.SizeChanged += (_, _) =>
         {
             _canvas.Width = Math.Max(300, _scroll.ActualWidth - 18);
             _canvas.Height = Math.Max(220, _scroll.ActualHeight - 18);
         };
-        ActualThemeChanged += (_, _) => _canvas.Invalidate();
+        ActualThemeChanged += (_, _) =>
+        {
+            for (int i = 0; i < _legendSwatches.Count; i++)
+                _legendSwatches[i].Background = new SolidColorBrush(ScientificVisualStyle.Series(ActualTheme, i));
+            _canvas.Invalidate();
+        };
         reset.Click += (_, _) => _scroll.ChangeView(0, 0, 1);
         copy.Click += (_, _) => CopyCsv();
         _selector.SelectionChanged += (_, _) => SelectChart();
@@ -121,10 +126,17 @@ internal sealed class ScientificPlotView : Grid
         _chart = _charts[_selector.SelectedIndex];
         _traces = _chart.Traces.Select(t => new TraceData(t)).ToArray();
         _legend.Children.Clear();
+        _legendSwatches.Clear();
         for (int i = 0; i < _traces.Length; i++)
         {
             var trace = _traces[i];
-            var check = new CheckBox { Content = trace.Source.Name, IsChecked = true, Foreground = new SolidColorBrush(Palette[i % Palette.Length]) };
+            var swatch = new Border { Width = 12, Height = 4, CornerRadius = new CornerRadius(2),
+                Background = new SolidColorBrush(ScientificVisualStyle.Series(ActualTheme, i)), VerticalAlignment = VerticalAlignment.Center };
+            _legendSwatches.Add(swatch);
+            var label = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            label.Children.Add(swatch); label.Children.Add(ConversationMessageView.Plain(trace.Source.Name, 13));
+            var check = new CheckBox { Content = label, IsChecked = true };
+            AutomationProperties.SetName(check, "Show " + trace.Source.Name);
             check.Checked += (_, _) => { trace.Visible = true; UpdateBounds(); };
             check.Unchecked += (_, _) => { trace.Visible = false; UpdateBounds(); };
             _legend.Children.Add(check);
@@ -145,8 +157,8 @@ internal sealed class ScientificPlotView : Grid
                 _ymin = Math.Min(_ymin, y); _ymax = Math.Max(_ymax, y);
             }
         if (!any) { _xmin = _ymin = 0; _xmax = _ymax = 1; }
-        if (_xmin == _xmax) { _xmin -= 1; _xmax += 1; }
-        if (_ymin == _ymax) { _ymin -= 1; _ymax += 1; }
+        if (_xmin == _xmax) { var pad = Math.Max(1, Math.Abs(_xmin) * 0.01); _xmin -= pad; _xmax += pad; }
+        if (_ymin == _ymax) { var pad = Math.Max(1, Math.Abs(_ymin) * 0.01); _ymin -= pad; _ymax += pad; }
         _summary.Text = any && _chart != null ?
             $"{_chart.XLabel}: {_xmin:G5} – {_xmax:G5}   ·   {_chart.YLabel}: {_ymin:G5} – {_ymax:G5}" :
             "No visible finite data.";
@@ -159,9 +171,8 @@ internal sealed class ScientificPlotView : Grid
         float w = (float)sender.ActualWidth - Left - Right, h = (float)sender.ActualHeight - Top - Bottom;
         if (w <= 0 || h <= 0) return;
         var ds = args.DrawingSession;
-        var dark = ActualTheme == ElementTheme.Dark;
-        var ink = dark ? Microsoft.UI.Colors.White : Microsoft.UI.Colors.Black;
-        var grid = Color.FromArgb(65, 128, 128, 128);
+        var ink = ScientificVisualStyle.Ink(ActualTheme);
+        var grid = ScientificVisualStyle.Gridline;
         using var format = new CanvasTextFormat { FontFamily = "Segoe UI", FontSize = 11 };
         for (int i = 0; i <= 5; i++)
         {
@@ -181,7 +192,7 @@ internal sealed class ScientificPlotView : Grid
         {
             var trace = _traces[i];
             if (!trace.Visible) continue;
-            var color = Palette[i % Palette.Length];
+            var color = ScientificVisualStyle.Series(ActualTheme, i);
             if (_chart.Scatter)
             {
                 foreach (var (x, y) in trace.Sorted) ds.FillCircle(Map(x, y), 2.4f, color);

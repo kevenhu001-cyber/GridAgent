@@ -49,6 +49,13 @@ def main():
                           help="List public AC benchmarks or run TASK [reference|single|multi]")
     research.add_argument("--research-python", metavar="MANIFEST", help="Run verified sandbox Python research")
     research.add_argument("--research-sandbox", choices=("enable", "disable", "status"))
+    research.add_argument("--scientific-execution", choices=("enable", "disable", "status"),
+                          help="Authorize general project writes and isolated model-authored Python")
+    research.add_argument("--scientific-cancel", metavar="RUN_ID")
+    research.add_argument("--scientific-runs", action="store_true")
+    research.add_argument("--scientific-status", metavar="RUN_ID")
+    research.add_argument("--scientific-recover", action="store_true",
+                          help="Explicitly stop the recorded unresolved sandbox session; never rerun code")
     research.add_argument("--research-compare", nargs="+", metavar="ARG",
                           help="TASK REPEATS MODEL MODEL [MODEL ...] [memory TRAINING_JSON]")
     research.add_argument("--research-experience", nargs="?", const="", metavar="NEW_JSON",
@@ -142,6 +149,11 @@ def main():
         ("research-benchmark", args.research_benchmark),
         ("research-python", [args.research_python] if args.research_python else None),
         ("research-sandbox", [args.research_sandbox] if args.research_sandbox else None),
+        ("scientific-execution", [args.scientific_execution] if args.scientific_execution else None),
+        ("scientific-cancel", [args.scientific_cancel] if args.scientific_cancel else None),
+        ("scientific-runs", [] if args.scientific_runs else None),
+        ("scientific-status", [args.scientific_status] if args.scientific_status else None),
+        ("scientific-recover", [] if args.scientific_recover else None),
         ("research-compare", args.research_compare),
         ("research-experience", [args.research_experience] if args.research_experience else
          [] if args.research_experience is not None else None),
@@ -238,7 +250,8 @@ def main():
                 console.print(format_update(node, value), markup=False)
             return
         sid = store.require_session(args.session) if args.session else store.create_session()
-        graph = build_agent(model, simulator, budget=args.budget, workspace=args.workspace)
+        graph = build_agent(model, simulator, budget=args.budget, workspace=args.workspace,
+                            session_store=store, session_id=sid)
     except ValueError as exc:
         if args.ask or args.dmq or args.dsr:
             parser.error(str(exc))

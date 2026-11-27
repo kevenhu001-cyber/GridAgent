@@ -13,9 +13,18 @@ public partial class MainWindow
     {
         Notice.Message = message; Notice.Severity = severity; Notice.IsOpen = true;
     }
+    private void ReportOperationError(string message)
+    {
+        if (_conversationOperation) Append(message, "Error");
+        else Notify(message, InfoBarSeverity.Error);
+    }
     private void UpdateModelCaption() => ConversationModel.Text = string.IsNullOrWhiteSpace(ModelName.Text) ? "Engineering assistant" : ModelName.Text.Trim();
-    private void OpenConversationHistory(object sender, RoutedEventArgs e) =>
-        Navigation.SelectedItem = Navigation.MenuItems.OfType<NavigationViewItem>().First(i => (string)i.Tag == "studies");
+    private void OpenConversationHistory(object sender, RoutedEventArgs e)
+    {
+        Navigation.SelectedItem = Navigation.MenuItems.OfType<NavigationViewItem>().First(i => (string?)i.Tag == "studies");
+        StudiesTabs.SelectedItem = ConversationsTab;
+        DispatcherQueue.TryEnqueue(() => SessionSearch.Focus(FocusState.Programmatic));
+    }
     private void UseSuggestion(object sender, RoutedEventArgs e)
     {
         if (sender is Button button && button.Content is string text) { Prompt.Text = text; Prompt.Focus(FocusState.Programmatic); }
@@ -84,6 +93,11 @@ public partial class MainWindow
     {
         _conversation.Artifact(artifact, OpenArtifactRun, LoadArtifactPreview);
         UpdateConversationViewport();
+    }
+    private async void OpenScientificChart(ScientificChartArtifact chart)
+    {
+        if (_busy || WorkspaceChanged()) { Notify("Wait for the current operation before opening a chart.", InfoBarSeverity.Warning); return; }
+        await Execute(new { action = chart.ViewKind == "chart" ? "scientific-chart-open" : "scientific-view-open", run = chart.RunId, path = chart.Path, sha256 = chart.Sha256 });
     }
     private void AddTool(string label) { _conversation.Activity(label); UpdateConversationViewport(); }
 }

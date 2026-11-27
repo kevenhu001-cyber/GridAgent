@@ -114,3 +114,23 @@ assert "numpy" not in sys.modules
     result = subprocess.run([sys.executable, "-c", code, str(tmp_path)], check=False, env=env,
                             capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
+
+
+def test_native_knowledge_catalog_and_detail_without_model(tmp_path):
+    import json
+
+    from gridagent.knowledge_store import import_pack
+
+    root = tmp_path / "workspace"
+    pack = tmp_path / "references.json"
+    pack.write_text(json.dumps({"title": "API reference", "entries": [{
+        "kind": "function", "function": "solve", "description": "Solver API",
+        "source": "Manual", "version": "1.2"}]}), encoding="utf-8")
+    identifier, _ = import_pack(root, pack)
+    events = []
+    dispatch(root, {"action": "knowledge-packs"}, lambda kind, data: events.append((kind, data)))
+    assert events == [("knowledge_packs", [{"id": identifier, "title": "API reference", "entries": 1}])]
+    events.clear()
+    dispatch(root, {"action": "knowledge-pack", "id": identifier}, lambda kind, data: events.append((kind, data)))
+    assert len(events) == 1 and events[0][0] == "knowledge_pack"
+    assert events[0][1]["entries"][0]["version"] == "1.2"

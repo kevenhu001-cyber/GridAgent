@@ -1,0 +1,66 @@
+# LLM-first scientific workspace — initial preview
+
+This implements the first generic project and execution tools in the existing LangGraph chat loop. It does not implement a new research policy. The LLM creates Python files, chooses native library APIs, runs code, reads actual logs and artifacts, and revises its files. Existing typed solvers, benchmarks, evidence and optional plugins remain available.
+
+User opt-in: Windows Settings → Scientific execution…, CLI `gridagent --scientific-execution enable` or TUI `/scientific-execution enable`. This separate grant is disabled by default and does not inherit the specialized verified AC script grant. CLI status/disable and cancellation by run ID are available. Only enable for a trusted research workspace.
+
+Tools: scientific_environment, list_project_files, read_project_file, write_project_file, execute_python, read_scientific_artifact. Project source persists in scientific-project/; overwrite requires the current content hash. Runs snapshot source in scientific-runs/ID/input/project, launch via the existing Windows Sandbox CLI prerequisites and bundled Python, and return separate output artifacts and a log tail. Use GRIDAGENT_OUTPUT_DIR for deliverables. Guest modifications of the project copy are not automatically merged into the host project. Native core libraries and up to four selected, metadata-compatible managed plugins per run are supported by read-only mappings; installed developer-host packages are not automatically exposed. No package installs or network calls by the agent.
+
+Security boundary: no host fallback, disabled network/clipboard/redirection, read-only runtime and inputs, per-run writable output, 4 GiB guest memory, 120-second execution deadline after startup, bounded ingestion and periodic output size checks, cancellation marker and grant revocation, safe relative names and artifact digests. The preview does not enforce hard CPU/process/disk quotas; a guest can temporarily exceed output limits before polling. Guest logs/exit markers are untrusted, not independent verification. Host crash cleanup and real Windows Sandbox end-to-end acceptance are outstanding. Do not consider the general sandbox production-ready. No automatic guest code execution on Linux or unsupported Windows editions.
+
+Future: real Windows acceptance, resource controls and crash recovery, persistent job inspection, binary artifact import/export, library introspection and docs, long-horizon budgets and scientific native visualization. Existing specialized workflows are not the default research policy.
+
+Project reads are paginated; the SHA-256 always identifies the whole source file. The LLM can use this fingerprint to revise code after inspecting real error output. Unit tests use an explicitly labeled fake runtime to validate the tool loop and do not demonstrate a real Windows Sandbox launch.
+
+## Run continuity and recovery
+
+The primary LLM can list and inspect previous scientific runs, apply exact hash-guarded source edits, and explicitly promote committed output files into the next project snapshot, including binary files within project quotas. Python arguments are serialized to a read-only JSON file rather than interpolated into the host command line. CLI and TUI expose scientific-runs, scientific-status RUN_ID and scientific-recover. Recovery is a user action, not an LLM tool: it attempts to stop only the recorded sandbox session, discards partial outputs and never relaunches code. A host-side active-session journal is written before sandbox startup. Failed shutdown or host interruption blocks new execution in the same workspace until confirmed stop; a failed recovery remains blocked. A session already stopped externally may need manual administrator review if the CLI cannot confirm stop. Hard CPU/process/disk quotas and real sandbox acceptance remain open; this is conservative crash handling, not proof of isolation.
+
+## Native API discovery
+
+`list_scientific_libraries` reads distribution names and versions from the mapped runtime and selected managed plugins, not the host's import environment. `inspect_native_api` imports and introspects a dotted module/symbol only inside a new authorized sandbox run; it returns the actual signature (where introspectable), docstring and public members as `api.json`. It consumes one execution attempt. It does not modify the persistent project and does not certify import or numerical correctness based on metadata alone. The result is untrusted reference data; consult official version-matched documentation when needed. Real sandbox integration remains to be tested.
+
+
+## Actionable tool failures and binary project inspection
+
+The primary chat loop returns structured `error_code`, bounded `reason` and advisory `next_action` for scientific tool exceptions. Missing files, stale source hashes, ambiguous edits, non-UTF-8 data, workspace contention and authorization/recovery failures can be distinguished without sending raw OS exception paths to the model. These are diagnostic hints only; the LLM decides how to revise its program. `inspect_project_file` returns a hash, byte count and UTF-8 readability hint for text or binary project files without deserializing or executing them. File permissions, quotas and exact revision checks still apply. Tool calls spend the normal tool budget; metadata inspection does not spend numerical execution budget. Scripted-model regression tests exercise recovery from stale hashes and binary reads; they do not establish real-model autonomy or Windows Sandbox acceptance.
+
+
+## Composing managed scientific libraries
+
+`execute_python`, `inspect_native_api` and `list_scientific_libraries` accept an ordered `plugin_ids` list (up to four first-party, user-installed managed plugins). The legacy singular `plugin` parameter remains supported; never supply both. A metadata inspection returns canonical distribution conflicts and declared import precedence. Multi-plugin execution refuses differing versions of the same distribution across the core and selected plugins before starting the sandbox. It does not install, upgrade, merge or copy dependencies. Plugin folders are independently read-only mapped and active generations are locked in sorted ID order during the execution attempt. Source files have first import precedence, followed by the selected plugin order and core. The manifest stores the selected plugin IDs, distribution inventory and conflicts. The singular parameter is retained for existing callers; project source now precedes plugin paths. A single plugin may still shadow differing core distribution versions, as before.
+
+This conservative metadata check is not a full dependency resolver, module namespace check, ABI test or proof of real solver interoperability. Equal distribution versions may still conflict at import or DLL loading time. The LLM may inspect actual API behavior in the sandbox or use separate runs with artifact promotion when incompatible. A process crash or unconfirmed sandbox stop may release plugin locks; do not change managed installations until explicit recovery. No host fallback, dependency installation or network grant is added. Tests use synthetic package metadata and a fake sandbox launch; real multi-library Windows acceptance remains pending.
+
+
+## Version-aware native documentation and static API discovery
+
+With scientific execution authorization, the LLM can call `search_native_documentation` for local reference summaries with an explicit distribution name and query. The selected managed distribution takes precedence over core metadata. Exact version matches are returned; other reference versions are listed separately without their text. Built-in summaries remain limited to the existing attributed manual references. Users may import additional JSON reference packs with an optional `backend` distribution tag, version, source, function and description. Existing packs retain their content IDs and legacy retrieval behavior.
+
+`inspect_installed_api_source` reads a bounded Python source file explicitly listed in the selected distribution's installed metadata (RECORD or equivalent). It parses lexical definitions, signatures and docstrings without importing or executing that package, returning the distribution version, source-relative path, line numbers and SHA-256. Module discovery returns top-level definitions; explicit symbols can follow lexical nested classes. Re-exported, generated, decorated, compiled and oversized APIs may be missing or differ at runtime. This is not actual import resolution (project code can shadow installed modules); verify inside the sandbox when necessary. No web access, dynamic package installation or numerical attempt is added. Treat retrieved content as reference data, not instructions.
+
+
+## Long-horizon context projection and evidence recall
+
+The primary agent projects older tool results when public conversation content and tool arguments exceed a soft 96,000-character target. It preserves all original user/assistant messages, tool call arguments, call IDs and four newest tool results. Older large tool results may be replaced in the model request only with marked excerpts and selected evidence fields. Full original public events remain in SQLite and graph state; no model-generated summary replaces them. This is not a hard token limit, and a large recent result, user message or code argument can exceed the target. Projection metrics are recorded with agent events.
+
+Normal CLI, TUI and WinUI chat binds `read_session_evidence` to the actual session, not a model-supplied session ID. It pages task lists, event indexes and original public event payloads, including failed or interrupted tasks; it cannot execute or resume them and spends only a tool-call attempt. Old incomplete exchanges are still excluded from automatic replay. This permits deliberate continuation after inspecting stored artifacts without automatically replaying side effects. Task budgets remain per user turn. Crash-safe automatic mid-task resume, context-window-aware hard token budgeting and cancellation across all model/solver calls remain pending.
+
+
+## General scientific visualization (native 2-D preview)
+
+An LLM-authored Python program can save calculated data in `GRIDAGENT_OUTPUT_DIR/response.chart.json`, using a data-only schema:
+```json
+{"schema":"gridagent.chart.v1","title":"Response","x_label":"Time (s)","y_label":"Voltage (V)","scatter":false,"series":[{"name":"Output","x":[0,1,2],"y":[0,0.63,0.86]}]}
+```
+This is an illustrative format example, not simulation evidence. The LLM chooses chart type (line or scatter), axes, units, traces and any explicit data reduction. Call `present_scientific_chart` with an actual successful run ID and committed relative path. The tool validates schema, finite coordinate ranges, up to six series and 12,000 total samples (1 MiB maximum); it does not consume a solver attempt. WinUI renders a native chat card with a user-initiated interactive Direct2D viewer (zoom, cursor values, series visibility and plotted CSV copying). The bridge reloads and hash-checks the artifact when presenting, replaying history or opening the viewer. No executable visualization code, HTML, arbitrary file paths or remote content enter the renderer. Source output is labeled unverified script output, not independent physical validation. The original chart file remains in the run. Native 3-D, heatmaps, topology editing, arbitrary raster/vector images and real Windows acceptance are separate milestones.
+
+
+## Scientific field, topology and table views
+
+Use `present_scientific_view` on a successful run's committed `.view.json` artifact. All views have `schema: "gridagent.view.v1"`, `kind` and `title`.
+- `heatmap` and `surface`: numeric `x` and `y` axes are ascending and evenly spaced; `z[j][i]` corresponds to y[j], x[i]. Supply x_label, y_label and value_label with units. Heatmaps allow up to 64×64 and display uniform sample cells; surface wireframes allow up to 32×32 and have a rotatable orthographic projection with independently normalized axes (not physical aspect ratio).
+- `topology`: nodes contain unique id, label and distinct normalized x/y positions in [0,1]; edges contain source/target IDs. Up to 100 nodes and 200 unique undirected links. The layout is supplied by the LLM's code, not a validated electrical schematic. Parallel edges, direction arrows and electrical device symbols are not supported yet.
+- `table`: columns are unique labels; rows contain text, finite real values, booleans or null. Up to 100 rows and 12 columns. Larger datasets should remain in full run artifacts; explicitly identify any selection or reduction.
+
+All views have a 1 MiB limit and reject unexpected fields. User opens a native viewer from a conversation card. The bridge rechecks the committed artifact fingerprint both at presentation/history replay and at opening, and labels all content unverified script output. Native table is scrollable; field and network views use Win2D zoom; surface adds an azimuth slider. There is no executable UI input or automatic model-derived engineering verdict. This is a bounded rendering preview, not a complete 3-D graphics engine or real Windows validation.
