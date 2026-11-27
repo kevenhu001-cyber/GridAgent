@@ -145,8 +145,8 @@ internal sealed class ScientificPlotView : Grid
                 _ymin = Math.Min(_ymin, y); _ymax = Math.Max(_ymax, y);
             }
         if (!any) { _xmin = _ymin = 0; _xmax = _ymax = 1; }
-        if (_xmin == _xmax) { _xmin -= 1; _xmax += 1; }
-        if (_ymin == _ymax) { _ymin -= 1; _ymax += 1; }
+        if (_xmin == _xmax) { var pad = Math.Max(1, Math.Abs(_xmin) * 0.01); _xmin -= pad; _xmax += pad; }
+        if (_ymin == _ymax) { var pad = Math.Max(1, Math.Abs(_ymin) * 0.01); _ymin -= pad; _ymax += pad; }
         _summary.Text = any && _chart != null ?
             $"{_chart.XLabel}: {_xmin:G5} – {_xmax:G5}   ·   {_chart.YLabel}: {_ymin:G5} – {_ymax:G5}" :
             "No visible finite data.";
