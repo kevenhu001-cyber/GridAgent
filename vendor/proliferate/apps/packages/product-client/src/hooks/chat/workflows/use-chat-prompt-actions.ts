@@ -164,6 +164,7 @@ export function useChatPromptActions(options?: { forceNewSession?: boolean }) {
       const workspace = workspaceCollections?.localWorkspaces.find(w=>w.id===selectedWorkspaceId);
       if (!workspace) return false;
       const selection = useSessionSelectionStore.getState();
+      if (selection.selectedWorkspaceId!==selectedWorkspaceId || (!forceNewSession && selection.activeSessionId!==activeSessionId)) return false;
       const nonce = selection.workspaceSelectionNonce;
       const version = selection.activeSessionVersion;
       const isCurrent = () => {

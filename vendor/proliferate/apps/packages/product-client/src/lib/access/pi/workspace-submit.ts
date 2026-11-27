@@ -3,6 +3,8 @@ import type { DesktopPiBridge, PiProvider } from "../../../host/desktop-bridge";
 import type { PromptAttachmentSnapshot } from "#product/domain/chats/composer/prompt-attachment-snapshot";
 import type { ModelSelectorSelection } from "#product/lib/domain/chat/models/model-selector-types";
 import { isWorkspaceDirectoryMissing } from "#product/lib/domain/workspaces/availability";
+import { removeSessionRecord } from "#product/stores/sessions/session-records";
+import { useSessionIntentStore } from "#product/stores/sessions/session-intent-store";
 import { canSendPiSession, openPiProductSession, closePiProductSession } from "./product-session";
 
 /** Existing composer launch seam. The caller owns its draft, selection guard,
@@ -30,13 +32,25 @@ export async function submitPiWorkspacePrompt(input:{
       selection:{provider:choice.kind as PiProvider,modelId:choice.modelId}});
     created=true;
   }
+  async function discardEmptySession(sessionId:string) {
+    await closePiProductSession(sessionId);
+    removeSessionRecord(sessionId);
+  }
   if (!input.isCurrent()) {
-    if(created) await closePiProductSession(id);
+    if(created) await discardEmptySession(id);
     throw new Error("Workspace or session changed before sending. Your draft is preserved.");
   }
   // Queue before activation; no prompt transport calls from the composer.
   try {await deps.enqueue(id,input.promptId);}
-  catch {if(created) await closePiProductSession(id); throw new Error("Could not enqueue the native prompt. Your draft is preserved.");}
+  catch {
+    // The retained enqueue workflow can throw after its synchronous store
+    // write. Never treat an already-enqueued prompt as unsent.
+    const intent=useSessionIntentStore.getState().entriesById[input.promptId];
+    if (intent?.kind!=="send_prompt" || intent.clientSessionId!==id) {
+      if(created) await discardEmptySession(id);
+      throw new Error("Could not enqueue the native prompt. Your draft is preserved.");
+    }
+  }
   // An accepted outbox entry must not be replayed even if tab activation fails.
   if(created && input.isCurrent()) {
     try {deps.activate(id);} catch { /* session already exists in directory */ }

@@ -135,6 +135,7 @@ export async function cancelPiProductSession(sessionId:string):Promise<void> {
 export async function closePiProductSession(sessionId:string):Promise<void> {
   const current=binding;
   if (!current || current.clientId!==sessionId || current.busy) throw new Error("Native Pi session is not idle");
+  if (Object.values(useSessionIntentStore.getState().entriesById).some(intent=>intent.clientSessionId===sessionId && intent.kind==="send_prompt" && ["waiting_for_session","preparing","dispatching","accepted_running","accepted_queued"].includes(intent.deliveryState))) throw new Error("Native Pi has a pending prompt");
   await current.controller.close();
   binding=null;
   patchSessionRecord(sessionId,{status:"closed",streamConnectionState:"ended",

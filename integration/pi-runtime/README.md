@@ -53,7 +53,7 @@ No external executable extension discovery is enabled.
 The pinned SDK model registry supplies OpenAI, Anthropic and Google chat
 catalog metadata; `pi_list_models` runs a bounded credential-free discovery
 process. The existing model picker contract is projected by
-`buildPiModelSelector`; the original workspace composer model-selector facade now consumes this data in opt-in native mode, using the existing user-preference store and a reserved nonsecret map entry. Add provider / Settings route to the existing API Keys page. Explicit native session open accepts the selected provider/model and requires its stored credential. The production session dispatcher and Home catalog are not wired; workspace composer send and Home launch refuse in native/unknown mode rather than route through old Agent paths. The original API Keys settings pane, modal, rows and confirmation UI
+`buildPiModelSelector`; the original workspace composer model-selector facade now consumes this data in opt-in native mode, using the existing user-preference store and a reserved nonsecret map entry. Add provider / Settings route to the existing API Keys page. Explicit native session open accepts the selected provider/model and requires its stored credential. The original workspace composer now uses the native session dispatcher in opt-in mode; Home catalog and launch remain gated. Unknown mode refuses rather than launching an old Agent. The original API Keys settings pane, modal, rows and confirmation UI
 are shared with an opt-in local credential data source in Pi development mode.
 This source stores one key per supported provider using the existing serialized
 keyring worker with Windows/macOS native features. The renderer can only list
@@ -74,10 +74,7 @@ The existing dispatcher and Cancel workflow recognize Pi session records;
 legacy SSE/summary refresh does not attach to them. Only one live native
 session is supported. Unsupported attachments/config interactions fail
 explicitly. Disconnection/uncertain submission is not replayed. There is no
-second conversation store. This is a qualified transport/materialization seam,
-not yet the production workspace session creation entry point. The composer
-launch gate remains closed until the workspace/session materializer and history
-ownership are connected; no implicit recovery of a restored Pi session.
+second conversation store. The existing workspace composer calls this materialization seam, enqueues into the original outbox and activates the original chat tab. Admission checks the host-authorized path and selection generation, retains drafts on pre-enqueue failure, and pins the running worker model. Native session dismissal closes an idle worker; pending sends prevent closure. This remains opt-in development mode, one worker, existing local workspace inventory, text-only prompts. No implicit recovery of a restored Pi session; durable history, Home launch, independent workspace inventory and production desktop validation remain open.
 
 ## Remaining integration
 
