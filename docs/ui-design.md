@@ -44,3 +44,8 @@ Use ScientificVisualStyle for native viewer title, icon actions, series palette 
 ## Global feedback and empty-state pass
 
 Use the native search FontIcon, preserve the explicit icon contract check, disable sending empty prompts, hide the idle operation footer and expose accurate loading labels for active commands. Workbench lists distinguish not-yet-loaded and confirmed empty; session search distinguishes no matches. Errors from conversational operations remain inline; other operation failures use the existing InfoBar, without injecting a second error into chat or displaying raw provider diagnostics. No speculative progress percentages or custom animation loops. Existing native transitions and focus behaviors remain. Windows high-contrast, narrow-window and visual acceptance are pending.
+
+
+## Native visual acceptance pass
+
+The explicit portable UI-only smoke now uses synthetic, non-user fixtures and suppresses engine calls while navigating nine real WinUI pages. It checks positive visible layout dimensions, blank/nonblank composer state, and opens five native scientific viewer types; the CI startup script requires the completion marker. It switches light/dark theme and resizes the shell to a narrow physical-pixel window. XAML RenderTargetBitmap snapshots (chat light/dark/narrow, settings, plugins and knowledge) are best-effort CI artifacts, not pixel-diff baselines or evidence of Win2D draw completeness. Real desktop DPI, high-contrast modes, keyboard navigation and visual approval remain separate acceptance tasks. No private workspace or provider data is intentionally captured. Narrow topology inspection stacks below the diagram; user bubbles and conversation item styling use shared resources.
