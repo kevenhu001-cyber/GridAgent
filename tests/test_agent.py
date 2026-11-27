@@ -129,7 +129,7 @@ def test_llm_can_author_execute_debug_and_revise_project(tmp_path, monkeypatch):
     ws.set_enabled(tmp_path, True)
     launches = []
 
-    def fake_execute(root, entry, plugin=None):
+    def fake_execute(root, entry, plugin=None, arguments=None):
         source = ws.read_project(root, entry)["text"]
         launches.append(source)
         return {"status": "failed" if len(launches) == 1 else "ok",

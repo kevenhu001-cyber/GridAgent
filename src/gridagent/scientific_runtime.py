@@ -4,7 +4,7 @@ import subprocess
 import time
 from contextlib import nullcontext
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 from xml.etree import ElementTree as ET
 
 from filelock import FileLock
@@ -15,7 +15,9 @@ from .verified_python import require_runtime
 
 PROTOCOL = "scientific-python-v1"
 TIMEOUT = 120
+ACTIVE = "scientific-active.json"
 BOOTSTRAP = r"""
+import json
 import os
 import runpy
 import shutil
@@ -32,7 +34,7 @@ if plugin.is_dir():
 os.environ["GRIDAGENT_PROJECT_DIR"] = str(project)
 os.environ["GRIDAGENT_OUTPUT_DIR"] = r"C:\GridAgentOutput"
 os.chdir(project)
-sys.argv = [str(project / entry)]
+sys.argv = [str(project / entry), *json.loads(Path(r"C:\GridAgentInput\arguments.json").read_text(encoding="utf-8"))]
 runpy.run_path(str(project / entry), run_name="__main__")
 """
 
@@ -57,13 +59,68 @@ def configuration(runtime, inputs, output, plugin=None):
     return ET.tostring(config, encoding="unicode")
 
 
+def active_session(root):
+    path = Path(root).resolve() / ACTIVE
+    try:
+        value = json.loads(ws.bounded_bytes(path, 2048))
+    except FileNotFoundError:
+        return None
+    try:
+        identifier, session = value["run_id"], value["session_id"]
+        if str(UUID(session)) != session:
+            raise ValueError("Invalid sandbox session ID")
+        ws.job_directory(root, identifier)
+    except (KeyError, TypeError, AttributeError, OSError, ValueError) as exc:
+        raise ValueError("Invalid active scientific session journal; execution blocked") from exc
+    return {"run_id": identifier, "session_id": session}
+
+
+def _clear_active(root, record):
+    if active_session(root) != record:
+        raise ValueError("Active scientific session changed; execution blocked")
+    (Path(root).resolve() / ACTIVE).unlink()
+
+
+def _stop(executable, session):
+    subprocess.run([executable, "stop", "--id", session], timeout=30, check=True,
+                   env=plugins.clean_env(), stdin=subprocess.DEVNULL,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def recover(root):
+    """Explicit recovery of an interrupted run. Never relaunch its code."""
+    root = Path(root).resolve()
+    with FileLock(str(root / "scientific-execution.lock"), timeout=0):
+        record = active_session(root)
+        if record is None:
+            return {"status": "ok", "reason": "No unresolved sandbox session"}
+        executable, _ = require_runtime()
+        folder = ws.job_directory(root, record["run_id"])
+        try:
+            _stop(executable, record["session_id"])
+        except (OSError, subprocess.SubprocessError):
+            return {"status": "cleanup_unconfirmed", "run_id": record["run_id"],
+                    "reason": "Could not confirm sandbox stop; execution remains blocked"}
+        recovery = {"status": "recovered_incomplete", "reason": "Sandbox stop confirmed; outputs discarded",
+                    "run_id": record["run_id"], "session_id": record["session_id"]}
+        ws.atomic_bytes(folder / "recovery.json", json.dumps(recovery).encode())
+        _clear_active(root, record)
+        return recovery
+
+
 def status(root):
     try:
         require_runtime()
         available = True
     except ValueError:
         available = False
+    try:
+        active = active_session(root)
+        blocked = active is not None
+    except (OSError, ValueError):
+        active, blocked = None, True
     return {"status": "ok", "enabled": ws.enabled(root), "sandbox_available": available,
+            "execution_blocked_by_session": blocked, "active_run_id": active["run_id"] if active else None,
             "backend": "Windows Sandbox CLI", "timeout_seconds": TIMEOUT,
             "plugins": [{"id": row["id"], "versions": row["versions"],
                          "managed_available": plugins.installed_target(row["id"]) is not None}
@@ -74,6 +131,11 @@ def status(root):
 def _launch(root, folder, executable, config):
     session = str(uuid4())
     ws.atomic_bytes(folder / "session-id.txt", session.encode("ascii"))
+    record = {"run_id": folder.name, "session_id": session}
+    if active_session(root) is not None:
+        raise ValueError("Unresolved sandbox session; user must recover it before executing")
+    # Journal is outside all guest mappings and committed before the start command.
+    ws.atomic_bytes(Path(root) / ACTIVE, json.dumps(record).encode())
     kwargs = {"env": plugins.clean_env(), "stdin": subprocess.DEVNULL,
               "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
     output = folder / "output"
@@ -103,17 +165,23 @@ def _launch(root, folder, executable, config):
         reason = type(exc).__name__
     finally:
         try:
-            subprocess.run([executable, "stop", "--id", session], timeout=30, check=True, **kwargs)
+            _stop(executable, session)
         except (OSError, subprocess.SubprocessError):
-            return "cleanup_unconfirmed", "Sandbox shutdown could not be confirmed"
+            state, reason = "cleanup_unconfirmed", "Sandbox shutdown could not be confirmed"
+        else:
+            _clear_active(root, record)
     return state, reason
 
 
-def execute(root, entry, plugin=None):
+def execute(root, entry, plugin=None, arguments=None):
     ws.require_grant(root)
     ws.safe_parts(entry)
     if not entry.endswith(".py"):
         raise ValueError("Entry must be a project Python file")
+    arguments = [] if arguments is None else arguments
+    if not isinstance(arguments, list) or len(arguments) > 32 or any(
+            not isinstance(arg, str) or len(arg) > 1024 or "\x00" in arg for arg in arguments):
+        raise ValueError("Invalid Python arguments")
     executable, runtime = require_runtime()
     root = Path(root).resolve()
     plugin_lock = nullcontext()
@@ -122,6 +190,8 @@ def execute(root, entry, plugin=None):
         plugin_lock = FileLock(str(plugins.plugin_root() / (plugin + ".lock")), timeout=0)
     with FileLock(str(root / "scientific-execution.lock"), timeout=0), plugin_lock:
         ws.require_grant(root)
+        if active_session(root) is not None:
+            raise ValueError("Unresolved sandbox session; ask the user to run scientific recovery")
         target = plugins.installed_target(plugin) if plugin is not None else None
         if plugin is not None and target is None:
             raise ValueError("Install this managed plugin before using its native API")
@@ -137,6 +207,7 @@ def execute(root, entry, plugin=None):
         output = folder / "output"
         output.mkdir()
         (inputs / "bootstrap.py").write_text(BOOTSTRAP, encoding="utf-8")
+        (inputs / "arguments.json").write_text(json.dumps(arguments, ensure_ascii=False), encoding="utf-8")
         (inputs / "launch.cmd").write_text(
             "@echo off\r\nset OMP_NUM_THREADS=1\r\nset OPENBLAS_NUM_THREADS=1\r\n"
             "set MKL_NUM_THREADS=1\r\n"
@@ -146,7 +217,7 @@ def execute(root, entry, plugin=None):
             "move /y C:\\GridAgentOutput\\exit.tmp C:\\GridAgentOutput\\exit-code.txt > NUL\r\n",
             encoding="ascii")
         plan = {"protocol": PROTOCOL, "run_id": identifier, "entry": entry, "inputs": snapshot,
-                "plugin": plugin, "plugin_versions": plugins.installed_metadata(plugin).get("versions", {})
+                "arguments": arguments, "plugin": plugin, "plugin_versions": plugins.installed_metadata(plugin).get("versions", {})
                 if plugin else {}, "timeout_seconds": TIMEOUT}
         ws.atomic_bytes(folder / "manifest.json", json.dumps(plan, allow_nan=False).encode())
         config = configuration(runtime, inputs, output, target)

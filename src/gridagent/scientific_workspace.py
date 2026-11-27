@@ -149,11 +149,15 @@ def read_project(root, path, offset=0, limit=24000):
 
 
 def write_project(root, path, text, expected_sha256=None):
+    return write_bytes(root, path, text.encode("utf-8"), expected_sha256)
+
+
+def write_bytes(root, path, data, expected_sha256=None):
     base = project(root)
-    data = text.encode("utf-8")
     if len(data) > MAX_FILE:
         raise ValueError("Project file exceeds 1 MiB")
     with FileLock(str(Path(root).resolve() / "scientific-project.lock"), timeout=5):
+        require_grant(root)
         rows = scan(base)
         target = scoped(base, path, create_parents=True)
         prior = bounded_bytes(target, MAX_FILE) if target.exists() else None
@@ -167,6 +171,19 @@ def write_project(root, path, text, expected_sha256=None):
             raise ValueError("Project storage budget exceeded")
         atomic_bytes(target, data)
     return {"status": "ok", "path": path, "sha256": sha(data), "size_bytes": len(data)}
+
+
+def edit_project(root, path, old, new, expected_sha256):
+    """Apply exactly one unambiguous text replacement; the write is hash guarded."""
+    if not old or len(old) > MAX_FILE or len(new) > MAX_FILE:
+        raise ValueError("Invalid replacement size")
+    data = bounded_bytes(scoped(project(root), path), MAX_FILE)
+    if sha(data) != expected_sha256:
+        raise ValueError("Project file changed; read the latest revision")
+    text = data.decode("utf-8")
+    if text.count(old) != 1:
+        raise ValueError("Replacement must match exactly once")
+    return write_project(root, path, text.replace(old, new, 1), expected_sha256)
 
 
 def snapshot(root, target):
@@ -198,10 +215,10 @@ def report(root, identifier):
     return json.loads(bounded_bytes(folder / "report.json", MAX_FILE))
 
 
-def read_artifact(root, identifier, path, offset=0, limit=12000):
-    if not 0 <= offset <= MAX_OUTPUT or not 1 <= limit <= 24000:
-        raise ValueError("Invalid artifact pagination")
+def artifact_bytes(root, identifier, path):
     info = report(root, identifier)
+    if info.get("status") == "cleanup_unconfirmed":
+        raise ValueError("Sandbox shutdown is unconfirmed; outputs cannot be consumed")
     row = next((row for row in info.get("artifacts", []) if row["path"] == path), None)
     if row is None:
         raise ValueError("Artifact is not committed")
@@ -209,6 +226,13 @@ def read_artifact(root, identifier, path, offset=0, limit=12000):
     data = bounded_bytes(scoped(folder / "output", path), MAX_OUTPUT)
     if sha(data) != row["sha256"]:
         raise ValueError("Artifact changed after execution")
+    return data
+
+
+def read_artifact(root, identifier, path, offset=0, limit=12000):
+    if not 0 <= offset <= MAX_OUTPUT or not 1 <= limit <= 24000:
+        raise ValueError("Invalid artifact pagination")
+    data = artifact_bytes(root, identifier, path)
     text = data.decode("utf-8")
     return {"status": "ok", "run_id": identifier, "path": path, "text": text[offset:offset+limit],
             "next_offset": offset+limit if offset+limit < len(text) else None, "sha256": row["sha256"]}
@@ -220,3 +244,51 @@ def cancel(root, identifier):
         return "Scientific run has already ended"
     atomic_bytes(folder / "cancel-requested", b"1")
     return "Cancellation requested; sandbox shutdown has not yet been confirmed"
+
+
+
+def promote_artifact(root, identifier, path, destination, expected_sha256=None):
+    """Explicitly copy committed, hash-checked output into the persistent project."""
+    data = artifact_bytes(root, identifier, path)
+    result = write_bytes(root, destination, data, expected_sha256)
+    return {**result, "origin_run_id": identifier, "origin_path": path}
+
+
+def run_status(root, identifier):
+    folder = job_directory(root, identifier)
+    result = {"run_id": identifier, "status": "preparing", "artifacts": []}
+    if (folder / "manifest.json").exists():
+        result.update(json.loads(bounded_bytes(folder / "manifest.json", MAX_FILE)))
+        result["status"] = "interrupted_or_running"
+    if (folder / "report.json").exists():
+        result = json.loads(bounded_bytes(folder / "report.json", MAX_FILE))
+    if (folder / "recovery.json").exists():
+        result["recovery"] = json.loads(bounded_bytes(folder / "recovery.json", MAX_FILE))
+        result["status"] = "recovered_incomplete"
+        result["artifacts"] = []
+    result["cancellation_requested"] = (folder / "cancel-requested").exists()
+    return result
+
+
+def list_scientific_runs(root, limit=20):
+    if not 1 <= limit <= 50:
+        raise ValueError("Run limit must be 1..50")
+    base = directory(root, "scientific-runs")
+    rows = []
+    for child in base.iterdir():
+        if not re.fullmatch(r"[a-f0-9]{32}", child.name):
+            continue
+        try:
+            info = plain(child, directory=True)
+            rows.append((info.st_mtime_ns, child.name))
+        except (OSError, ValueError):
+            continue
+    result = []
+    for _, identifier in sorted(rows, reverse=True)[:limit]:
+        try:
+            item = run_status(root, identifier)
+            result.append({key: item.get(key) for key in ("run_id", "status", "entry", "plugin",
+                                                          "reason", "cancellation_requested")})
+        except (OSError, ValueError):
+            result.append({"run_id": identifier, "status": "invalid_record"})
+    return {"status": "ok", "runs": result}

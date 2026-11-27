@@ -79,3 +79,53 @@ def test_execution_adapter_contract_without_claiming_real_sandbox(tmp_path, monk
     assert result["status"] == "ok" and result["verification"] == "unverified_script_output"
     assert result["stdout_stderr_tail"] == "example"
     assert ws.read_artifact(tmp_path, result["run_id"], "stdout.log")["text"] == "example"
+
+
+
+def test_exact_edit_and_artifact_promotion(tmp_path):
+    ws.set_enabled(tmp_path, True)
+    original = ws.write_project(tmp_path, "study.py", "x = 1\nprint(x)")
+    edited = ws.edit_project(tmp_path, "study.py", "x = 1", "x = 2", original["sha256"])
+    assert ws.read_project(tmp_path, "study.py")["text"] == "x = 2\nprint(x)"
+    with pytest.raises(ValueError, match="changed"):
+        ws.edit_project(tmp_path, "study.py", "x = 2", "x = 3", original["sha256"])
+    with pytest.raises(ValueError, match="exactly once"):
+        ws.edit_project(tmp_path, "study.py", "x", "y", edited["sha256"])
+    folder = ws.directory(tmp_path, "scientific-runs") / ("b" * 32)
+    (folder / "output").mkdir(parents=True)
+    data = b"\x00\x01\xff"
+    (folder / "output/model.bin").write_bytes(data)
+    (folder / "report.json").write_text(json.dumps({"status": "ok", "run_id": folder.name, "artifacts": [
+        {"path": "model.bin", "sha256": ws.sha(data)}]}))
+    result = ws.promote_artifact(tmp_path, folder.name, "model.bin", "models/model.bin")
+    assert result["sha256"] == ws.sha(data)
+    assert (tmp_path / "scientific-project/models/model.bin").read_bytes() == data
+    assert ws.list_scientific_runs(tmp_path)["runs"][0]["status"] == "ok"
+
+
+def test_unresolved_session_blocks_execution_and_recovery(tmp_path, monkeypatch):
+    import subprocess
+
+    ws.set_enabled(tmp_path, True)
+    ws.write_project(tmp_path, "main.py", "print(1)")
+    identifier = "c" * 32
+    folder = ws.directory(tmp_path, "scientific-runs") / identifier
+    folder.mkdir()
+    active = {"run_id": identifier, "session_id": "12345678-1234-1234-1234-1234567890ab"}
+    (tmp_path / runtime.ACTIVE).write_text(json.dumps(active))
+    monkeypatch.setattr(runtime, "require_runtime", lambda: ("fake-wsb", Path("runtime")))
+    with pytest.raises(ValueError, match="Unresolved"):
+        runtime.execute(tmp_path, "main.py")
+    def fail(*args):
+        raise subprocess.CalledProcessError(1, "stop")
+
+    monkeypatch.setattr(runtime, "_stop", fail)
+    assert runtime.recover(tmp_path)["status"] == "cleanup_unconfirmed"
+    assert runtime.active_session(tmp_path) == active
+    stopped = []
+    monkeypatch.setattr(runtime, "_stop", lambda executable, session: stopped.append(session))
+    assert runtime.recover(tmp_path)["status"] == "recovered_incomplete"
+    assert stopped == [active["session_id"]]
+    assert runtime.active_session(tmp_path) is None
+    assert ws.run_status(tmp_path, identifier)["status"] == "recovered_incomplete"
+    assert runtime.recover(tmp_path)["status"] == "ok"

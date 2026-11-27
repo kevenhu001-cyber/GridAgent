@@ -33,7 +33,8 @@ def scientific_tools(root):
         return workspace.write_project(root, path, text, expected_sha256)
 
     @tool
-    def execute_python(entry: str, plugin: str | None = None) -> dict:
+    def execute_python(entry: str, plugin: str | None = None,
+                       arguments: list[str] | None = None) -> dict:
         """Execute an LLM-authored project Python file in an authorized isolated environment.
         Native library APIs are available; optionally select one installed managed plugin.
         Read project files normally; write deliverables to GRIDAGENT_OUTPUT_DIR.
@@ -41,7 +42,7 @@ def scientific_tools(root):
         Execution alone does not verify physical correctness.
         """
         try:
-            return runtime.execute(root, entry, plugin)
+            return runtime.execute(root, entry, plugin, arguments)
         except (OSError, ValueError, SyntaxError, Timeout) as exc:
             return {"status": "failed", "reason": str(exc)[:500]}
 
@@ -51,5 +52,31 @@ def scientific_tools(root):
         """Read a committed UTF-8 scientific run artifact page, with hash verification."""
         return workspace.read_artifact(root, run_id, path, offset, limit)
 
+    @tool
+    def edit_project_file(path: str, old: str, new: str, expected_sha256: str) -> dict:
+        """Replace one exact unambiguous source fragment using the current full-file hash."""
+        return workspace.edit_project(root, path, old, new, expected_sha256)
+
+    @tool
+    def list_scientific_runs(limit: Annotated[int, Field(ge=1, le=50)] = 20) -> dict:
+        """Find previous scientific runs, including incomplete ones, without executing anything."""
+        workspace.require_grant(root)
+        return workspace.list_scientific_runs(root, limit)
+
+    @tool
+    def inspect_scientific_run(run_id: str) -> dict:
+        """Retrieve a stored run's status, inputs, output manifest and error log tail."""
+        workspace.require_grant(root)
+        return workspace.run_status(root, run_id)
+
+    @tool
+    def promote_scientific_artifact(run_id: str, path: str, destination: str,
+                                    expected_sha256: str | None = None) -> dict:
+        """Copy a committed hash-checked artifact (including binary data) into the project.
+        This is explicit: outputs never silently replace source or data. Project quota applies.
+        """
+        return workspace.promote_artifact(root, run_id, path, destination, expected_sha256)
+
     return [scientific_environment, list_project_files, read_project_file, write_project_file,
-            execute_python, read_scientific_artifact]
+            execute_python, read_scientific_artifact, edit_project_file, list_scientific_runs,
+            inspect_scientific_run, promote_scientific_artifact]

@@ -42,6 +42,9 @@ You own the mathematical formulation, code, method selection, experimental decis
 Use professional numerical libraries to calculate; the runtime enforces authorization and records evidence.
 For unfamiliar engineering tasks, discover scientific_environment, create project files with write_project_file,
 run them with execute_python, inspect logs and artifacts, revise and rerun within the user budget.
+Use edit_project_file for exact revisions, list_scientific_runs to find prior results and
+promote_scientific_artifact when a verified-by-hash (not physically verified) output is needed as a subsequent input.
+If an unresolved sandbox session blocks execution, request user recovery; never bypass it.
 Use native library APIs directly in authorized isolated execution; typed tools are optional shortcuts.
 If scientific execution is unavailable or disabled, ask the user to enable it or use supported typed tools.
 Do not invent measurements or attempt an unrestricted host fallback. Do not treat expert rules as mandatory research policy.
@@ -450,7 +453,8 @@ def build_agent(model, simulator: Simulator, budget: int = 3, max_calls: int = 1
             if isinstance(result, dict) and (result.get("status") == "failed" or
                     result.get("quality", {}).get("passed") is False):
                 if name not in {"execute_python", "read_project_file", "write_project_file", "read_scientific_artifact",
-                                "list_project_files", "scientific_environment"}:
+                                "list_project_files", "scientific_environment", "edit_project_file",
+                                "list_scientific_runs", "inspect_scientific_run", "promote_scientific_artifact"}:
                     result = {**result, "repair_knowledge": knowledge_index().feedback(name, result.get("fields", []))}
                 if workspace is not None and result.get("quality"):
                     from .experience import failure_experience

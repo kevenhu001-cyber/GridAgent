@@ -52,6 +52,10 @@ def main():
     research.add_argument("--scientific-execution", choices=("enable", "disable", "status"),
                           help="Authorize general project writes and isolated model-authored Python")
     research.add_argument("--scientific-cancel", metavar="RUN_ID")
+    research.add_argument("--scientific-runs", action="store_true")
+    research.add_argument("--scientific-status", metavar="RUN_ID")
+    research.add_argument("--scientific-recover", action="store_true",
+                          help="Explicitly stop the recorded unresolved sandbox session; never rerun code")
     research.add_argument("--research-compare", nargs="+", metavar="ARG",
                           help="TASK REPEATS MODEL MODEL [MODEL ...] [memory TRAINING_JSON]")
     research.add_argument("--research-experience", nargs="?", const="", metavar="NEW_JSON",
@@ -147,6 +151,9 @@ def main():
         ("research-sandbox", [args.research_sandbox] if args.research_sandbox else None),
         ("scientific-execution", [args.scientific_execution] if args.scientific_execution else None),
         ("scientific-cancel", [args.scientific_cancel] if args.scientific_cancel else None),
+        ("scientific-runs", [] if args.scientific_runs else None),
+        ("scientific-status", [args.scientific_status] if args.scientific_status else None),
+        ("scientific-recover", [] if args.scientific_recover else None),
         ("research-compare", args.research_compare),
         ("research-experience", [args.research_experience] if args.research_experience else
          [] if args.research_experience is not None else None),
