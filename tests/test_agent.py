@@ -129,7 +129,7 @@ def test_llm_can_author_execute_debug_and_revise_project(tmp_path, monkeypatch):
     ws.set_enabled(tmp_path, True)
     launches = []
 
-    def fake_execute(root, entry, plugin=None, arguments=None):
+    def fake_execute(root, entry, plugin=None, arguments=None, *, plugin_ids=None):
         source = ws.read_project(root, entry)["text"]
         launches.append(source)
         return {"status": "failed" if len(launches) == 1 else "ok",
@@ -235,3 +235,47 @@ def test_scientific_failure_does_not_expose_os_paths():
     assert scientific_failure(ValueError("General scientific execution is disabled"))[
         "error_code"] == "authorization_required"
     assert scientific_failure(ValueError("Unresolved sandbox session"))["error_code"] == "recovery_required"
+
+
+def test_llm_can_select_multi_plugin_environment_and_recover_from_conflict(tmp_path, monkeypatch):
+    from gridagent import scientific_runtime as runtime
+    from gridagent import scientific_workspace as ws
+
+    ws.set_enabled(tmp_path, True)
+    ws.write_project(tmp_path, "study.py", "print(1)")
+    attempts = []
+
+    def execute(root, entry, plugin=None, arguments=None, *, plugin_ids=None):
+        attempts.append(plugin_ids)
+        if len(attempts) == 1:
+            raise ValueError("Scientific dependency conflict: numpy; inspect library metadata or use separate runs")
+        return {"status": "ok", "verification": "test_double", "plugin_ids": plugin_ids}
+
+    monkeypatch.setattr(runtime, "execute", execute)
+
+    class Model:
+        def __init__(self):
+            self.turn = 0
+
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, messages):
+            self.turn += 1
+            if self.turn == 1:
+                ids = ["pypsa", "cvxpy"]
+            elif self.turn == 2:
+                feedback = json.loads(messages[-2].content)
+                assert feedback["error_code"] == "dependency_conflict"
+                assert "numpy" in feedback["reason"]
+                ids = ["pypsa"]
+            else:
+                assert json.loads(messages[-2].content)["status"] == "ok"
+                return AIMessage(content="Test double completed; remaining solver run not performed.")
+            return AIMessage(content="", tool_calls=[{"name": "execute_python",
+                "args": {"entry": "study.py", "plugin_ids": ids}, "id": str(self.turn)}])
+
+    result = build_agent(Model(), FakeSimulator(), budget=2, workspace=tmp_path).invoke(
+        {"messages": [HumanMessage(content="Combine numerical libraries")], "used": 0, "calls": 0, "rounds": 0})
+    assert attempts == [["pypsa", "cvxpy"], ["pypsa"]]
+    assert result["used"] == 2 and result["calls"] == 2
