@@ -9,7 +9,7 @@ Scientific workspace, solvers, execution, knowledge, artifacts and verification
 are product-owned capabilities, not external integrations. Tauri/Rust owns
 process lifecycle, permissions, task identities and event delivery. Python
 retains the numerical implementation and isolated execution boundary.
-AnyHarness supplies model and session infrastructure. Native scientific tool
+Pi (https://github.com/earendil-works/pi, MIT) is the owner-selected first-party Agent engine. Embed its TypeScript SDK in a trusted local worker; Proliferate/AnyHarness supplies desktop presentation and optional external harness interoperability, not a second LLM loop around Pi. Native scientific tool
 descriptors and calls must share one runtime contract with the desktop.
 No nested LLM loop, no arbitrary host shell fallback.
 
@@ -29,9 +29,7 @@ Desktop TypeScript client calls Tauri directly.
 ## Next gates
 1. Integrate workspace selection and packaged runtime discovery in the host.
 2. Developer task/write lane with durable job IDs and cooperative cancellation is implemented; complete event delivery and explicit interrupted-job recovery, then enable only through authorized production host controls. Preserve sandbox fail-closed behavior.
-3. Inspect AnyHarness adapter/session tool registration, implement native
-   scientific tool routing for a verified adapter, and test with actual LLM
-   calls. External CLI providers may require compatibility adapters.
+3. Pin and integrate the official Pi SDK (`@earendil-works/pi-coding-agent` and related packages as needed). Register scientific functions directly via its custom tool interface, adapt Pi session events to the desktop event contract, and validate model tool calls. Disable unrestricted shell/filesystem tools and automatic discovery of untrusted executable extensions; use application-owned credentials and resources, scoped IPC, explicit grants and the existing OS sandbox. External CLI providers may require compatibility adapters.
 4. Use the same native service for solver management, documentation, evidence
    and scientific viewers; keep large results out of the LLM context.
 5. Remove upstream cloud/telemetry/update dependencies and verify Windows build,
