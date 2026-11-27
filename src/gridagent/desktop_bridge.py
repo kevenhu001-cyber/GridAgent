@@ -79,6 +79,14 @@ def dispatch(root, request, emit):
         from .plugins import status
 
         emit("plugins", status())
+    elif action == "knowledge-packs":
+        from .knowledge_store import list_packs
+
+        emit("knowledge_packs", list_packs(root))
+    elif action == "knowledge-pack":
+        from .knowledge_store import pack_page
+
+        emit("knowledge_pack", pack_page(root, request["id"], request.get("offset", 0)))
     elif action in {"model-settings", "model-save", "model-test"}:
         from .model_settings import ModelSettings, check_connection, save_settings, stored_settings
 
@@ -214,8 +222,10 @@ def dispatch(root, request, emit):
     elif action == "local":
         from .commands import workspace_command
 
-        for line in workspace_command(root, request["command"], request.get("args", [])):
-            emit("result", line)
+        command = request["command"]
+        destination = "workbench_result" if command.startswith("plugin-") or command == "import-knowledge" else "result"
+        for line in workspace_command(root, command, request.get("args", [])):
+            emit(destination, line)
         refresh()
     elif action == "dmq":
         from .agent import model_from_env
