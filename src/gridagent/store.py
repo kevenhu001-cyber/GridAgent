@@ -60,8 +60,14 @@ class ResearchStore:
     def sessions(self):
         with self.connect() as db:
             return [dict(row) for row in db.execute(
-                """SELECT s.*, (SELECT COUNT(*) FROM tasks t WHERE t.session_id=s.id) AS tasks
-                   FROM sessions s ORDER BY s.created_at DESC, s.id"""
+                """SELECT s.id, s.created_at,
+                          CASE WHEN s.title='New research session' THEN COALESCE(
+                            (SELECT substr(trim(replace(replace(t.prompt, char(10), ' '), char(13), ' ')),1,80)
+                             FROM tasks t WHERE t.session_id=s.id ORDER BY t.created_at,t.id LIMIT 1),
+                            s.title) ELSE s.title END AS title,
+                          (SELECT COUNT(*) FROM tasks t WHERE t.session_id=s.id) AS tasks
+                   FROM sessions s ORDER BY COALESCE(
+                     (SELECT MAX(t.created_at) FROM tasks t WHERE t.session_id=s.id),s.created_at) DESC, s.id"""
             )]
 
     def require_session(self, sid):
