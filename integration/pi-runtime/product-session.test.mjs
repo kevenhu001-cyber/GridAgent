@@ -17,7 +17,7 @@ function fixture() {
 
 test("shared product session drives a native turn and settles after cancellation", async () => {
   const {controller, events, calls} = fixture();
-  await controller.open();
+  await controller.open("/project");
   await controller.prompt("study");
   const received = [];
   controller.subscribe((_snapshot, batch) => received.push(...batch));
@@ -38,7 +38,7 @@ test("failed submission is not retried", async () => {
   const {controller, bridge} = fixture();
   let count = 0;
   bridge.prompt = async () => { count++; throw new Error("failed"); };
-  await controller.open();
+  await controller.open("/project");
   await assert.rejects(() => controller.prompt("study"));
   await assert.rejects(() => controller.prompt("study"));
   assert.equal(count, 1);
@@ -47,7 +47,7 @@ test("failed submission is not retried", async () => {
 
 test("failed turn settles without success or an automatic replay", async () => {
   const {controller, events} = fixture();
-  await controller.open();
+  await controller.open("/project");
   await controller.prompt("study");
   events.push({kind: "error", id: "turn", code: "provider_error"}, {kind: "settled", id: "turn"});
   assert.equal((await controller.drainTurn()).status, "failed");
@@ -56,7 +56,7 @@ test("failed turn settles without success or an automatic replay", async () => {
 
 test("foreign event fails closed", async () => {
   const {controller, events} = fixture();
-  await controller.open();
+  await controller.open("/project");
   await controller.prompt("study");
   events.push({kind: "text", id: "foreign", delta: "bad"});
   await assert.rejects(() => controller.drainTurn());

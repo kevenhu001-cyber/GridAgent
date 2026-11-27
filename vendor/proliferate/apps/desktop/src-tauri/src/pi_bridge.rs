@@ -85,9 +85,33 @@ fn public_event(value: Value) -> Option<Value> {
     }
 }
 
+fn pi_enabled() -> bool {
+    cfg!(debug_assertions) && std::env::var("GRIDAGENT_PI_DEV").as_deref() == Ok("1")
+}
+
+// Only compare a selected path to the already configured root. Never accept
+// a renderer path as authority to launch Python or access a new workspace.
+fn matches_workspace(path: &str) -> bool {
+    let selected = PathBuf::from(path);
+    if !selected.is_absolute() { return false; }
+    let Ok(configured) = configured_path("GRIDAGENT_NATIVE_WORKSPACE", false) else { return false; };
+    match (selected.canonicalize(), configured.canonicalize()) {
+        (Ok(selected), Ok(configured)) => selected == configured,
+        _ => false,
+    }
+}
+
+#[tauri::command]
+pub fn pi_mode() -> bool { pi_enabled() }
+
+#[tauri::command]
+pub fn pi_matches_workspace(path: String) -> bool {
+    pi_enabled() && matches_workspace(&path)
+}
+
 impl PiProcess {
     fn start() -> Result<Self, String> {
-        if !cfg!(debug_assertions) || std::env::var("GRIDAGENT_PI_DEV").as_deref() != Ok("1") {
+        if !pi_enabled() {
             return Err("Embedded Pi bridge requires explicit development opt-in".into());
         }
         let node = configured_path("GRIDAGENT_PI_NODE", true)?;
@@ -136,7 +160,10 @@ impl PiProcess {
 }
 
 #[tauri::command]
-pub async fn pi_open(state: State<'_, PiState>) -> Result<String, String> {
+pub async fn pi_open(state: State<'_, PiState>, workspace_path: String) -> Result<String, String> {
+    if !pi_enabled() || !matches_workspace(&workspace_path) {
+        return Err("Selected workspace does not match the configured Pi workspace".into());
+    }
     let mut guard = state.0.lock().await;
     if guard.is_some() { return Err("Pi session already open".into()); }
     let process = PiProcess::start()?;

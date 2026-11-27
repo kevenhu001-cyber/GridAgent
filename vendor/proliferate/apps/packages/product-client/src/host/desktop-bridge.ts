@@ -374,7 +374,9 @@ export type PiEvent =
   | { kind: "tool_finished"; id: string; tool_id: string; name: string; error: boolean };
 
 export interface DesktopPiBridge {
-  open(): Promise<string>;
+  mode(): Promise<boolean>;
+  matchesWorkspace(path: string): Promise<boolean>;
+  open(workspacePath: string): Promise<string>;
   prompt(sessionId: string, text: string): Promise<string>;
   abort(sessionId: string, id: string): Promise<void>;
   poll(sessionId: string): Promise<PiEvent[]>;

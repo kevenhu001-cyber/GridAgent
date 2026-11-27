@@ -5,6 +5,8 @@ import { PiSessionController } from "./session-controller";
 function fixture() {
   let events: PiEvent[] = [{kind: "ready", version: 1}];
   const bridge: DesktopPiBridge = {
+    mode: vi.fn(async () => true),
+    matchesWorkspace: vi.fn(async () => true),
     open: vi.fn(async () => "session-1"),
     prompt: vi.fn(async () => "request-1"),
     abort: vi.fn(async () => {}),
@@ -20,7 +22,7 @@ describe("native Pi session controller", () => {
     const {bridge, controller, push} = fixture();
     const received: PiEvent[] = [];
     controller.subscribe((_state, events) => received.push(...events));
-    await controller.open();
+    await controller.open("/project");
     expect(controller.getSnapshot().status).toBe("ready");
     await controller.prompt("simulate");
     expect(bridge.prompt).toHaveBeenCalledWith("session-1", "simulate");
@@ -43,7 +45,7 @@ describe("native Pi session controller", () => {
 
   it("never automatically replays a failed submission", async () => {
     const {bridge, controller} = fixture();
-    await controller.open();
+    await controller.open("/project");
     vi.mocked(bridge.prompt).mockRejectedValueOnce(new Error("transport failure"));
     await expect(controller.prompt("simulate")).rejects.toThrow("not confirmed");
     expect(controller.getSnapshot().status).toBe("failed");
@@ -53,7 +55,7 @@ describe("native Pi session controller", () => {
 
   it("rejects cross-request events and preserves the failure", async () => {
     const {controller, push} = fixture();
-    await controller.open();
+    await controller.open("/project");
     await controller.prompt("simulate");
     push({kind: "text", id: "wrong", delta: "wrong"});
     await expect(controller.poll()).rejects.toThrow();
@@ -62,7 +64,7 @@ describe("native Pi session controller", () => {
 
   it("does not label provider failure as a successful turn", async () => {
     const {controller, push} = fixture();
-    await controller.open();
+    await controller.open("/project");
     await controller.prompt("simulate");
     push({kind: "error", id: "request-1", code: "provider_error"},
       {kind: "settled", id: "request-1"});

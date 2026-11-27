@@ -274,6 +274,8 @@ pub fn run() {
         .manage(workspace_activity_indicator::WorkspaceActivityIndicatorStore::default())
         .manage(window_chrome::WindowChromeZoom::default())
         .invoke_handler(tauri::generate_handler![
+            pi_bridge::pi_mode,
+            pi_bridge::pi_matches_workspace,
             pi_bridge::pi_open,
             pi_bridge::pi_prompt,
             pi_bridge::pi_abort,

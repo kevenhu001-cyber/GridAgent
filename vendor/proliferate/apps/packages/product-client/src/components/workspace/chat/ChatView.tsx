@@ -1,3 +1,4 @@
+import { NativePiChatGate } from "./native/NativePiChatGate";
 import {
   lazy,
   memo,
@@ -147,7 +148,7 @@ function shouldShowSessionInputChrome(mode: ChatSurfaceState): boolean {
   }
 }
 
-export const ChatView = memo(function ChatView({
+const LegacyChatView = memo(function LegacyChatView({
   shellRenderSurface = null,
   showWorkspaceStatusPanels = true,
 }: {
@@ -373,4 +374,19 @@ export const ChatView = memo(function ChatView({
       </div>
     </DebugProfiler>
   );
+});
+
+
+/** Keep the existing workspace shell; native mode owns its chat surface.
+ * Never mount the legacy composer as a fallback in selected Pi mode.
+ */
+export const ChatView = memo(function ChatView(props: {
+  shellRenderSurface?: WorkspaceRenderSurface | null;
+  showWorkspaceStatusPanels?: boolean;
+}) {
+  const host = useProductHost();
+  if (!host.desktop?.pi) return <LegacyChatView {...props} />;
+  return <NativePiChatGate bridge={host.desktop.pi} surface={props.shellRenderSurface}>
+    <LegacyChatView {...props} />
+  </NativePiChatGate>;
 });

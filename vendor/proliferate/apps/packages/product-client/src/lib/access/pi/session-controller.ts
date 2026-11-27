@@ -40,11 +40,11 @@ export class PiSessionController {
     for (const listener of this.listeners) listener(this.snapshot, events);
   }
 
-  async open() {
+  async open(workspacePath: string) {
     if (this.snapshot.status !== "closed") throw new Error("Pi session is not closed");
     this.publish({status: "opening", failure: null});
     try {
-      const sessionId = await this.bridge.open();
+      const sessionId = await this.bridge.open(workspacePath);
       this.publish({sessionId});
       const deadline = Date.now() + 30_000;
       while (this.getSnapshot().status === "opening") {
