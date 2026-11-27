@@ -25,6 +25,9 @@ public partial class MainWindow : Window
     private bool _loadingTheme;
     private bool _busy;
     private bool _operationError;
+    private bool _conversationOperation;
+    private bool _sessionsLoaded;
+    private bool _knowledgeLoaded;
     private EngineSettings? _activeEngine;
     private string? _activeResearch;
     private bool _cancellingResearch;
@@ -116,6 +119,7 @@ public partial class MainWindow : Window
         var visible = _sessions.Where(s => s.Label.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
         SessionList.ItemsSource = visible;
         SessionList.SelectedItem = visible.FirstOrDefault(s => s.Id == _session);
+        SetEmpty(SessionsEmpty, _sessionsLoaded && visible.Count == 0, query.Length == 0 ? "No conversations yet." : "No matching conversations.");
     }
     private void SetSessions(List<Entry> sessions)
     {
@@ -216,17 +220,51 @@ public partial class MainWindow : Window
         _busy = busy;
         BusyRing.IsActive = busy;
         BusyRing.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
-        SendButton.IsEnabled = !busy;
+        UpdateSendState();
+        OperationStatus.Visibility = busy || _operationError ? Visibility.Visible : Visibility.Collapsed;
         CancelButton.Visibility = busy && _activeResearch != null ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void PromptChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_layoutReady) UpdateSendState();
+    }
+    private void UpdateSendState() => SendButton.IsEnabled = !_busy && !string.IsNullOrWhiteSpace(Prompt.Text);
+    private static void SetEmpty(TextBlock view, bool show, string message)
+    {
+        view.Text = message;
+        view.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+    }
+    private void RefreshEmptyStates()
+    {
+        SetEmpty(ResearchEmpty, _workspaceIndexLoaded && ResearchList.Items.Count == 0, "No research tasks yet.");
+        SetEmpty(ModelsEmpty, _workspaceIndexLoaded && ModelRevisions.Items.Count == 0, "No model revisions yet.");
+        SetEmpty(RunsEmpty, _workspaceIndexLoaded && RunList.Items.Count == 0, "No simulation results yet.");
+        SetEmpty(StudiesEmpty, _workspaceIndexLoaded && StudyList.Items.Count == 0, "No saved studies yet.");
+        SetEmpty(KnowledgeEmpty, _knowledgeLoaded && KnowledgePacks.Items.Count == 0, "No reference packs imported.");
     }
 
     private async Task Execute(object request)
     {
         if (_busy) { Notify("Another operation is running.", InfoBarSeverity.Warning); return; }
-        SetBusy(true);
         _operationError = false;
+        // Freeze the presentation destination when the operation begins, not when a response arrives.
+        var action = JsonSerializer.SerializeToElement(request).GetProperty("action").GetString();
+        _conversationOperation = action is "ask" or "history" or "research" ||
+            action == "local" && ChatPage.Visibility == Visibility.Visible;
+        Notice.IsOpen = false;
+        SetBusy(true);
         _conversation.BeginOperation();
-        StatusText.Text = "Working…";
+        StatusText.Text = action switch
+        {
+            "ask" => "Waiting for assistant…",
+            "history" => "Loading conversation…",
+            "refresh" => "Loading workspace…",
+            "plugins" => "Loading plugins…",
+            "knowledge-packs" or "knowledge-pack" => "Loading references…",
+            "initialize" => "Opening workspace…",
+            _ => "Working…"
+        };
         try
         {
             var root = Path.GetFullPath(WorkspacePath.Text.Trim());
@@ -237,7 +275,8 @@ public partial class MainWindow : Window
                 _pluginCatalog = default;
                 PluginRows.Children.Clear();
                 KnowledgePacks.ItemsSource = null;
-                KnowledgeEmpty.Visibility = Visibility.Visible;
+                _knowledgeLoaded = false;
+                _sessionsLoaded = false;
                 _knowledgePage = default;
                 _boundWorkspace = root;
                 _session = null;
@@ -246,21 +285,21 @@ public partial class MainWindow : Window
                 RunList.ItemsSource = null;
                 ResearchList.ItemsSource = null;
                 ModelRevisions.ItemsSource = null;
+                RefreshEmptyStates();
             }
             var settings = new EngineSettings(ResolvePython(), root, ModelName.Text.Trim(), BaseUrl.Text.Trim(), ApiKey.Password);
             _activeEngine = settings;
             await _engine.RunAsync(settings, request, Handle);
             StatusText.Text = _operationError ? "Operation failed" : "Ready";
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             _operationError = true;
-            // Do not display raw process diagnostics or provider payloads.
-            Append("Operation could not complete (" + ex.GetType().Name + "). Check application installation, workspace and model settings.");
+            // Keep raw provider payloads and exception details out of ordinary UI.
+            ReportOperationError("Operation could not complete. Check the workspace, runtime and model provider.");
             StatusText.Text = "Check configuration";
-            Notify("Operation could not complete. Check the workspace, runtime and provider.", InfoBarSeverity.Error);
         }
-        finally { InterruptStream(); SetBusy(false); _activeEngine = null; _activeResearch = null; }
+        finally { InterruptStream(); SetBusy(false); RefreshEmptyStates(); _activeEngine = null; _activeResearch = null; }
     }
 
     private bool WorkspaceChanged()
@@ -497,8 +536,9 @@ public partial class MainWindow : Window
     {
         if (_busy) return;
         _pluginCatalog = default;
+        RenderPlugins();
         await Execute(new { action = "plugins" });
-        if (_pluginCatalog.ValueKind != JsonValueKind.Array) return;
+        if (_pluginCatalog.ValueKind != JsonValueKind.Array) { RenderPlugins(); return; }
         RenderPlugins();
     }
     private async void RegisterNgspice(object sender, RoutedEventArgs e)
