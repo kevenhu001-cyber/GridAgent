@@ -63,3 +63,16 @@ def test_worker_revoked_grant(tmp_path):
     ws.set_enabled(tmp_path, False)
     jobs.run_worker(tmp_path, identifier, execute=lambda *a, **k: pytest.fail("Revoked grant executed"))
     assert jobs.status(tmp_path, identifier)["status"] == "cancelled"
+
+
+def test_shell_guest_launcher_validates_and_compiles():
+    from gridagent.scientific_runtime import isolated_shell_source
+
+    source = isolated_shell_source("powershell", "Write-Output '42'")
+    compile(source, "guest-launcher.py", "exec")
+    assert b"subprocess.run" in source
+    assert b"shell=True" not in source
+    with pytest.raises(ValueError):
+        isolated_shell_source("unknown", "echo 42")
+    with pytest.raises(ValueError):
+        isolated_shell_source("bash", "x" * 8001)
