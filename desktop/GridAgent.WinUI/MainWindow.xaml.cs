@@ -38,12 +38,14 @@ public partial class MainWindow : Window
 
     private bool _layoutReady;
     private bool _launchInitialized;
+    private bool _uiSmokeActive;
     public MainWindow(bool skipOnboarding = false)
     {
         StartupDiagnostics.Record("window.xaml.begin");
         InitializeComponent();
         StartupDiagnostics.Record("window.xaml.complete");
         _layoutReady = true;
+        ChatPage.SizeChanged += (_, e) => ChatPage.Padding = new Thickness(e.NewSize.Width < 560 ? 8 : 16, 16, e.NewSize.Width < 560 ? 8 : 16, 16);
         RuntimeStatus.Text = File.Exists(BundledPython) ? "Bundled Python · ready" : "Developer runtime";
         WorkspacePath.Text = SetupPreferences.LoadWorkspace() ?? AppDataPaths.DefaultWorkspace;
         ModelName.Text = Environment.GetEnvironmentVariable("GRIDAGENT_MODEL") ?? "";
@@ -96,7 +98,7 @@ public partial class MainWindow : Window
         var tag = args.IsSettingsSelected ? "settings" : (args.SelectedItemContainer as NavigationViewItem)?.Tag as string ?? "chat";
         foreach (var (page, key) in new (UIElement, string)[] { (ChatPage,"chat"),(TasksPage,"tasks"),(ModelsPage,"models"),(RunsPage,"runs"),(StudiesPage,"studies"),(ToolsPage,"tools"),(PluginsPage,"plugins"),(KnowledgePage,"knowledge"),(SettingsPage,"settings") })
             page.Visibility = tag == key ? Visibility.Visible : Visibility.Collapsed;
-        if (!_initialized) return;
+        if (!_initialized || _uiSmokeActive) return;
         if (tag == "plugins" && _pluginCatalog.ValueKind != JsonValueKind.Array && !_busy) PluginCenter(this, new RoutedEventArgs());
         else if (tag == "knowledge" && !_busy) await Execute(new { action = "knowledge-packs" });
         else await EnsureWorkspaceIndex();
