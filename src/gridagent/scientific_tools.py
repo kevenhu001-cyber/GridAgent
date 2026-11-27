@@ -91,6 +91,18 @@ def scientific_tools(root):
         return runtime.execute(root, entry, plugin, arguments, plugin_ids=plugin_ids)
 
     @tool
+    def present_scientific_chart(run_id: str, path: str) -> dict:
+        """Present a committed .chart.json output from a successful scientific run in native chat.
+        Format: schema='gridagent.chart.v1', title, x_label, y_label, scatter (bool),
+        series=[{'name': str, 'x': [numbers], 'y': [numbers]}]. Up to 6 series, 12000 total points.
+        Write the data in authorized Python, not as fabricated model output. No solver attempt is spent.
+        """
+        from .scientific_visualization import chart_artifact
+
+        descriptor, _ = chart_artifact(root, run_id, path)
+        return descriptor
+
+    @tool
     def read_scientific_artifact(run_id: str, path: str, offset: int = 0,
                                  limit: Annotated[int, Field(ge=1, le=24000)] = 12000) -> dict:
         """Read a committed UTF-8 scientific run artifact page, with hash verification."""
@@ -176,6 +188,6 @@ def scientific_tools(root):
         return workspace.promote_artifact(root, run_id, path, destination, expected_sha256)
 
     return [scientific_environment, list_project_files, read_project_file, inspect_project_file, write_project_file,
-            execute_python, read_scientific_artifact, edit_project_file, list_scientific_runs,
+            execute_python, read_scientific_artifact, present_scientific_chart, edit_project_file, list_scientific_runs,
             inspect_scientific_run, promote_scientific_artifact, list_scientific_libraries, inspect_native_api,
             search_native_documentation, inspect_installed_api_source]
