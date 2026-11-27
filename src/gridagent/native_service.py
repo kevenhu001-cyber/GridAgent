@@ -1,8 +1,8 @@
 """Internal GridAgent scientific IPC. No MCP or model provider dependency.
 
 One trusted desktop-owned process per selected workspace. The first protocol
-version provides metadata and bounded read operations; mutation and execution
-lanes require a separate host-controlled authorization and cancellation design.
+version provides metadata and bounded reads, plus explicitly enabled developer
+job control. No execution is performed on the IPC reader thread.
 """
 import json
 import re
@@ -45,6 +45,28 @@ class NativeTable(Strict):
     limit: int = Field(default=20, ge=1, le=50)
 
 
+class ProjectRead(Strict):
+    path: str = Field(min_length=1, max_length=240)
+    offset: int = Field(default=0, ge=0, le=ws.MAX_FILE)
+    limit: int = Field(default=12000, ge=1, le=12000)
+
+
+class ProjectWrite(Strict):
+    path: str = Field(min_length=1, max_length=240)
+    text: str = Field(max_length=48000)
+    expected_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+
+
+class JobRef(Strict):
+    job_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+class JobSubmit(JobRef):
+    entry: str = Field(min_length=1, max_length=240)
+    arguments: list[str] = Field(default_factory=list, max_length=32)
+    plugin_ids: list[str] = Field(default_factory=list, max_length=4)
+
+
 class Frame(Strict):
     version: int
     id: str = Field(pattern=r"^[a-f0-9]{32}$")
@@ -60,16 +82,22 @@ METHODS = {
     "solver.backends": Empty,
     "solver.table": NativeTable,
     "workspace.files": Empty,
+    "workspace.read": ProjectRead,
+    "job.status": JobRef,
 }
 
 
-def dispatch(root: Path, method: str, params: dict):
-    schema = METHODS.get(method)
+TASK_METHODS = {"workspace.write": ProjectWrite, "job.submit": JobSubmit, "job.cancel": JobRef}
+
+
+def dispatch(root: Path, method: str, params: dict, *, allow_tasks=False):
+    schema = METHODS.get(method) or (TASK_METHODS.get(method) if allow_tasks else None)
     if schema is None:
         raise ValueError("Unknown native method")
     args = schema.model_validate(params).model_dump()
     if method == "hello":
-        return {"protocol": VERSION, "methods": sorted(METHODS), "mode": "read-only"}
+        return {"protocol": VERSION, "methods": sorted(METHODS | (TASK_METHODS if allow_tasks else {})),
+                "mode": "developer-tasks" if allow_tasks else "read-only"}
     if method == "scientific.status":
         from .scientific_runtime import status
 
@@ -81,6 +109,16 @@ def dispatch(root: Path, method: str, params: dict):
     ws.require_grant(root)
     if method == "workspace.files":
         return ws.list_project(root)
+    if method == "workspace.read":
+        return ws.read_project(root, **args)
+    if method == "workspace.write":
+        return ws.write_project(root, **args)
+    if method.startswith("job."):
+        from . import native_jobs
+
+        handler = {"job.status": native_jobs.status, "job.submit": native_jobs.submit,
+                   "job.cancel": native_jobs.cancel}[method]
+        return handler(root, **args)
     if method == "scientific.runs":
         return ws.list_scientific_runs(root, **args)
     if method == "scientific.artifact":
@@ -92,7 +130,7 @@ def dispatch(root: Path, method: str, params: dict):
     raise ValueError("Unknown native method")
 
 
-def serve(root, source, output):
+def serve(root, source, output, *, allow_tasks=False):
     """Bounded line frames; never replay an operation after a broken connection."""
     def send(identifier, **payload):
         frame = {"version": VERSION, "id": identifier, **payload}
@@ -118,7 +156,7 @@ def serve(root, source, output):
             if frame.version != VERSION:
                 raise ValueError("Unsupported protocol version")
             with redirect_stdout(sys.stderr):
-                result = dispatch(root, frame.method, frame.params)
+                result = dispatch(root, frame.method, frame.params, allow_tasks=allow_tasks)
             send(identifier, ok=True, result=result)
         except (ValidationError, ValueError, OSError, TypeError) as exc:
             code = "invalid_request" if isinstance(exc, (ValidationError, ValueError, TypeError)) else "io_failure"
@@ -128,12 +166,12 @@ def serve(root, source, output):
 
 
 def main():
-    if len(sys.argv) != 2:
+    if len(sys.argv) not in (2, 3) or (len(sys.argv) == 3 and sys.argv[2] != "--tasks"):
         return 2
     root = Path(sys.argv[1]).resolve()
     if not root.is_dir():
         return 2
-    serve(root, sys.stdin, sys.stdout)
+    serve(root, sys.stdin, sys.stdout, allow_tasks=len(sys.argv) == 3)
     return 0
 
 
