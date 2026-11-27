@@ -8,6 +8,7 @@ mod editors;
 mod quit_flow;
 mod runtime_version_assert;
 mod sidecar;
+mod scientific;
 mod state;
 mod telemetry;
 mod updater_owned;
@@ -260,6 +261,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(sc.clone())
+        .manage(scientific::ScientificState::default())
         .manage(cloud_worker_state)
         .manage(owned_updater_state)
         .manage(diagnostics_supervisor.clone())
@@ -270,6 +272,7 @@ pub fn run() {
         .manage(workspace_activity_indicator::WorkspaceActivityIndicatorStore::default())
         .manage(window_chrome::WindowChromeZoom::default())
         .invoke_handler(tauri::generate_handler![
+            scientific::scientific_read,
             anonymous_telemetry::load_anonymous_telemetry_bootstrap,
             anonymous_telemetry::save_anonymous_telemetry_state,
             config::get_app_config,
