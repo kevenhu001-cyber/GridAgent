@@ -1,6 +1,5 @@
 """Jupyter cells within one isolated scientific job, not a host fallback."""
 import json
-import os
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -22,8 +21,40 @@ def validate_cells(cells):
 def launcher_source(cells):
     validate_cells(cells)
     return (Path(__file__).read_text(encoding="utf-8") +
-            "\nif __name__ == '__main__':\n    sys.exit(run_cells(" + repr(cells) +
+            "\nif __name__ == '__main__':\n    import os\n    sys.exit(run_cells(" + repr(cells) +
             ", Path(os.environ['GRIDAGENT_OUTPUT_DIR'])))\n").encode("utf-8")
+
+
+def execute_cell(client, index, source):
+    """Keep each callback's output buffer and budget local to one cell."""
+    chunks = []
+    remaining = MAX_OUTPUT
+    truncated = False
+
+    def receive(message):
+        nonlocal remaining, truncated
+        kind = message["header"]["msg_type"]
+        content = message["content"]
+        if kind == "stream":
+            value = content.get("text", "")
+        elif kind in {"execute_result", "display_data"}:
+            value = content.get("data", {}).get("text/plain", "")
+        elif kind == "error":
+            value = content.get("ename", "") + ": " + content.get("evalue", "")
+        else:
+            return
+        if isinstance(value, str):
+            encoded = value.encode("utf-8", errors="replace")
+            if len(encoded) > remaining:
+                truncated = True
+            part = encoded[:remaining]
+            chunks.append(part.decode("utf-8", errors="ignore"))
+            remaining -= len(part)
+
+    reply = client.execute_interactive(source, allow_stdin=False, stop_on_error=True,
+                                       timeout=40, output_hook=receive)
+    return {"index": index, "status": reply["content"]["status"], "text": "".join(chunks),
+            "truncated": truncated}
 
 
 def run_cells(cells, output):
@@ -55,31 +86,9 @@ def run_cells(cells, output):
             client.start_channels()
             client.wait_for_ready(timeout=20)
             for index, source in enumerate(cells):
-                chunks = []
-                remaining = MAX_OUTPUT
-
-                def receive(message):
-                    nonlocal remaining
-                    kind = message["header"]["msg_type"]
-                    content = message["content"]
-                    if kind == "stream":
-                        value = content.get("text", "")
-                    elif kind in {"execute_result", "display_data"}:
-                        value = content.get("data", {}).get("text/plain", "")
-                    elif kind == "error":
-                        value = content.get("ename", "") + ": " + content.get("evalue", "")
-                    else:
-                        return
-                    if isinstance(value, str) and remaining > 0:
-                        part = value.encode("utf-8", errors="replace")[:remaining]
-                        chunks.append(part.decode("utf-8", errors="ignore"))
-                        remaining -= len(part)
-
-                reply = client.execute_interactive(source, allow_stdin=False, stop_on_error=True,
-                                                   timeout=40, output_hook=receive)
-                status = reply["content"]["status"]
-                rows.append({"index": index, "status": status, "text": "".join(chunks),
-                             "truncated": remaining == 0})
+                row = execute_cell(client, index, source)
+                rows.append(row)
+                status = row["status"]
                 if status != "ok":
                     outcome = "failed"
                     break

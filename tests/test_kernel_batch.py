@@ -41,3 +41,22 @@ def test_actual_kernel_fixture_preserves_state_and_stops_on_error(tmp_path):
     assert result["cells"][1]["text"].strip() == "5"
     assert result["cells"][2]["status"] == "error"
     assert len(result["cells"]) == 3
+
+
+def test_each_cell_has_independent_output_budget_and_callback():
+    class Client:
+        hooks = []
+
+        def execute_interactive(self, source, *, output_hook, **kwargs):
+            self.hooks.append(output_hook)
+            output_hook({"header": {"msg_type": "stream"}, "content": {"text": source}})
+            return {"content": {"status": "ok"}}
+
+    client = Client()
+    first = kernel_batch.execute_cell(client, 0, "a" * (kernel_batch.MAX_OUTPUT + 1))
+    second = kernel_batch.execute_cell(client, 1, "b")
+    assert first["truncated"] and len(first["text"]) == kernel_batch.MAX_OUTPUT
+    assert second["text"] == "b" and not second["truncated"]
+    client.hooks[0]({"header": {"msg_type": "stream"}, "content": {"text": "late"}})
+    assert second["text"] == "b"
+    assert not kernel_batch.execute_cell(client, 2, "a" * kernel_batch.MAX_OUTPUT)["truncated"]
