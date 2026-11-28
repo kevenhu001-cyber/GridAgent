@@ -1,4 +1,5 @@
-import { useWorkspaceQuery } from "@anyharness/sdk-react";
+import { isNativeProjectId, useWorkspaceQuery } from "@anyharness/sdk-react";
+import { useProductHost } from "@proliferate/product-client/host/ProductHostProvider";
 import {
   createContext,
   useContext,
@@ -44,6 +45,7 @@ interface OriginResolution {
 
 export function WorkspacePathProvider({ children }: { children: ReactNode }) {
   const resolveConnection = useProductWorkspaceConnectionResolver();
+  const scientificProject = useProductHost().desktop?.scientificProject;
   const selectedWorkspaceId = useSessionSelectionStore(
     (state) => state.selectedWorkspaceId,
   );
@@ -54,9 +56,11 @@ export function WorkspacePathProvider({ children }: { children: ReactNode }) {
     selectedLogicalWorkspaceId,
     materializedWorkspaceId: selectedWorkspaceId,
   });
+  const native = isNativeProjectId(materializedWorkspaceId);
+  const [nativeRoot, setNativeRoot] = useState<{ id: string; root: RuntimeWorkspaceRootState } | null>(null);
   const workspaceQuery = useWorkspaceQuery({
     workspaceId: materializedWorkspaceId,
-    enabled: materializedWorkspaceId !== null,
+    enabled: materializedWorkspaceId !== null && !native,
   });
   const [originResolution, setOriginResolution] = useState<OriginResolution>({
     materializedWorkspaceId: null,
@@ -73,6 +77,25 @@ export function WorkspacePathProvider({ children }: { children: ReactNode }) {
       return () => {
         current = false;
       };
+    }
+
+    if (native) {
+      const id = materializedWorkspaceId;
+      setNativeRoot({id, root: PENDING_WORKSPACE_ROOT});
+      const fail = () => {
+        if (!current) return;
+        setNativeRoot({id, root: {status: "unavailable", path: null}});
+        setOriginResolution({materializedWorkspaceId: id, state: {status: "rejected", origin: null}});
+      };
+      if (!scientificProject) fail();
+      else void scientificProject.identity().then(identity => {
+        if (!current) return;
+        const path = normalizeRuntimeWorkspaceRoot(identity.projectPath);
+        if (identity.id !== id || path === null) { fail(); return; }
+        setNativeRoot({id, root: {status: "settled", path}});
+        setOriginResolution({materializedWorkspaceId: id, state: {status: "settled", origin: "desktop-local"}});
+      }, fail);
+      return () => { current = false; };
     }
 
     void resolveConnection(materializedWorkspaceId).then(
@@ -98,12 +121,13 @@ export function WorkspacePathProvider({ children }: { children: ReactNode }) {
     return () => {
       current = false;
     };
-  }, [materializedWorkspaceId, resolveConnection]);
+  }, [materializedWorkspaceId, resolveConnection, native, scientificProject]);
 
   const filesystemOrigin = originResolution.materializedWorkspaceId === materializedWorkspaceId
     ? originResolution.state
     : PENDING_FILESYSTEM_ORIGIN;
   const workspaceRoot = useMemo<RuntimeWorkspaceRootState>(() => {
+    if (native) return nativeRoot?.id === materializedWorkspaceId ? nativeRoot.root : PENDING_WORKSPACE_ROOT;
     if (materializedWorkspaceId === null || workspaceQuery.isPending) {
       return PENDING_WORKSPACE_ROOT;
     }
@@ -114,7 +138,7 @@ export function WorkspacePathProvider({ children }: { children: ReactNode }) {
     return path === null
       ? { status: "unavailable", path: null }
       : { status: "settled", path };
-  }, [materializedWorkspaceId, workspaceQuery.data?.path, workspaceQuery.isError, workspaceQuery.isPending]);
+  }, [materializedWorkspaceId, native, nativeRoot, workspaceQuery.data?.path, workspaceQuery.isError, workspaceQuery.isPending]);
   const value = useMemo<WorkspacePathContextValue>(() => ({
     materializedWorkspaceId,
     filesystemOrigin,

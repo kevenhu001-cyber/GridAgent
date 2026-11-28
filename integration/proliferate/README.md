@@ -108,3 +108,13 @@ capabilities and unsupported native mutations fail closed, never using the
 legacy connection. The selection/inventory flow still needs to introduce these
 IDs into the product; this is a transport cutover seam, not a standalone
 workspace UI or proof of interactive desktop behavior.
+
+Native Pi development inventory can now discover the single configured host
+project and project its reserved ID into the existing local/logical workspace
+list. Selection revalidates that identity against the host; Pi receives the
+configured authorization root while the retained file-path context resolves the
+scientific-project subdirectory. This avoids requiring an AnyHarness inventory
+row for this development workspace. This is still a single configured root,
+not a general directory picker or multi-project registry. Other startup gates,
+Git, creation/rename/delete and external Agent lifecycle remain to be migrated;
+interactive desktop acceptance is pending.

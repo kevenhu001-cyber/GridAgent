@@ -21,12 +21,20 @@ import type {
  * adapter. Types here mirror the concrete shapes Desktop already uses so
  * migrated product code keeps its behavior.
  */
+export interface NativeScientificProjectIdentity {
+  id: string;
+  workspacePath: string;
+  projectPath: string;
+}
+
 export interface DesktopBridge {
   runtime: DesktopRuntimeBridge;
   /** Optional during migration; never fall back to an external Agent on failure. */
   pi?: DesktopPiBridge;
   /** Native scientific-project files, keyed by the host-issued project ID. */
   scientificFiles?: NativeProjectFiles;
+  /** Discover the single explicitly configured development project; no arbitrary root. */
+  scientificProject?: { identity(): Promise<NativeScientificProjectIdentity> };
   files: DesktopFilesBridge;
   nativeUi: DesktopNativeUiBridge;
   updater: DesktopUpdaterBridge;
