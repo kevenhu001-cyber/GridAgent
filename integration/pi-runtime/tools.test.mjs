@@ -68,3 +68,18 @@ test("Pi shell routes to native job, not host command", async () => {
   assert.equal(result.exitCode, 0);
   assert.equal(output, "42");
 });
+
+test("kernel batch reuses durable job dispatch and is absent in read-only mode", async () => {
+  const calls = [], jobs = [];
+  const client = {request: async (method, args) => {calls.push({method, args}); return {status: "queued"};}};
+  assert.ok(!scientificTools(client).some(t => t.name === "execute_kernel_cells"));
+  const tool = scientificTools(client, {allowTasks: true, onJob: id => jobs.push(id)})
+    .find(t => t.name === "execute_kernel_cells");
+  const cells = ["x = 2", "print(x)"];
+  const result = await tool.execute("kernel", {cells});
+  assert.equal(calls[0].method, "job.submit");
+  assert.deepEqual(calls[0].args.kernel_cells, cells);
+  assert.equal(calls[0].args.entry, "internal-kernel.py");
+  assert.deepEqual(jobs, [calls[0].args.job_id]);
+  assert.equal(result.details.status, "queued");
+});
