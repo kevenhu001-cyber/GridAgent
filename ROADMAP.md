@@ -74,6 +74,10 @@ PR #14 merged bounded multi-session admission. Desktop milestone 0 now has a loc
 
 Existing Python solvers, plugin management, evidence/revision records and job APIs should similarly be reused before adding new scientific services. Changes requiring significant UI redesign need owner approval.
 
+## Sandbox SDK qualification (stage 2)
+
+Evaluate Microsoft MXC 1.1.0 through the separate [VM qualification harness](integration/mxc-runtime/README.md). Preserve existing Windows Sandbox execution and recovery until actual isolation, memory limits, cancellation, scientific libraries and deployment acceptance are demonstrated. The experimental VM SDK requires separate Node 24 tooling; do not change the product Node runtime or fall back to weaker process isolation.
+
 ## 4. Primary tool surface (target)
 
 Generic tools: execute Python/authorized commands; list/read/write/edit project files; inspect installed library APIs; discover solvers; request dependencies; search documentation; inspect artifacts; render visualizations; manage jobs. Exact tool names and schemas should be designed around concrete execution and security requirements.

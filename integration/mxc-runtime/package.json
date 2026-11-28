@@ -1,0 +1,16 @@
+{
+  "name": "@gridagent/mxc-qualification",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.21.0 <25"
+  },
+  "scripts": {
+    "test": "node --test policy.test.mjs",
+    "qualify": "node qualify.mjs"
+  },
+  "dependencies": {
+    "@microsoft/mxc-sdk": "1.1.0"
+  }
+}
