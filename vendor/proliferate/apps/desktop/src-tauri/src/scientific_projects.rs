@@ -131,7 +131,7 @@ fn register_in(directory: &Path, selected: &Path) -> Result<ProjectIdentity, Str
         if record.workspace_path != workspace_path { return Err("Scientific project identity collision".into()); }
         return identity(&root, record.created_at, true);
     }
-    if list_in(directory)?.len() >= MAX_PROJECTS {
+    if existing.len() >= MAX_PROJECTS {
         return Err("The local scientific project limit has been reached".into());
     }
     let record = Record { version: 1, workspace_path: workspace_path.clone(), created_at: chrono::Utc::now().to_rfc3339() };
@@ -168,7 +168,10 @@ fn configured_legacy_path() -> Option<PathBuf> {
     let path = PathBuf::from(std::env::var_os("GRIDAGENT_NATIVE_WORKSPACE")?);
     if !path.is_absolute() { return None; }
     let canonical = path.canonicalize().ok()?;
-    canonical.is_dir().then_some(canonical)
+    if !canonical.is_dir() { return None; }
+    let app = crate::app_config::app_dir_path().ok()?.canonicalize().ok()?;
+    if app.starts_with(&canonical) || canonical.starts_with(&app) { return None; }
+    Some(canonical)
 }
 
 pub fn list() -> Result<Vec<ProjectIdentity>, String> {
@@ -180,15 +183,6 @@ pub fn list() -> Result<Vec<ProjectIdentity>, String> {
         let id = id_for_path(&root);
         if !rows.iter().any(|row| row.id == id) {
             rows.push(identity(&root, "1970-01-01T00:00:00Z".into(), true)?);
-        }
-    }
-    for (index, row) in rows.iter().enumerate() {
-        let root = PathBuf::from(&row.workspace_path);
-        for other in rows.iter().skip(index + 1) {
-            let other_root = PathBuf::from(&other.workspace_path);
-            if root.starts_with(&other_root) || other_root.starts_with(&root) {
-                return Err("Overlapping scientific project roots are not supported".into());
-            }
         }
     }
     for (index, row) in rows.iter().enumerate() {
