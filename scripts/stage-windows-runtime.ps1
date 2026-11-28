@@ -1,4 +1,5 @@
 # Stage a relocatable CPython 3.11 + locked Pi SDK from the CI toolchain.
+# Research libraries use existing optional extras; large document/model plugins stay on demand.
 param([Parameter(Mandatory=$true)][string]$Destination)
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
@@ -21,7 +22,7 @@ New-Item -ItemType Directory -Force $site | Out-Null
 @('.', 'DLLs', 'Lib', 'Lib/site-packages', 'import site') | Set-Content (Join-Path $python 'python311._pth') -Encoding ascii
 Push-Location $repo
 try {
-    python -m pip install --disable-pip-version-check --no-compile --target $site '.[core]'
+    python -m pip install --disable-pip-version-check --no-compile --target $site '.[core,kernel,notebook]'
 } finally { Pop-Location }
 Copy-Item (Get-Command node.exe -CommandType Application).Source (Join-Path $node 'node.exe')
 $source = Join-Path $repo 'integration/pi-runtime'
@@ -38,6 +39,10 @@ try {
     $embedded = Join-Path $relocated 'python/python.exe'
     & $embedded -I -B -c "import gridagent.native_service,numpy,scipy,pandas,andes,pandapower,highspy,control,sympy; import sys; print(sys.executable)"
     & $embedded -I -B (Join-Path $relocated 'pi/smoke_install.py')
+    # Fixed trusted fixtures exercise the actual relocated private Python,
+    # not the CI interpreter and not arbitrary user/Agent code.
+    & $embedded -I -B (Join-Path $repo 'scripts/qualify-staged-runtime.py') $relocated
+    if ($LASTEXITCODE -ne 0) { throw 'Staged scientific runtime qualification failed' }
 } finally {
     $env:PATH = $originalPath
     Remove-Item $relocated -Recurse -Force

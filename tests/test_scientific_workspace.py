@@ -274,3 +274,23 @@ def test_dependency_conflict_rejected_before_sandbox_start(tmp_path, monkeypatch
         runtime.execute(tmp_path, "main.py", plugin_ids=["cvxpy", "pypsa"])
     assert scientific_failure(error.value)["error_code"] == "dependency_conflict"
     assert not (tmp_path / "scientific-runs").exists()
+
+
+def test_research_feature_status_distinguishes_metadata_from_vm(tmp_path, monkeypatch):
+    from gridagent import scientific_runtime as runtime
+
+    monkeypatch.setattr(runtime, "require_runtime", lambda: ("wsb", tmp_path))
+    monkeypatch.setattr(runtime, "environment_inventory", lambda *args: {"distributions": [
+        {"distribution": "jupyter_client", "scope": "core"},
+        {"distribution": "ipykernel", "scope": "plugin"},
+    ]})
+    state = runtime.status(tmp_path)
+    assert state["sandbox_available"]
+    assert not state["research_features"]["kernel_dependencies_present"]
+    monkeypatch.setattr(runtime, "environment_inventory", lambda *args: {"distributions": [
+        {"distribution": "jupyter-client", "scope": "core"},
+        {"distribution": "ipykernel", "scope": "core"},
+    ]})
+    state = runtime.status(tmp_path)
+    assert state["research_features"]["kernel_dependencies_present"]
+    assert "not certified" in state["research_features"]["kernel_scope"]
