@@ -53,7 +53,7 @@ The owner requires reusing existing functionality rather than developing it agai
 
 **Observed verification:** Embedded Pi Runtime and Native Scientific IPC passed for the merge commit; Proliferate Integration Protocol passed for the PR head `9a2f89d29bc812d8aea1166dff853f65f3c8cfb0`. Full CI was still running at this snapshot. Shared frontend and mocked/native protocol tests are not a substitute for Windows Tauri compilation, OS credential verification, real provider-driven execution, sandbox or installer tests.
 
-**Current constraints:** one live Pi worker, existing authorized standard local workspaces, single text block up to 8192 UTF-8 bytes, initial OpenAI/Anthropic/Google credential/catalog support, in-memory transcript and worker context, conservative uncertain-outcome handling. The workspace/file inventory still relies on retained services. Development flag and legacy paths remain transitional code, not an approved external-Agent fallback or a shipping compatibility mode. No claim of production readiness or durable session restoration.
+**Current constraints:** up to four live Pi workers sharing the existing authorized standard local workspaces (per-session workspaces remain milestone 3), single text block up to 8192 UTF-8 bytes, initial OpenAI/Anthropic/Google credential/catalog support, in-memory transcript and worker context, conservative uncertain-outcome handling. The workspace/file inventory still relies on retained services. Development flag and legacy paths remain transitional code, not an approved external-Agent fallback or a shipping compatibility mode. No claim of production readiness or durable session restoration.
 
 ### Ordered next milestones
 

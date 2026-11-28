@@ -53,6 +53,10 @@ vi.mock("#product/hooks/sessions/workflows/use-session-creation-actions", () => 
   }),
 }));
 
+vi.mock("#product/hooks/chat/derived/use-pi-model-selector", () => ({
+  usePiMode: () => ({mode:"legacy",pi:undefined}),
+}));
+
 describe("useHomeDeferredLaunchRunner", () => {
   beforeEach(() => {
     mocks.createSessionWithResolvedConfig.mockReset();

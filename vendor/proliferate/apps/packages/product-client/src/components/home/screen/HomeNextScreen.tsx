@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { usePiModelSelector } from "#product/hooks/chat/derived/use-pi-model-selector";
 import { resolvePiHomeGate } from "#product/lib/access/pi/home-adapter";
-import { hasOpenPiSession } from "#product/lib/access/pi/product-session";
+import { hasPiSessionCapacity } from "#product/lib/access/pi/product-session";
 import { HomeComposerForm } from "#product/components/home/screen/HomeComposerForm";
 import { HomeOnboardingCards } from "#product/components/home/screen/HomeOnboardingCards";
 import { HomeProjectMenu } from "#product/components/home/screen/HomeProjectMenu";
@@ -104,7 +104,7 @@ export function HomeNextScreen() {
     },
   });
   const homeModelSelectorProps = nativeMode ? native.props : legacyModelSelectorProps;
-  const nativeGate = resolvePiHomeGate(native.mode, native.props, native.selection, homeNext.launchTarget, hasOpenPiSession());
+  const nativeGate = resolvePiHomeGate(native.mode, native.props, native.selection, homeNext.launchTarget, !hasPiSessionCapacity());
   const launchKindForRepository = (sourceRoot: string) =>
     desktopTargetsAvailable
       ? resolveHomeTargetLaunchKindForRepository({

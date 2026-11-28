@@ -1,6 +1,6 @@
 //! Development-only bridge to the embedded Pi worker. No external Agent fallback.
 use serde_json::{json, Value};
-use std::{path::PathBuf, process::Stdio, time::Duration};
+use std::{collections::HashMap, path::PathBuf, process::Stdio, time::Duration};
 use tauri::State;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -11,9 +11,12 @@ use tokio::{
 };
 
 const MAX_FRAME: usize = 64 * 1024;
+// Each live session owns a Node worker plus its Python scientific service.
+// Keep the bound small; the product client mirrors it for admission hints.
+pub const MAX_PI_SESSIONS: usize = 4;
 
 #[derive(Default)]
-pub struct PiState(Mutex<Option<PiProcess>>);
+pub struct PiState(Mutex<HashMap<String, PiProcess>>);
 
 struct PiProcess {
     _child: Child,
@@ -223,7 +226,7 @@ pub async fn pi_open(state: State<'_, PiState>, workspace_path: String, selectio
         return Err("Selected workspace does not match the configured Pi workspace".into());
     }
     let mut guard = state.0.lock().await;
-    if guard.is_some() { return Err("Pi session already open".into()); }
+    if guard.len() >= MAX_PI_SESSIONS { return Err("Pi session limit reached".into()); }
     let explicit = selection.is_some();
     let (provider, model_id) = match selection {
         Some(selection) => (selection.provider, selection.model_id),
@@ -240,7 +243,7 @@ pub async fn pi_open(state: State<'_, PiState>, workspace_path: String, selectio
     }
     let process = PiProcess::start(&provider, &model_id, stored_key)?;
     let id = process.session_id.clone();
-    *guard = Some(process);
+    guard.insert(id.clone(), process);
     Ok(id)
 }
 
@@ -250,84 +253,93 @@ pub async fn pi_prompt(state: State<'_, PiState>, session_id: String, text: Stri
         return Err("Pi prompt is empty or exceeds limit".into());
     }
     let mut guard = state.0.lock().await;
-    if guard.as_ref().map(|p| p.session_id.as_str()) != Some(session_id.as_str()) {
+    let Some(mut process) = guard.remove(&session_id) else {
         return Err("No matching Pi session".into());
-    }
-    let mut process = guard.take().ok_or("No open Pi session")?;
+    };
     if !process.ready || process.active.is_some() {
-        *guard = Some(process);
+        guard.insert(session_id, process);
         return Err("Pi session not ready or busy".into());
     }
     let id = uuid::Uuid::new_v4().simple().to_string();
     // On failed/uncertain send the process is discarded; never replay the prompt.
     process.send(json!({"method": "prompt", "id": id, "text": text})).await?;
     process.active = Some(id.clone());
-    *guard = Some(process);
+    guard.insert(session_id, process);
     Ok(id)
 }
 
 #[tauri::command]
 pub async fn pi_abort(state: State<'_, PiState>, session_id: String, id: String) -> Result<(), String> {
     let mut guard = state.0.lock().await;
-    if guard.as_ref().map(|p| p.session_id.as_str()) != Some(session_id.as_str()) {
+    let Some(mut process) = guard.remove(&session_id) else {
         return Err("No matching Pi session".into());
-    }
-    let mut process = guard.take().ok_or("No open Pi session")?;
+    };
     if process.active.as_deref() != Some(id.as_str()) {
-        *guard = Some(process);
+        guard.insert(session_id, process);
         return Err("No matching active Pi prompt".into());
     }
     process.send(json!({"method": "abort", "id": id})).await?;
-    *guard = Some(process);
+    guard.insert(session_id, process);
     Ok(())
 }
 
 #[tauri::command]
 pub async fn pi_poll(state: State<'_, PiState>, session_id: String) -> Result<Vec<Value>, String> {
     let mut guard = state.0.lock().await;
-    if guard.as_ref().map(|p| p.session_id.as_str()) != Some(session_id.as_str()) {
+    let Some(mut process) = guard.remove(&session_id) else {
         return Err("No matching Pi session".into());
-    }
-    let mut process = guard.take().ok_or("No open Pi session")?;
+    };
     let mut batch = Vec::new();
     // Polling is nonblocking so it cannot hold the lock while waiting for abort.
-    for _ in 0..64 {
-        match process.events.try_recv() {
-            Ok(event) => {
-                if event["kind"] == "ready" {
-                    if process.ready { return Err("Duplicate Pi ready event".into()); }
-                    process.ready = true;
-                } else {
-                    if event["id"].as_str() != process.active.as_deref() || !process.ready {
-                        return Err("Pi event correlation failed; session discarded".into());
+    // Error paths drop the process, discarding untrustworthy or dead workers.
+    let result = 'poll: {
+        for _ in 0..64 {
+            match process.events.try_recv() {
+                Ok(event) => {
+                    if event["kind"] == "ready" {
+                        if process.ready { break 'poll Err("Duplicate Pi ready event".to_string()); }
+                        process.ready = true;
+                    } else {
+                        if event["id"].as_str() != process.active.as_deref() || !process.ready {
+                            break 'poll Err("Pi event correlation failed; session discarded".to_string());
+                        }
+                        if event["kind"] == "settled" {
+                            process.active = None;
+                        }
                     }
-                    if event["kind"] == "settled" {
-                        process.active = None;
-                    }
+                    batch.push(event);
                 }
-                batch.push(event);
-            }
-            Err(mpsc::error::TryRecvError::Empty) => break,
-            Err(mpsc::error::TryRecvError::Disconnected) => {
-                if batch.is_empty() { return Err("Pi worker disconnected; operation not replayed".into()); }
-                break;
+                Err(mpsc::error::TryRecvError::Empty) => break,
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    if batch.is_empty() {
+                        break 'poll Err("Pi worker disconnected; operation not replayed".to_string());
+                    }
+                    break;
+                }
             }
         }
+        Ok(batch)
+    };
+    match result {
+        Ok(events) => {
+            guard.insert(session_id, process);
+            Ok(events)
+        }
+        Err(message) => Err(message),
     }
-    *guard = Some(process);
-    Ok(batch)
 }
 
 #[tauri::command]
 pub async fn pi_close(state: State<'_, PiState>, session_id: String) -> Result<(), String> {
     let mut guard = state.0.lock().await;
-    if guard.as_ref().map(|p| p.session_id.as_str()) != Some(session_id.as_str()) {
-        return Err("No matching Pi session".into());
+    // Idempotent: a worker already discarded after a protocol failure or
+    // disconnect is gone, which is the requested end state.
+    if let Some(process) = guard.get(&session_id) {
+        if process.active.is_some() {
+            return Err("Abort the active Pi prompt and wait for settlement before closing".into());
+        }
     }
-    if guard.as_ref().is_some_and(|p| p.active.is_some()) {
-        return Err("Abort the active Pi prompt and wait for settlement before closing".into());
-    }
-    *guard = None;
+    guard.remove(&session_id);
     Ok(())
 }
 
