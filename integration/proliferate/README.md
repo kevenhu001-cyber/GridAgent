@@ -4,6 +4,27 @@
 
 [ADR 0003](../../docs/adr/0003-native-scientific-runtime.md) supersedes core MCP. The initial native protocol (read-only by default) is implemented in `src/gridagent/native_service.py` and registered in the Tauri host; the production read lane does not expose model-generated writes or execution. Debug builds can explicitly opt into the job and write lane with GRIDAGENT_NATIVE_TASKS=1; the existing workspace grant is independently required. For developer-only testing set absolute `GRIDAGENT_NATIVE_PYTHON` (installed Python interpreter) and `GRIDAGENT_NATIVE_WORKSPACE` (existing explicitly chosen directory) before starting the desktop. Install `.[core]` in that interpreter. `scientific_read` is the direct Tauri command; the TypeScript client lives in `apps/desktop/src/lib/access/scientific/client.ts` inside the vendor tree. The host retains the child for successive requests and discards failed connections without replay. The developer task lane supports hash-guarded source writes (48,000 characters within the 64 KiB frame), stable job IDs, a detached trusted worker, polling and cooperative cancellation. Lost connections never automatically re-execute a job. Interrupted job journals conservatively block further native submissions until recovery is implemented. Packaged discovery, user workspace selection, agent registration, push events, explicit recovery and UI remain pending.
 
+## Windows desktop build check
+
+The [root Windows workflow](../../.github/workflows/windows-desktop.yml) builds
+the retained frontend, compile-checks the Tauri host and test targets, and starts
+the installed Pi worker against the Python scientific service without a provider
+request. Run the desktop build checks from `vendor/proliferate` on Windows x64
+with Node 22.19.0, pnpm 10.11.0, stable Rust with the MSVC x64 target and the
+Windows SDK:
+
+```powershell
+pnpm install --frozen-lockfile
+pnpm --filter proliferate build
+cargo check --locked --target x86_64-pc-windows-msvc -p proliferate --tests
+cargo test --locked --target x86_64-pc-windows-msvc -p proliferate --lib pi_history::tests
+```
+
+These commands qualify the development build inputs. Production acceptance also
+requires retiring external Agent launch and seed paths, replacing the upstream
+updater configuration, bundling private runtimes and testing the signed installer
+on a clean Windows machine.
+
 ## Historical MCP integration (optional external compatibility)
 
 The desktop baseline is the preserved Proliferate 0.4.27 monorepo at
@@ -16,7 +37,7 @@ Review combined distribution and network-source obligations before release.
 
 ## Architecture
 
-The target desktop embeds Pi as its sole Agent engine with direct scientific tool registration. Reuse Proliferate UI and only useful non-Agent/session infrastructure from AnyHarness. External Agent hosting, installation, discovery, authentication, selection and packaging must be removed. Pi integration and the external-Agent code removal remain pending. The historical MCP instructions below describe standalone interoperability outside the desktop, not a supported desktop Agent connection. GridAgent supplies Python scientific capability; the original workspace-scoped MCP server remains available as optional external interoperability, not another LLM Agent.
+The target desktop embeds Pi as its sole Agent engine with direct scientific tool registration. The first-party worker and the retained chat integration are available in development mode. Production cutover still requires removing the remaining external Agent hosting, installation, discovery, authentication, selection and packaging paths. The historical MCP instructions below cover standalone interoperability with the existing workspace-scoped scientific tool server.
 The owner requested removal of WinUI and WPF; historical code remains in Git history.
 
 ## Developer connection (manual first)

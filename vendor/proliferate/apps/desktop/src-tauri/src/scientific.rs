@@ -107,7 +107,7 @@ pub async fn scientific_read(
 ) -> Result<Value, String> {
     if !matches!(method.as_str(), "hello" | "scientific.status" | "scientific.runs" |
         "scientific.artifact" | "solver.backends" | "solver.table" | "workspace.files" |
-        "workspace.read" | "job.status") {
+        "workspace.read" | "job.status" | "job.latest") {
         return Err("Unknown or non-read scientific operation".into());
     }
     exchange(&state, &method, params).await

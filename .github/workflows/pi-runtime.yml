@@ -57,7 +57,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.19.0'
-      - run: npm install --ignore-scripts --no-audit --no-fund
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
       - name: Compile retained AnyHarness SDK contracts and reducer
         run: npm exec --yes --package=typescript@5.7.3 -- tsc -p ../../vendor/proliferate/anyharness/sdk/tsconfig.json
@@ -89,6 +89,7 @@ jobs:
           src/components/settings/panes/agent-auth/ApiKeyCreatorModal.test.tsx
           src/components/settings/screen/render-settings-section.test.tsx
           src/lib/access/pi
+          src/hooks/workspaces/workflows/selection
           src/hooks/chat/derived/use-pi-model-selector.test.tsx
           src/hooks/home/workflows/use-home-next-launch.test.tsx
           src/hooks/home/workflows/use-home-next-launch.concurrency.test.tsx

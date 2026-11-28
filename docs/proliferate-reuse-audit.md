@@ -27,7 +27,11 @@ unless otherwise stated.
 
 ## Implementation order
 
-The model-picker/provider UI and original Home/workspace session admission, outbox, transcript and tab adapters were merged in #11. They remain opt-in development-mode integrations, not a verified production desktop. The temporary preview UI and duplicate state were removed; do not reintroduce them. Follow the ordered [active roadmap](../ROADMAP.md#3a-desktop-baseline-and-active-execution-order-2026-11-28): stabilize main/Windows compile, isolate multiple native sessions, reuse durable history/context storage, detach workspace/file services from Agent lifecycle, retire remaining external Agent paths, and qualify real Windows packaging. Add only missing scientific-specific UI atop existing surfaces. Prove credential protection, workspace isolation and true model context recovery, not just UI rendering.
+The original Home/workspace and model-picker paths were adapted in #11. Bounded multi-session admission followed in #14. Both are available in opt-in development mode. Continue through the ordered [active roadmap](../ROADMAP.md#3a-desktop-baseline-and-active-execution-order-2026-11-28) with durable history and context, standalone workspace/file services, external Agent retirement and Windows installer acceptance.
+
+For durability, KEEP the existing directory, outbox, reducer, app profile and `SessionEventEnvelope` contract. ADAPT the existing workspace selection and history replay paths to hydrate Pi sessions from the host under their original session IDs. The existing composer and outbox resume verified text-only sessions on an explicit new send. The upstream SQLite `sessions` and `session_events` tables bind records to the AnyHarness launch and workspace domain. ADD a Pi transport journal in the existing private app profile, scoped to the canonical authorized workspace. It supplies committed prompt and public event records to the existing reducer. The runtime owns admission and uncertainty tracking. Pi retains all research and tool decisions. External Agent retirement remains milestone 4.
+
+The host seeds Pi with verified user and assistant text through its SDK state. Full tool context still needs a persistence contract. The pinned Pi SDK's `SessionManager` file writer serializes complete message entries. Evaluate an explicit context projection that excludes hidden reasoning and credentials, preserves necessary tool dependencies and reconciles interrupted scientific jobs without resubmission.
 
 ## Review checklist
 

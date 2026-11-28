@@ -13,7 +13,8 @@ try {
     workspace: process.env.GRIDAGENT_NATIVE_WORKSPACE, allowTasks, runShell: isolatedShell(client)});
   // Confirm the scoped service is reachable before advertising readiness.
   await client.request("hello");
-  await serveWorker({agent, projectEvent, input: process.stdin, output: process.stdout});
+  await serveWorker({agent, projectEvent, input: process.stdin, output: process.stdout,
+    expectContext: process.env.GRIDAGENT_PI_RESTORE_TEXT === "1"});
 } finally {
   client.close();
 }

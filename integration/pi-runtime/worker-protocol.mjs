@@ -1,4 +1,5 @@
 import { once } from "node:events";
+import { isCompleteTextTurn, restoreTextContext } from "./text-context.mjs";
 
 const MAX_FRAME = 64 * 1024;
 const validId = id => typeof id === "string" && /^[a-f0-9]{32}$/.test(id);
@@ -24,8 +25,15 @@ export async function* frames(input) {
 }
 
 /** One in-flight prompt; request IDs and tool-call IDs have distinct fields. */
-export async function serveWorker({agent, projectEvent, input, output}) {
+export async function serveWorker({agent, projectEvent, input, output, expectContext = false}) {
   let active = null, pending = null;
+  let streamed = "", cancelled = false;
+  const requests = frames(input);
+  if (expectContext) {
+    const first = await requests.next();
+    if (!first.value) throw new Error("Missing Pi text context");
+    restoreTextContext(agent, JSON.parse(first.value));
+  }
   let writeQueue = Promise.resolve();
   let queuedBytes = 0;
   let failed = false;
@@ -48,11 +56,16 @@ export async function serveWorker({agent, projectEvent, input, output}) {
   };
   const unsubscribe = agent.subscribe(event => {
     const projected = projectEvent(event);
-    if (projected && active !== null) emit({...projected, id: active});
+    if (!projected || active === null) return;
+    if (projected.kind === "text" && streamed !== null) {
+      streamed += projected.delta;
+      if (streamed.length > MAX_FRAME) streamed = null;
+    }
+    emit({...projected, id: active});
   });
-  emit({kind: "ready", version: 1});
+  emit({kind: "ready", version: 1, ...(expectContext ? {restored: true} : {})});
   try {
-    for await (const line of frames(input)) {
+    for await (const line of requests) {
       let request;
       try { request = JSON.parse(line ?? ""); } catch { request = null; }
       if (!request || !validId(request.id)) {
@@ -62,7 +75,7 @@ export async function serveWorker({agent, projectEvent, input, output}) {
       if (request.method === "abort") {
         // A host can request cancellation after settlement was queued but
         // before it observed that event. Stale aborts are harmless no-ops.
-        if (request.id === active) agent.abort();
+        if (request.id === active) { cancelled = true; agent.abort(); }
         continue;
       }
       if (request.method !== "prompt" || active !== null ||
@@ -72,12 +85,19 @@ export async function serveWorker({agent, projectEvent, input, output}) {
       }
       active = request.id;
       const id = active;
+      const priorCount = agent.state.messages?.length;
+      streamed = "";
+      cancelled = false;
+      let contextOk = false;
       pending = Promise.resolve().then(() => agent.prompt(request.text)).then(() => {
         if (agent.state.errorMessage) emit({kind: "error", id, code: "provider_error"});
+        else if (!cancelled && streamed !== null && priorCount !== undefined) {
+          contextOk = isCompleteTextTurn(agent.state.messages.slice(priorCount), request.text, streamed);
+        }
       }).catch(() => emit({kind: "error", id, code: "agent_failure"}))
         .finally(() => {
           active = null;
-          emit({kind: "settled", id});
+          emit({kind: "settled", id, ...(contextOk ? {context_ok: true} : {})});
         });
     }
   } finally {

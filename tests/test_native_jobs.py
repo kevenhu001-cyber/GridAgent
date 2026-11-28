@@ -17,7 +17,13 @@ def test_job_identity_and_cancellation(tmp_path):
     def submit(identifier, entry="study.py"):
         return jobs.submit(tmp_path, identifier, entry, [], [], launch=launch)
 
+    assert dispatch(tmp_path, "job.latest", {}) == {"job": None}
+    assert not (tmp_path / "native-jobs").exists()
     assert submit(first)["status"] == "queued"
+    assert dispatch(tmp_path, "job.latest", {})["job"] == {
+        "job_id": first, "status": "queued", "outcome": "unconfirmed",
+        "run_id": None, "cancellation_requested": False,
+    }
     assert submit(first)["status"] == "queued"
     assert launches == [first]
     with pytest.raises(ValueError, match="another request"):
@@ -38,6 +44,12 @@ def test_job_identity_and_cancellation(tmp_path):
     jobs.run_worker(tmp_path, second, execute=lambda *a, **k: pytest.fail("Duplicate execution"))
     assert jobs.status(tmp_path, second)["run_id"] == second
     assert jobs.status(tmp_path, second)["status"] == "ok"
+    recorded = dispatch(tmp_path, "job.latest", {})["job"]
+    assert (recorded["job_id"], recorded["run_id"], recorded["outcome"]) == (second, second, "recorded_terminal")
+    assert launches == [first, second]
+    ws.set_enabled(tmp_path, False)
+    with pytest.raises(ValueError, match="disabled"):
+        dispatch(tmp_path, "job.latest", {})
 
 
 def test_mutations_default_disabled_and_hash_guarded(tmp_path):

@@ -5,7 +5,7 @@ import type { ModelSelectorSelection } from "#product/lib/domain/chat/models/mod
 import { isWorkspaceDirectoryMissing } from "#product/lib/domain/workspaces/availability";
 import { removeSessionRecord } from "#product/stores/sessions/session-records";
 import { useSessionIntentStore } from "#product/stores/sessions/session-intent-store";
-import { canSendPiSession, openPiProductSession, closePiProductSession } from "./product-session";
+import { canSendPiSession, openPiProductSession, closePiProductSession, resumePiProductSession } from "./product-session";
 
 /** Existing composer launch seam. The caller owns its draft, selection guard,
  * and outbox. Admission never sends a prompt directly or falls back to an agent.
@@ -23,8 +23,13 @@ export async function submitPiWorkspacePrompt(input:{
     throw new Error("Selected workspace is not authorized for native Pi.");
   let id=input.activeSessionId;
   let created=false;
+  let resumed=false;
   if (id) {
-    if (!canSendPiSession(id,input.workspace.id)) throw new Error("This session cannot send native Pi prompts.");
+    if (!canSendPiSession(id,input.workspace.id)) {
+      await resumePiProductSession({ bridge: input.bridge, sessionId: id,
+        workspaceId: input.workspace.id, workspacePath: input.workspace.path });
+      resumed=true;
+    }
   } else {
     const choice=input.selection;
     if (!choice || !["openai","anthropic","google"].includes(choice.kind)) throw new Error("Choose a configured Pi model.");
@@ -38,6 +43,7 @@ export async function submitPiWorkspacePrompt(input:{
   }
   if (!input.isCurrent()) {
     if(created) await discardEmptySession(id);
+    if(resumed) await closePiProductSession(id, true);
     throw new Error("Workspace or session changed before sending. Your draft is preserved.");
   }
   // Queue before activation; no prompt transport calls from the composer.
@@ -48,6 +54,7 @@ export async function submitPiWorkspacePrompt(input:{
     const intent=useSessionIntentStore.getState().entriesById[input.promptId];
     if (intent?.kind!=="send_prompt" || intent.clientSessionId!==id) {
       if(created) await discardEmptySession(id);
+      if(resumed) await closePiProductSession(id, true);
       throw new Error("Could not enqueue the native prompt. Your draft is preserved.");
     }
   }

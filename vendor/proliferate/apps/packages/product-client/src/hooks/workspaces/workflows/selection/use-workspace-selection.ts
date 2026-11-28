@@ -16,6 +16,8 @@ import { useSessionTranscriptStore } from "#product/stores/sessions/session-tran
 import { clearWorkspaceRuntimeState } from "#product/hooks/workspaces/workflows/selection/clear-runtime-state";
 import { runHotWorkspaceReopen } from "#product/hooks/workspaces/workflows/selection/run-hot-workspace-reopen";
 import { runWorkspaceSelection } from "#product/hooks/workspaces/workflows/selection/run-workspace-selection";
+import { restorePiHistory } from "#product/lib/access/pi/history";
+import { useToastStore } from "#product/stores/toast/toast-store";
 
 function removeWorkspaceSessionRecordsForWorkspace(workspaceId: string): void {
   const removedSessionIds =
@@ -82,8 +84,14 @@ export function useWorkspaceSelection() {
           if (!workspace || workspace.surface!=="standard" || workspace.lifecycleState!=="active" ||
             workspace.availability==="workspace_directory_missing" || !await desktop.pi.matchesWorkspace(workspace.path))
             throw new Error("Choose a local workspace authorized for native Pi.");
+          const history = await desktop.pi.history?.list(workspace.path).catch(() => null);
           const now=useSessionSelectionStore.getState();
           if(now.workspaceSelectionNonce!==before.workspaceSelectionNonce || now.activeSessionVersion!==before.activeSessionVersion) return;
+          if (history && restorePiHistory(workspace.id, history) > 0) {
+            useToastStore.getState().show("Some saved Pi sessions could not be read.");
+          } else if (history === null) {
+            useToastStore.getState().show("Pi session history is unavailable.");
+          }
           if(now.selectedWorkspaceId===workspace.id && !options?.force) return;
           const requested=options?.initialActiveSessionId;
           const requestedSlot=requested ? getSessionRecord(requested) : null;

@@ -13,14 +13,16 @@ export class PiEventAdapter {
     tools: Map<string, {itemId: string; name: string}>; seenTools: Set<string>;
     failed: boolean; cancellationRequested: boolean} | null = null;
   private readonly sessionId: string;
-  constructor(sessionId: string, afterSeq = 0) {
+  private readonly now: () => string;
+  constructor(sessionId: string, afterSeq = 0, now = () => new Date().toISOString()) {
     if (!sessionId || !Number.isSafeInteger(afterSeq) || afterSeq < 0) throw new Error("Invalid Pi session cursor");
     this.sessionId = sessionId;
     this.seq = afterSeq;
+    this.now = now;
   }
 
   private envelope(event: SessionEvent, itemId?: string): SessionEventEnvelope {
-    return {sessionId: this.sessionId, seq: ++this.seq, timestamp: new Date().toISOString(),
+    return {sessionId: this.sessionId, seq: ++this.seq, timestamp: this.now(),
       turnId: this.active?.turnId ?? null, itemId: itemId ?? null, event};
   }
 

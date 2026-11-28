@@ -11,6 +11,7 @@ mod sidecar;
 mod scientific;
 mod pi_bridge;
 mod pi_credentials;
+mod pi_history;
 mod state;
 mod telemetry;
 mod updater_owned;
@@ -282,6 +283,9 @@ pub fn run() {
             pi_credentials::pi_delete_credential,
             pi_bridge::pi_matches_workspace,
             pi_bridge::pi_open,
+            pi_bridge::pi_resume,
+            pi_bridge::pi_list_history,
+            pi_bridge::pi_dismiss_history,
             pi_bridge::pi_prompt,
             pi_bridge::pi_abort,
             pi_bridge::pi_poll,

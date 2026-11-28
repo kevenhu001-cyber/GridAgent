@@ -2,7 +2,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { Workspace } from "@anyharness/sdk";
 import type { DesktopPiBridge, PiEvent } from "../../../host/desktop-bridge";
 import { submitPiWorkspacePrompt } from "./workspace-submit";
-import { closePiProductSession, ownsPiSession } from "./product-session";
+import { closePiProductSession, dispatchPiPromptIntent, getPiSessionSelection, ownsPiSession } from "./product-session";
+import { restorePiHistory } from "./history";
 import { getSessionRecord, removeSessionRecord } from "#product/stores/sessions/session-records";
 import { useSessionIntentStore } from "#product/stores/sessions/session-intent-store";
 
@@ -66,4 +67,35 @@ it("does not mistake a post-enqueue exception for an unsent prompt",async()=>{
   expect(outcome).toBe(id);
   expect(bridge.close).not.toHaveBeenCalled();
   expect(useSessionIntentStore.getState().entriesById.prompt).toBeDefined();
+});
+
+it("resumes an eligible session on new send and appends to the existing transcript", async () => {
+  const {input, deps, bridge} = fixture();
+  const revision = "f".repeat(32);
+  bridge.resume = vi.fn(async () => ({provider: "openai", modelId: "saved-model"}));
+  restorePiHistory(workspace.id, {skipped: 0, sessions: [{
+    id, modelId: "saved-model", provider: "openai", resumeRevision: revision,
+    turns: [{id: revision, text: "Original prompt", timestamp: "2026-11-28T00:00:00Z",
+      cancellationRequested: false, events: [{kind: "text", id: revision, delta: "Original answer"},
+        {kind: "settled", id: revision}]}],
+  }]});
+  expect(bridge.resume).not.toHaveBeenCalled();
+  expect(getPiSessionSelection(id)).toEqual({provider: "openai", modelId: "saved-model"});
+  const previous = getSessionRecord(id)!.transcript.lastSeq;
+  await submitPiWorkspacePrompt({...input, activeSessionId: id}, deps);
+  expect(bridge.resume).toHaveBeenCalledWith("/project", id, revision);
+  expect(bridge.open).not.toHaveBeenCalled();
+  expect(bridge.prompt).not.toHaveBeenCalled();
+  const request = "d".repeat(32);
+  vi.mocked(bridge.poll).mockResolvedValueOnce([
+    {kind: "text", id: request, delta: "Follow-up answer"}, {kind: "settled", id: request},
+  ]);
+  const intent = useSessionIntentStore.getState().entriesById.prompt;
+  if (intent?.kind !== "send_prompt") throw new Error("Missing follow-up outbox entry");
+  await dispatchPiPromptIntent(intent);
+  expect(bridge.prompt).toHaveBeenCalledTimes(1);
+  expect(bridge.prompt).toHaveBeenCalledWith(id, "calculate");
+  expect(getSessionRecord(id)?.transcript.lastSeq).toBeGreaterThan(previous);
+  expect(JSON.stringify(getSessionRecord(id)?.transcript)).toContain("Original answer");
+  expect(JSON.stringify(getSessionRecord(id)?.transcript)).toContain("Follow-up answer");
 });

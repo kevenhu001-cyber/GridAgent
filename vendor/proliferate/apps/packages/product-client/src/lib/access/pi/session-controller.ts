@@ -42,12 +42,18 @@ export class PiSessionController {
     for (const listener of this.listeners) listener(this.snapshot, events);
   }
 
-  async open(workspacePath: string, selection?: PiModelSelection) {
+  async open(workspacePath: string, selection?: PiModelSelection, history?: {id: string; revision: string}) {
     if (this.snapshot.status !== "closed") throw new Error("Pi session is not closed");
     this.publish({status: "opening", failure: null});
     try {
-      const sessionId = await this.bridge.open(workspacePath, selection);
-      this.publish({sessionId});
+      let restoredSelection: PiModelSelection | undefined;
+      if (history) {
+        if (!this.bridge.resume) throw new Error("Saved Pi context is unavailable");
+        restoredSelection = await this.bridge.resume(workspacePath, history.id, history.revision);
+        this.publish({sessionId: history.id});
+      } else {
+        this.publish({sessionId: await this.bridge.open(workspacePath, selection)});
+      }
       const deadline = Date.now() + 30_000;
       while (this.getSnapshot().status === "opening") {
         await this.poll();
@@ -56,13 +62,14 @@ export class PiSessionController {
         await delay(50);
       }
       if (this.getSnapshot().status !== "ready") throw new Error("Pi did not become ready");
-    } catch {
+      return restoredSelection;
+    } catch (error) {
       const sessionId = this.snapshot.sessionId;
       if (sessionId) {
         try { await this.bridge.close(sessionId); } catch { /* no automatic recovery */ }
       }
       this.publish({status: "failed", failure: "Pi could not start", sessionId: null});
-      throw new Error("Pi could not start");
+      throw new Error(history && typeof error === "string" ? error : "Pi could not start");
     }
   }
 
@@ -150,7 +157,8 @@ export class PiSessionController {
 
   async close() {
     const {sessionId, status, requestId} = this.snapshot;
-    if (this.closing || this.draining || this.polling || requestId || ["opening", "sending", "running", "cancelling"].includes(status)) {
+    if (this.closing || this.draining || this.polling || (requestId && status !== "failed") ||
+      ["opening", "sending", "running", "cancelling"].includes(status)) {
       throw new Error("Wait for Pi settlement before closing");
     }
     this.closing = true;

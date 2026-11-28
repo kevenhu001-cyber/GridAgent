@@ -1,4 +1,5 @@
 //! Development-only bridge to the embedded Pi worker. No external Agent fallback.
+use crate::pi_history::{self, Journal, Record, MAX_TURN_EVENT_BYTES};
 use serde_json::{json, Value};
 use std::{collections::HashMap, path::PathBuf, process::Stdio, time::Duration};
 use tauri::State;
@@ -9,6 +10,7 @@ use tokio::{
     task::JoinHandle,
     time::timeout,
 };
+use zeroize::Zeroizing;
 
 const MAX_FRAME: usize = 64 * 1024;
 // Each live session owns a Node worker plus its Python scientific service.
@@ -24,8 +26,19 @@ struct PiProcess {
     events: mpsc::Receiver<Value>,
     reader: JoinHandle<()>,
     ready: bool,
-    session_id: String,
-    active: Option<String>,
+    expect_restore: bool,
+    active: Option<ActiveTurn>,
+    journal: Journal,
+    api_key: Option<Zeroizing<String>>,
+}
+
+struct ActiveTurn {
+    id: String,
+    // An oversized batch leaves the persisted submission with an unknown outcome.
+    history: Option<Vec<Value>>,
+    history_bytes: usize,
+    prompt_redacted: bool,
+    cancellation_requested: bool,
 }
 
 impl Drop for PiProcess {
@@ -51,22 +64,26 @@ fn allowed_env(name: &str) -> bool {
         "LD_LIBRARY_PATH" | "COMSPEC" | "PATHEXT" | "GRIDAGENT_NATIVE_PYTHON" |
         "GRIDAGENT_NATIVE_WORKSPACE" | "GRIDAGENT_SANDBOX_RUNTIME" |
         "GRIDAGENT_PLUGIN_ROOT" | "GRIDAGENT_NATIVE_TASKS" |
-        "GRIDAGENT_PI_PROVIDER" | "GRIDAGENT_PI_MODEL" | "GRIDAGENT_PI_API_KEY")
+        "GRIDAGENT_PI_PROVIDER" | "GRIDAGENT_PI_MODEL")
 }
 
-fn valid_id(id: &str) -> bool {
+pub(super) fn valid_id(id: &str) -> bool {
     id.len() == 32 && id.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
 }
 
 // Reconstruct every public event. Never forward unknown fields or raw provider data.
-fn public_event(value: Value) -> Option<Value> {
+pub(super) fn public_event(value: Value) -> Option<Value> {
     let kind = value["kind"].as_str()?;
     if kind == "ready" {
-        return (value["version"].as_u64() == Some(1)).then(|| json!({"kind": "ready", "version": 1}));
+        if value["version"].as_u64() != Some(1) { return None; }
+        return Some(if value["restored"] == true {
+            json!({"kind": "ready", "version": 1, "restored": true})
+        } else { json!({"kind": "ready", "version": 1}) });
     }
     let id = value["id"].as_str()?;
     if !valid_id(id) { return None; }
     match kind {
+        "settled" if value["context_ok"] == true => Some(json!({"kind": kind, "id": id, "context_ok": true})),
         "started" | "finished" | "settled" | "rejected" => Some(json!({"kind": kind, "id": id})),
         "text" => Some(json!({"kind": kind, "id": id, "delta": value["delta"].as_str()?})),
         "error" => {
@@ -94,14 +111,12 @@ pub(crate) fn pi_enabled() -> bool {
 
 // Only compare a selected path to the already configured root. Never accept
 // a renderer path as authority to launch Python or access a new workspace.
-fn matches_workspace(path: &str) -> bool {
+fn authorized_workspace(path: &str) -> Option<PathBuf> {
     let selected = PathBuf::from(path);
-    if !selected.is_absolute() { return false; }
-    let Ok(configured) = configured_path("GRIDAGENT_NATIVE_WORKSPACE", false) else { return false; };
-    match (selected.canonicalize(), configured.canonicalize()) {
-        (Ok(selected), Ok(configured)) => selected == configured,
-        _ => false,
-    }
+    if !selected.is_absolute() { return None; }
+    let selected = selected.canonicalize().ok()?;
+    let configured = configured_path("GRIDAGENT_NATIVE_WORKSPACE", false).ok()?.canonicalize().ok()?;
+    (selected == configured).then_some(configured)
 }
 
 #[tauri::command]
@@ -109,7 +124,34 @@ pub fn pi_mode() -> bool { pi_enabled() }
 
 #[tauri::command]
 pub fn pi_matches_workspace(path: String) -> bool {
-    pi_enabled() && matches_workspace(&path)
+    pi_enabled() && authorized_workspace(&path).is_some()
+}
+
+async fn history_directory(workspace: PathBuf) -> Result<PathBuf, String> {
+    let app = crate::app_config::app_dir_path()?;
+    tauri::async_runtime::spawn_blocking(move || pi_history::directory(&app, &workspace))
+        .await.map_err(|_| "Pi history unavailable")?
+}
+
+#[tauri::command]
+pub async fn pi_list_history(workspace_path: String) -> Result<pi_history::History, String> {
+    if !pi_enabled() { return Err("Native Pi development mode is disabled".into()); }
+    let workspace = authorized_workspace(&workspace_path)
+        .ok_or("Selected workspace is not authorized for Pi history")?;
+    let dir = history_directory(workspace).await?;
+    tauri::async_runtime::spawn_blocking(move || pi_history::recent(&dir))
+        .await.map_err(|_| "Pi history unavailable")?
+}
+
+#[tauri::command]
+pub async fn pi_dismiss_history(state: State<'_, PiState>, session_id: String) -> Result<(), String> {
+    if !pi_enabled() { return Err("Native Pi development mode is disabled".into()); }
+    let workspace = configured_path("GRIDAGENT_NATIVE_WORKSPACE", false)?
+        .canonicalize().map_err(|_| "Cannot resolve Pi workspace")?;
+    let dir = history_directory(workspace).await?;
+    let guard = state.0.lock().await;
+    if guard.contains_key(&session_id) { return Err("Close the live Pi session first".into()); }
+    pi_history::dismiss(dir, session_id).await
 }
 
 // Catalog discovery uses the same pinned worker installation, but does not
@@ -151,7 +193,13 @@ pub async fn pi_list_models() -> Result<Vec<Value>, String> {
 }
 
 impl PiProcess {
-    fn start(provider: &str, model_id: &str, stored_key: Option<String>) -> Result<Self, String> {
+    fn start(
+        provider: &str,
+        model_id: &str,
+        stored_key: Option<String>,
+        journal: Journal,
+        expect_restore: bool,
+    ) -> Result<Self, String> {
         if !pi_enabled() {
             return Err("Embedded Pi bridge requires explicit development opt-in".into());
         }
@@ -171,8 +219,12 @@ impl PiProcess {
         // Explicit developer environment remains supported if no stored key exists.
         command.env("GRIDAGENT_PI_PROVIDER", provider);
         command.env("GRIDAGENT_PI_MODEL", model_id);
-        if let Some(key) = stored_key {
-            command.env("GRIDAGENT_PI_API_KEY", key);
+        if expect_restore { command.env("GRIDAGENT_PI_RESTORE_TEXT", "1"); }
+        let api_key = stored_key
+            .or_else(|| std::env::var("GRIDAGENT_PI_API_KEY").ok())
+            .map(Zeroizing::new);
+        if let Some(key) = &api_key {
+            command.env("GRIDAGENT_PI_API_KEY", key.as_str());
         }
         let mut child = command.spawn().map_err(|_| "Cannot start embedded Pi worker")?;
         let input = child.stdin.take().ok_or("Pi stdin unavailable")?;
@@ -192,7 +244,54 @@ impl PiProcess {
                 if send.send(event).await.is_err() { break; }
             }
         });
-        Ok(Self { _child: child, input, events, reader, ready: false, session_id: uuid::Uuid::new_v4().simple().to_string(), active: None })
+        Ok(Self {
+            _child: child,
+            input,
+            events,
+            reader,
+            ready: false,
+            expect_restore,
+            active: None,
+            journal,
+            api_key,
+        })
+    }
+
+    fn credential(&self) -> Option<&str> {
+        self.api_key.as_ref()
+            .map(|key| key.as_str())
+            .filter(|key| !key.trim().is_empty())
+    }
+
+    async fn capture(&mut self, event: &Value) -> Result<(), String> {
+        let turn = self.active.as_mut().ok_or("No active Pi turn")?;
+        if let Some(history) = &mut turn.history {
+            let bytes = serde_json::to_vec(event).map_err(|_| "Invalid public Pi event")?;
+            turn.history_bytes += bytes.len() + 1;
+            if turn.history_bytes <= MAX_TURN_EVENT_BYTES {
+                history.push(event.clone());
+            } else {
+                turn.history = None;
+            }
+        }
+        if event["kind"] == "settled" {
+            let turn = self.active.take().ok_or("No settling Pi turn")?;
+            if let Some(mut events) = turn.history {
+                let pure_text = events.iter().all(|event| {
+                    matches!(event["kind"].as_str(), Some("started" | "text" | "finished" | "settled"))
+                });
+                let redacted = self.credential().is_some_and(|key| pi_history::redact_events(&mut events, key));
+                let context_safe = event["context_ok"] == true && pure_text
+                    && !redacted && !turn.prompt_redacted && !turn.cancellation_requested;
+                self.journal.append(Record::Settled {
+                    id: turn.id,
+                    events,
+                    cancellation_requested: turn.cancellation_requested,
+                    context_safe,
+                }).await?;
+            }
+        }
+        Ok(())
     }
 
     async fn send(&mut self, frame: Value) -> Result<(), String> {
@@ -207,7 +306,7 @@ impl PiProcess {
     }
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PiModelSelection {
     provider: String,
@@ -222,9 +321,10 @@ fn validate_model_id(id: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn pi_open(state: State<'_, PiState>, workspace_path: String, selection: Option<PiModelSelection>) -> Result<String, String> {
-    if !pi_enabled() || !matches_workspace(&workspace_path) {
-        return Err("Selected workspace does not match the configured Pi workspace".into());
-    }
+    if !pi_enabled() { return Err("Native Pi development mode is disabled".into()); }
+    let workspace = authorized_workspace(&workspace_path)
+        .ok_or("Selected workspace does not match the configured Pi workspace")?;
+    let history_dir = history_directory(workspace).await?;
     let mut guard = state.0.lock().await;
     if guard.len() >= MAX_PI_SESSIONS { return Err("Pi session limit reached".into()); }
     let explicit = selection.is_some();
@@ -241,10 +341,49 @@ pub async fn pi_open(state: State<'_, PiState>, workspace_path: String, selectio
     if explicit && stored_key.is_none() {
         return Err("Selected provider has no local credential".into());
     }
-    let process = PiProcess::start(&provider, &model_id, stored_key)?;
-    let id = process.session_id.clone();
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    let journal = Journal::new(&history_dir, &id, &model_id, &provider);
+    let process = PiProcess::start(&provider, &model_id, stored_key, journal, false)?;
     guard.insert(id.clone(), process);
     Ok(id)
+}
+
+#[tauri::command]
+pub async fn pi_resume(
+    state: State<'_, PiState>,
+    workspace_path: String,
+    session_id: String,
+    revision: String,
+) -> Result<PiModelSelection, String> {
+    if !pi_enabled() { return Err("Native Pi development mode is disabled".into()); }
+    let workspace = authorized_workspace(&workspace_path)
+        .ok_or("Selected workspace is not authorized for Pi history")?;
+    let dir = history_directory(workspace).await?;
+    let mut guard = state.0.lock().await;
+    if guard.len() >= MAX_PI_SESSIONS { return Err("Pi session limit reached".into()); }
+    if guard.contains_key(&session_id) { return Err("Pi session is already open".into()); }
+    let id = session_id.clone();
+    let (saved, journal, frame) = tauri::async_runtime::spawn_blocking(move || pi_history::resume(&dir, &id, &revision))
+        .await.map_err(|_| "Pi history unavailable")??;
+    let provider = saved.provider.ok_or("Saved Pi provider is unavailable")?;
+    crate::pi_credentials::validate_provider(&provider)?;
+    validate_model_id(&saved.model_id)?;
+    let lookup = provider.clone();
+    let stored = tauri::async_runtime::spawn_blocking(move || crate::pi_credentials::read_provider_key(&lookup))
+        .await.map_err(|_| "Credential worker unavailable")??;
+    let key = stored.or_else(|| {
+        (std::env::var("GRIDAGENT_PI_PROVIDER").as_deref() == Ok(provider.as_str()))
+            .then(|| std::env::var("GRIDAGENT_PI_API_KEY").ok()).flatten()
+    }).filter(|key| !key.trim().is_empty()).ok_or("Saved Pi provider has no local credential")?;
+    if frame["turns"].as_array().is_some_and(|turns| turns.iter().any(|turn| {
+        ["user", "assistant"].iter().any(|field| turn[*field].as_str().is_some_and(|text| text.contains(&key)))
+    })) {
+        return Err("Saved Pi text cannot be restored with the active credential".into());
+    }
+    let mut process = PiProcess::start(&provider, &saved.model_id, Some(key), journal, true)?;
+    process.send(frame).await?;
+    guard.insert(session_id, process);
+    Ok(PiModelSelection { provider, model_id: saved.model_id })
 }
 
 #[tauri::command]
@@ -261,9 +400,25 @@ pub async fn pi_prompt(state: State<'_, PiState>, session_id: String, text: Stri
         return Err("Pi session not ready or busy".into());
     }
     let id = uuid::Uuid::new_v4().simple().to_string();
+    let saved_text = match process.credential() {
+        Some(key) => text.replace(key, "[redacted]"),
+        None => text.clone(),
+    };
+    let prompt_redacted = saved_text != text;
+    process.journal.append(Record::Submitted {
+        id: id.clone(),
+        text: saved_text,
+        timestamp: chrono::Utc::now(),
+    }).await?;
     // On failed/uncertain send the process is discarded; never replay the prompt.
     process.send(json!({"method": "prompt", "id": id, "text": text})).await?;
-    process.active = Some(id.clone());
+    process.active = Some(ActiveTurn {
+        id: id.clone(),
+        history: Some(Vec::new()),
+        history_bytes: 0,
+        prompt_redacted,
+        cancellation_requested: false,
+    });
     guard.insert(session_id, process);
     Ok(id)
 }
@@ -274,10 +429,11 @@ pub async fn pi_abort(state: State<'_, PiState>, session_id: String, id: String)
     let Some(mut process) = guard.remove(&session_id) else {
         return Err("No matching Pi session".into());
     };
-    if process.active.as_deref() != Some(id.as_str()) {
+    let Some(turn) = process.active.as_mut().filter(|turn| turn.id == id) else {
         guard.insert(session_id, process);
         return Err("No matching active Pi prompt".into());
-    }
+    };
+    turn.cancellation_requested = true;
     process.send(json!({"method": "abort", "id": id})).await?;
     guard.insert(session_id, process);
     Ok(())
@@ -297,14 +453,16 @@ pub async fn pi_poll(state: State<'_, PiState>, session_id: String) -> Result<Ve
             match process.events.try_recv() {
                 Ok(event) => {
                     if event["kind"] == "ready" {
-                        if process.ready { break 'poll Err("Duplicate Pi ready event".to_string()); }
+                        if process.ready || (event["restored"] == true) != process.expect_restore {
+                            break 'poll Err("Unexpected Pi ready event".to_string());
+                        }
                         process.ready = true;
                     } else {
-                        if event["id"].as_str() != process.active.as_deref() || !process.ready {
+                        if event["id"].as_str() != process.active.as_ref().map(|turn| turn.id.as_str()) || !process.ready {
                             break 'poll Err("Pi event correlation failed; session discarded".to_string());
                         }
-                        if event["kind"] == "settled" {
-                            process.active = None;
+                        if let Err(error) = process.capture(&event).await {
+                            break 'poll Err(error);
                         }
                     }
                     batch.push(event);
@@ -362,6 +520,6 @@ mod tests {
         assert!(!allowed_env("OPENAI_API_KEY"));
         assert!(!allowed_env("NODE_OPTIONS"));
         assert!(!allowed_env("PYTHONPATH"));
-        assert!(allowed_env("GRIDAGENT_PI_API_KEY"));
+        assert!(!allowed_env("GRIDAGENT_PI_API_KEY"));
     }
 }

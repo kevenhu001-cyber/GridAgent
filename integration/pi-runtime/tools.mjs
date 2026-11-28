@@ -19,6 +19,7 @@ const reads = [
     schema({run_id: id, table: string(80), offset: page}, ["run_id", "table"])],
   ["scientific_job_status", "Scientific job status", "Inspect a durable scientific job by its returned ID.", "job.status",
     schema({job_id: id}, ["job_id"])],
+  ["latest_scientific_job", "Latest scientific job", "Find this workspace's latest committed job ID and recorded state. A queued or running record leaves the outcome and worker liveness unconfirmed.", "job.latest", schema()],
 ];
 const writes = [
   ["write_project_file", "Write project file", "Create a project file or replace it using its current SHA-256. The workspace grant is required.", "workspace.write",

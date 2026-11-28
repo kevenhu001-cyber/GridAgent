@@ -222,6 +222,7 @@ export function patchSessionRecord(
       directoryPatch.pendingConfigChanges = patch.pendingConfigChanges;
     }
     if ("status" in patch) directoryPatch.status = patch.status ?? null;
+    if ("piResume" in patch) directoryPatch.piResume = patch.piResume ?? null;
     if ("lastPromptAt" in patch) directoryPatch.lastPromptAt = patch.lastPromptAt ?? null;
     if ("hasAttemptedPrompt" in patch && patch.hasAttemptedPrompt !== undefined) {
       directoryPatch.hasAttemptedPrompt = patch.hasAttemptedPrompt;

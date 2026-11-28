@@ -55,6 +55,8 @@ export interface SessionDirectoryEntry {
   sessionActivity: SessionActivity | null;
   status: SessionStatus | null;
   lastPromptAt: string | null;
+  /** Host revision for a restored Pi transcript that can accept a new prompt. */
+  piResume?: { revision: string; provider: string } | null;
   hasAttemptedPrompt: boolean;
   streamConnectionState: SessionStreamConnectionState;
   transcriptHydrated: boolean;
@@ -80,6 +82,7 @@ export interface DirectoryEntryInput {
   sessionActivity?: SessionActivity | null;
   status?: SessionStatus | null;
   lastPromptAt?: string | null;
+  piResume?: { revision: string; provider: string } | null;
   hasAttemptedPrompt?: boolean;
   streamConnectionState?: SessionStreamConnectionState;
   transcriptHydrated?: boolean;
@@ -145,6 +148,9 @@ export function normalizeDirectoryEntryInput(
         : existing?.sessionActivity ?? null,
     status: input.status ?? existing?.status ?? null,
     lastPromptAt: input.lastPromptAt ?? existing?.lastPromptAt ?? null,
+    ...(input.piResume !== undefined || existing?.piResume !== undefined
+      ? { piResume: input.piResume !== undefined ? input.piResume : existing?.piResume }
+      : {}),
     hasAttemptedPrompt:
       input.hasAttemptedPrompt === true || existing?.hasAttemptedPrompt === true,
     streamConnectionState:
@@ -202,6 +208,7 @@ export function directoryEntryEqual(
     && a.sessionActivity === b.sessionActivity
     && a.status === b.status
     && a.lastPromptAt === b.lastPromptAt
+    && a.piResume === b.piResume
     && a.hasAttemptedPrompt === b.hasAttemptedPrompt
     && a.streamConnectionState === b.streamConnectionState
     && a.transcriptHydrated === b.transcriptHydrated

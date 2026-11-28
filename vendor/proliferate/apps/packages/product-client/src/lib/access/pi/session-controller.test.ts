@@ -54,12 +54,16 @@ describe("native Pi session controller", () => {
   });
 
   it("rejects cross-request events and preserves the failure", async () => {
-    const {controller, push} = fixture();
+    const {bridge, controller, push} = fixture();
     await controller.open("/project");
     await controller.prompt("simulate");
     push({kind: "text", id: "wrong", delta: "wrong"});
     await expect(controller.poll()).rejects.toThrow();
     expect(controller.getSnapshot().status).toBe("failed");
+    expect(controller.getSnapshot().requestId).toBe("request-1");
+    // The host decides whether an interrupted worker remains active.
+    await controller.close();
+    expect(bridge.close).toHaveBeenCalledWith("session-1");
   });
 
   it("does not label provider failure as a successful turn", async () => {

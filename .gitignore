@@ -17,3 +17,5 @@ offline-evaluation/
 desktop/**/bin/
 desktop/**/obj/
 
+# Embedded Pi development dependencies
+/integration/pi-runtime/node_modules/

@@ -44,6 +44,12 @@ export function useSessionDismissActions() {
         showToast("Native Pi is still running or its outcome is uncertain. Cancel or inspect the current work first.");
         return false;
       }
+      try {
+        await host.desktop?.pi?.history?.dismiss(sessionId);
+      } catch {
+        showToast("Pi session history could not be dismissed.");
+        return false;
+      }
       cleanupDismissedSession(sessionId,workspaceId,options);
       return true;
     }

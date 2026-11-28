@@ -8,11 +8,19 @@ execution permissions. The temporary independent native chat preview has been re
 ## Development
 
 Requires Node >=22.19.0 and a trusted installed GridAgent Python interpreter.
-Install dependencies with npm install, then run npm test. Package versions
-are pinned; transitive lockfile generation and reproducible packaging remain
-release gates.
+From this directory, install the locked worker dependencies and run the tests:
 
-The worker reads JSON lines (prompt and abort) on stdin and emits public
+```sh
+npm ci --ignore-scripts --no-audit --no-fund
+npm test
+```
+
+The lockfile covers the development worker. Production packaging still needs
+private Node and Python runtimes, solver dependencies and installer validation.
+With GridAgent installed in the current Python environment, run
+`python smoke_install.py` to exercise worker startup and the native IPC handshake.
+
+The worker reads JSON lines (prompt and abort, with an optional startup text seed) on stdin and emits public
 text, tool status and terminal events on stdout. Configure it in the trusted
 host environment: GRIDAGENT_NATIVE_PYTHON, GRIDAGENT_NATIVE_WORKSPACE,
 GRIDAGENT_PI_PROVIDER (openai/anthropic/google), GRIDAGENT_PI_MODEL,
@@ -21,7 +29,7 @@ GRIDAGENT_NATIVE_TASKS=1 does not bypass the existing workspace grant.
 
 ## Desktop development bridge
 
-The debug Tauri host now exposes `pi_open`, `pi_prompt`, `pi_poll`, `pi_abort` and `pi_close` via the typed desktop `embeddedPi` client. Set `GRIDAGENT_PI_DEV=1`, `GRIDAGENT_PI_NODE` to an absolute Node executable and `GRIDAGENT_PI_WORKER` to the absolute installed `worker.mjs`, in addition to the trusted configuration above. The host returns a unique session ID from `pi_open`; pass it to every other command. Poll for protocol `ready` before prompting and keep polling through `settled`; tool IDs are separate from prompt IDs. The host admits one development session, validates and bounds public events, and never replays failed requests or launches an external Agent as fallback. The shared ProductClient DesktopBridge exposes the typed Pi capability; the original ChatView is restored and not yet wired to this capability. The selected local workspace must canonically match GRIDAGENT_NATIVE_WORKSPACE; pi_open repeats that check. Production packaging remains pending. The Rust host requires actual desktop compilation and integration testing.
+The debug Tauri host exposes `pi_open`, `pi_prompt`, `pi_poll`, `pi_abort` and `pi_close` via the typed desktop `embeddedPi` client. Set `GRIDAGENT_PI_DEV=1`, `GRIDAGENT_PI_NODE` to an absolute Node executable and `GRIDAGENT_PI_WORKER` to the absolute `worker.mjs`, in addition to the trusted configuration above. The host returns a unique session ID from `pi_open` for use in subsequent commands. Poll for protocol `ready` before prompting and keep polling through `settled`. Tool IDs are separate from prompt IDs. Up to four live development workers share the host-authorized workspace. The host bounds public events and rejects unauthorized paths and cross-session requests. Failed requests are never replayed. The original Home and workspace composers use this capability in development mode. See the [Windows desktop build check](../proliferate/README.md#windows-desktop-build-check) for compile validation.
 
 ## Tools
 
@@ -46,7 +54,7 @@ No external executable extension discovery is enabled.
 
 ## Shared session controller
 
-`ProductClient` now receives the typed native Pi capability via `DesktopBridge.pi`. The shared `PiSessionController` owns the host session ID, prompt ID, readiness, cancellation, event batches and settlement; it does not import Tauri or start any external Agent. `drainTurn` feeds the retained product session transport. The `PiEventAdapter` translates admitted prompts and public Pi events into existing SDK SessionEventEnvelope objects; it holds only active transport identity and sequence, not transcript history. Existing SDK reducers and stores remain the presentation authority. Node contract tests and a shared reducer test are provided. The existing workspace and Home launch entry points and prompt/cancel dispatcher are adapted in development mode. Real GUI/provider verification, multiple live sessions and durable restoration remain pending.
+`ProductClient` now receives the typed native Pi capability via `DesktopBridge.pi`. The shared `PiSessionController` owns the host session ID, prompt ID, readiness, cancellation, event batches and settlement; it does not import Tauri or start any external Agent. `drainTurn` feeds the retained product session transport. The `PiEventAdapter` translates admitted prompts and public Pi events into existing SDK SessionEventEnvelope objects; it holds only active transport identity and sequence, not transcript history. Existing SDK reducers and stores remain the presentation authority. Node contract tests and a shared reducer test are provided. The existing workspace and Home launch entry points and prompt/cancel dispatcher are adapted in development mode. Real GUI/provider verification and tool context restoration remain pending.
 
 ## Model and credential data adapters
 
@@ -76,15 +84,35 @@ sessions are admitted up to the host bound (currently four worker processes,
 each with its own scoped scientific service); every command stays keyed to
 its own session ID. Unsupported attachments/config interactions fail
 explicitly. Disconnection/uncertain submission is not replayed. There is no
-second conversation store. The existing workspace composer calls this materialization seam, enqueues into the original outbox and activates the original chat tab. Admission checks the host-authorized path and selection generation, retains drafts on pre-enqueue failure, and pins the running worker model. Native session dismissal closes an idle worker; pending sends prevent closure. This remains opt-in development mode, bounded live workers sharing the existing authorized local workspace inventory, text-only prompts. No implicit recovery of a restored Pi session; durable history, per-session workspaces, independent workspace inventory and production desktop validation remain open.
+second conversation store. The existing workspace composer calls this materialization seam, enqueues into the original outbox and activates the original chat tab. Admission checks the host-authorized path and selection generation, retains drafts on pre-enqueue failure, and pins the running worker model. Native session dismissal closes an idle worker; pending sends prevent closure. This remains opt-in development mode, bounded live workers sharing the existing authorized local workspace inventory, text-only prompts. Eligible pure-text sessions can continue after restart. Tool context, per-session workspaces, independent workspace inventory and production desktop validation remain open.
+
+## Desktop history and text continuation
+
+After reopening an authorized workspace, the existing session directory and tabs
+show up to 12 recent Pi sessions from the current app profile. Each session is
+keyed by its original ID and the canonical configured workspace. The transport
+journal commits a prompt before worker dispatch and commits bounded public
+events after observing settlement. A prompt without a settlement record
+appears with an unknown outcome. Startup and history reads never dispatch that
+prompt or a scientific job. Dismissing a session hides it from the recent
+history and retains the underlying journal.
+
+The profile stores public prompt and assistant text and tool status. Native
+credential fields, hidden reasoning, tool arguments and raw provider responses
+are excluded. The host redacts an exact occurrence of the active provider key,
+including across streamed text chunks. The development limits are 1 MiB per
+session and 256 KiB of public events per turn. An oversized turn remains
+visible live, with its recorded prompt and unknown outcome on restore. Model
+context and interrupted scientific job reconciliation remain separate
+milestone 2 work.
 
 ## Remaining integration
 
 Follow the [reuse-first inventory](../../docs/proliferate-reuse-audit.md).
 NativePiChat, NativePiChatGate and PiConversation were removed; do not reintroduce a parallel product UI or transcript store.
-The original session directory, outbox, transcript, model picker and API-key UI are already adapted in opt-in mode. Follow the current [roadmap](../../ROADMAP.md): stabilize main, enable isolated multi-session lifecycle, persist history and full model context, detach workspace/file services from Agent lifecycle, remove remaining external Agent launch/discovery/install/auth paths, then validate real Windows desktop and sandbox execution. Current tests exercise SDK factories, dispatch, event projection
+The original session directory, outbox, transcript, model picker and API-key UI are already adapted in opt-in mode. Follow the current [roadmap](../../ROADMAP.md): qualify the Windows build, restore full model context, detach workspace/file services from Agent lifecycle, remove remaining external Agent launch/discovery/install/auth paths, then validate real Windows desktop and sandbox execution. Current tests exercise SDK factories, dispatch, event projection
 and mocked shell job responses; they are not real model or sandbox tests.
 
 ### Home and workspace selection
 
-In opt-in native mode the existing Home composer receives the same Pi picker props and persisted model selection as the workspace composer. Existing authorized standard local workspaces only: no Cowork/worktree/cloud creation or deferred Agent launch. Both entry points use submitPiWorkspacePrompt and the original outbox. Native workspace selection reuses the original selection and shell-intent stores without bootstrapping an external Agent session. Header tabs derive native slots from the existing directory and suppress the old runtime roster/hierarchy reads. Live session history is still in memory, and the workspace inventory/file transport still depends on retained services; full standalone runtime migration and real desktop qualification remain pending.
+In opt-in native mode the existing Home composer receives the same Pi picker props and persisted model selection as the workspace composer. Existing authorized standard local workspaces only: no Cowork/worktree/cloud creation or deferred Agent launch. Both entry points use submitPiWorkspacePrompt and the original outbox. Native workspace selection reuses the original selection and shell-intent stores without bootstrapping an external Agent session. Header tabs derive native slots from the existing directory and suppress the old runtime roster/hierarchy reads. The workspace inventory and file transport still depend on retained services. Standalone runtime migration and real desktop qualification remain pending.

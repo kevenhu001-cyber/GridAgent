@@ -90,6 +90,7 @@ METHODS = {
     "workspace.files": Empty,
     "workspace.read": ProjectRead,
     "job.status": JobRef,
+    "job.latest": Empty,
 }
 
 
@@ -123,7 +124,7 @@ def dispatch(root: Path, method: str, params: dict, *, allow_tasks=False):
     if method.startswith("job."):
         from . import native_jobs
 
-        handler = {"job.status": native_jobs.status, "job.submit": native_jobs.submit,
+        handler = {"job.status": native_jobs.status, "job.latest": native_jobs.latest, "job.submit": native_jobs.submit,
                    "job.cancel": native_jobs.cancel, "job.submit_shell": native_jobs.submit_shell}[method]
         return handler(root, **args)
     if method == "scientific.runs":

@@ -86,6 +86,45 @@ export async function openPiProductSession(input:{bridge:DesktopPiBridge;workspa
   } finally {openingCount--;}
 }
 
+export async function resumePiProductSession(input: {
+  bridge: DesktopPiBridge; sessionId: string; workspaceId: string; workspacePath: string;
+}): Promise<void> {
+  const slot = getSessionRecord(input.sessionId);
+  if (!slot?.piResume?.revision || !canResumePiSession(input.sessionId, input.workspaceId)) {
+    throw new Error("The saved Pi session is read-only.");
+  }
+  if (!hasPiSessionCapacity()) throw new Error("Close a native Pi session before continuing.");
+  openingCount++;
+  const controller = new PiSessionController(input.bridge);
+  try {
+    const selection = await controller.open(input.workspacePath, undefined, {
+      id: slot.sessionId, revision: slot.piResume.revision,
+    });
+    if (!selection || bindings.has(slot.sessionId) ||
+        getSessionRecord(slot.sessionId)?.piResume?.revision !== slot.piResume.revision) {
+      throw new Error("The saved Pi session changed before resumption.");
+    }
+    bindings.set(slot.sessionId, {
+      clientId: slot.sessionId, workspaceId: input.workspaceId, hostId: slot.sessionId,
+      controller, selection, adapter: new PiEventAdapter(slot.sessionId, slot.transcript.lastSeq),
+      busy: false, failed: false,
+    });
+    patchSessionRecord(slot.sessionId, { status: "idle", streamConnectionState: "open" });
+  } catch (error) {
+    try { await controller.close(); } catch { /* host owns the live worker */ }
+    throw error;
+  } finally {
+    openingCount--;
+  }
+}
+
+export function canResumePiSession(sessionId: string, workspaceId: string): boolean {
+  const slot = getSessionRecord(sessionId);
+  return !!slot?.piResume?.revision && slot.agentKind === PI_AGENT_KIND &&
+    slot.workspaceId === workspaceId && slot.materializedSessionId === sessionId &&
+    !bindings.has(sessionId);
+}
+
 function failIntent(entry:PromptOutboxEntry, uncertain:boolean,message:string) {
   const latest=useSessionIntentStore.getState().entriesById[entry.intentId];
   if (latest?.kind!=="send_prompt" || latest.deliveryState==="echoed_tombstone" || latest.deliveryState==="cancelled") return;
@@ -114,6 +153,7 @@ export async function dispatchPiPromptIntent(entry:PromptOutboxEntry):Promise<vo
   store.patchIntent(entry.intentId,{status:"dispatching",deliveryState:"dispatching",dispatchedAt:new Date().toISOString()});
   let admitted=false;
   try {
+    patchSessionRecord(current.clientId, { piResume: null });
     const requestId=await current.controller.prompt(entry.blocks[0].text);
     admitted=true;
     store.patchIntent(entry.intentId,{status:"accepted",deliveryState:"accepted_running",acceptedAt:new Date().toISOString(),placement:"transcript"});
@@ -139,20 +179,28 @@ export async function cancelPiProductSession(sessionId:string):Promise<void> {
   await current.controller.cancel();
 }
 
-export async function closePiProductSession(sessionId:string):Promise<void> {
+export async function closePiProductSession(sessionId:string, keepRestoredHistory = false):Promise<void> {
   const current=bindings.get(sessionId);
   if (!current || current.clientId!==sessionId || current.busy) throw new Error("Native Pi session is not idle");
   if (Object.values(useSessionIntentStore.getState().entriesById).some(intent=>intent.clientSessionId===sessionId && intent.kind==="send_prompt" && ["waiting_for_session","preparing","dispatching","accepted_running","accepted_queued"].includes(intent.deliveryState))) throw new Error("Native Pi has a pending prompt");
   await current.controller.close();
   bindings.delete(sessionId);
-  patchSessionRecord(sessionId,{status:"closed",streamConnectionState:"ended",
-    executionSummary:{phase:"closed",hasLiveHandle:false,pendingInteractions:[],updatedAt:new Date().toISOString()}});
+  const status = keepRestoredHistory ? "idle" : "closed";
+  patchSessionRecord(sessionId,{status,streamConnectionState:"ended",
+    executionSummary:{phase:status,hasLiveHandle:false,pendingInteractions:[],updatedAt:new Date().toISOString()}});
 }
 
 // Nonsecret transport metadata; never store another transcript.
 export function getPiSessionSelection(sessionId:string): PiModelSelection | null {
   const current=bindings.get(sessionId);
-  return current?.clientId===sessionId ? {...current.selection} : null;
+  if (current?.clientId === sessionId) return {...current.selection};
+  const slot = getSessionRecord(sessionId);
+  const provider = slot?.piResume?.provider;
+  if (slot?.agentKind === PI_AGENT_KIND && slot.modelId &&
+      (provider === "openai" || provider === "anthropic" || provider === "google")) {
+    return {provider, modelId: slot.modelId};
+  }
+  return null;
 }
 export function canSendPiSession(sessionId:string,workspaceId:string):boolean {
   const current=bindings.get(sessionId);

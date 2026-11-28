@@ -42,6 +42,24 @@ def status(root, job_id):
     return result
 
 
+def latest(root):
+    """Read the workspace's last committed job pointer without starting a worker."""
+    base = Path(root).resolve() / "native-jobs"
+    try:
+        ws.plain(base, directory=True)
+        job_id = _read(base / "active.json")["job_id"]
+    except FileNotFoundError:
+        return {"job": None}
+    saved = status(root, job_id)
+    return {"job": {
+        "job_id": job_id,
+        "status": saved["status"],
+        "outcome": "recorded_terminal" if saved["status"] in TERMINAL else "unconfirmed",
+        "run_id": saved.get("run_id"),
+        "cancellation_requested": saved["cancellation_requested"],
+    }}
+
+
 def _launch_worker(root, job_id):
     from .plugins import clean_env
 

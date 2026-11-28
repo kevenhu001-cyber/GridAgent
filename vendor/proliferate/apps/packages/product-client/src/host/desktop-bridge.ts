@@ -362,7 +362,7 @@ export interface DesktopDiagnosticsBridge {
 }
 
 /** Native Pi runtime, independent of AnyHarness agent hosting.
- * A session ID is host-issued and cannot be reused after close/disconnect.
+ * A session ID is host-issued. Resumption requires an authorized journal revision.
  * This development capability does not select arbitrary workspace paths.
  */
 export type PiEvent =
@@ -383,13 +383,37 @@ export interface DesktopPiCredentialBridge {
   remove(provider: PiProvider): Promise<void>;
 }
 
+export interface PiHistorySession {
+  id: string;
+  modelId: string;
+  resumeRevision?: string | null;
+  provider?: PiProvider | null;
+  turns: Array<{
+    id: string;
+    text: string;
+    timestamp: string;
+    events: PiEvent[];
+    cancellationRequested: boolean;
+  }>;
+}
+
+export interface PiHistory {
+  sessions: PiHistorySession[];
+  skipped: number;
+}
+
 export interface DesktopPiBridge {
   /** Write-only native credential operations, independent of the cloud vault. */
   credentials?: DesktopPiCredentialBridge;
+  history?: {
+    list(workspacePath: string): Promise<PiHistory>;
+    dismiss(sessionId: string): Promise<void>;
+  };
   listModels?(): Promise<PiModelRecord[]>;
   mode(): Promise<boolean>;
   matchesWorkspace(path: string): Promise<boolean>;
   open(workspacePath: string, selection?: PiModelSelection): Promise<string>;
+  resume?(workspacePath: string, sessionId: string, revision: string): Promise<PiModelSelection>;
   prompt(sessionId: string, text: string): Promise<string>;
   abort(sessionId: string, id: string): Promise<void>;
   poll(sessionId: string): Promise<PiEvent[]>;
