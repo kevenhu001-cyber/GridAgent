@@ -100,3 +100,11 @@ replacement file browser or a generic filesystem. The existing product file
 tree and editor are not yet routed to it: selection and cache identity must
 be adapted together, and unsupported create/rename/delete and host-open
 operations must not fall through to the legacy path.
+
+The retained SDK file hooks and ProductClient cache/reload/lookup paths now
+accept a typed host-native file capability for reserved scientific project IDs.
+They keep the existing query keys, file tree and editor behavior. Missing
+capabilities and unsupported native mutations fail closed, never using the
+legacy connection. The selection/inventory flow still needs to introduce these
+IDs into the product; this is a transport cutover seam, not a standalone
+workspace UI or proof of interactive desktop behavior.

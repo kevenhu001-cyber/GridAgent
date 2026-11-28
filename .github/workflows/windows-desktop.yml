@@ -49,6 +49,10 @@ jobs:
         working-directory: integration/pi-runtime
         run: python smoke_install.py
       - run: pnpm install --frozen-lockfile
+      - name: Build SDK contracts for file hook regression tests
+        run: pnpm --filter @anyharness/sdk build
+      - name: Verify native file routing and legacy isolation
+        run: pnpm --filter @anyharness/sdk-react test src/hooks/files.test.tsx
       - name: Build the retained desktop frontend
         run: pnpm --filter proliferate build
       - name: Compile-check the Tauri host and its tests

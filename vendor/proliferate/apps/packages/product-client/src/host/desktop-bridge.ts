@@ -1,4 +1,4 @@
-import type { AnyHarnessClientConnection } from "@anyharness/sdk-react";
+import type { AnyHarnessClientConnection, NativeProjectFiles } from "@anyharness/sdk-react";
 import type { ServerMeta } from "#product/lib/domain/auth/connect-server";
 import type { DroppedPathsSnapshot } from "./desktop-file-drop-bridge";
 import type { DesktopUpdaterBridge } from "./desktop-updater-bridge";
@@ -25,6 +25,8 @@ export interface DesktopBridge {
   runtime: DesktopRuntimeBridge;
   /** Optional during migration; never fall back to an external Agent on failure. */
   pi?: DesktopPiBridge;
+  /** Native scientific-project files, keyed by the host-issued project ID. */
+  scientificFiles?: NativeProjectFiles;
   files: DesktopFilesBridge;
   nativeUi: DesktopNativeUiBridge;
   updater: DesktopUpdaterBridge;

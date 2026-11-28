@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ListWorkspaceFilesResponse, SearchWorkspaceFilesResponse, ReadWorkspaceFileResponse, WriteWorkspaceFileRequest, WriteWorkspaceFileResponse } from "@anyharness/sdk";
+import type { NativeProjectFiles } from "@anyharness/sdk-react";
+import type { StatWorkspaceFileResponse, ListWorkspaceFilesResponse, SearchWorkspaceFilesResponse, ReadWorkspaceFileResponse, WriteWorkspaceFileRequest, WriteWorkspaceFileResponse } from "@anyharness/sdk";
 
 export type ScientificReadMethod =
   | "hello" | "scientific.status" | "scientific.runs" | "scientific.artifact"
@@ -174,3 +175,27 @@ export async function saveScientificProjectFile(
   if (response.result.path !== input.path) throw new Error("Scientific file identity mismatch");
   return {path: response.result.path, versionToken: response.result.sha256, sizeBytes: response.result.size_bytes};
 }
+
+
+/** Stat the root/directories without trying to decode a directory as a file. */
+export async function statScientificProjectFile(id: string, path: string): Promise<StatWorkspaceFileResponse> {
+  if (path === "") {
+    await listScientificDirectory(id, "");
+    return {path: "", kind: "directory"};
+  }
+  const parent = path.slice(0, Math.max(0, path.lastIndexOf("/")));
+  const entry = (await listScientificDirectory(id, parent)).entries.find(row => row.path === path);
+  if (!entry) throw new Error("Scientific project entry unavailable");
+  if (entry.kind === "directory") return {path, kind: "directory"};
+  const meta = await projectRead<ProjectMetadata>(id, "workspace.inspect", {path});
+  if (meta.path !== path) throw new Error("Scientific file identity mismatch");
+  return {path, kind: "file", sizeBytes: meta.size_bytes, isText: meta.text_readable};
+}
+
+export const nativeScientificFiles: NativeProjectFiles = {
+  list: listScientificDirectory,
+  search: searchScientificFiles,
+  read: readScientificProjectFile,
+  stat: statScientificProjectFile,
+  write: saveScientificProjectFile,
+};
