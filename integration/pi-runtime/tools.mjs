@@ -32,13 +32,16 @@ const writes = [
 ];
 
 /** Only these product-owned native functions are ever registered with Pi. */
-export function scientificTools(client, {allowTasks = false} = {}) {
+export function scientificTools(client, {allowTasks = false, onJob} = {}) {
   return [...reads, ...(allowTasks ? writes : [])].map(([name, label, description, method, parameters]) => ({
     name, label, description, parameters, replay: "never", executionMode: "sequential",
     async execute(_callId, params, signal) {
       if (signal?.aborted) throw new Error("Tool call cancelled before dispatch");
       const args = method === "job.submit" ?
         {...params, job_id: randomUUID().replaceAll("-", "")} : params;
+      // Report the durable job ID before dispatch so an interrupted turn can
+      // still be reconciled with the job it may have submitted.
+      if (method === "job.submit" && typeof onJob === "function") onJob(args.job_id);
       try {
         const result = await client.request(method, args);
         const text = JSON.stringify(result);

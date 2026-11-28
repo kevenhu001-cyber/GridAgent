@@ -5,16 +5,22 @@ import { serveWorker } from "./worker-protocol.mjs";
 
 // Trusted host configuration only; no renderer/model-provided executable paths.
 const allowTasks = process.env.GRIDAGENT_NATIVE_TASKS === "1";
+// Tool execution reports durable job IDs so an interrupted turn can be
+// reconciled with any scientific job it may have submitted.
+const jobSink = {emit: null};
+const onJob = id => jobSink.emit?.(id);
 const client = openNativeClient({python: process.env.GRIDAGENT_NATIVE_PYTHON,
   workspace: process.env.GRIDAGENT_NATIVE_WORKSPACE, allowTasks});
 try {
   const agent = createGridAgent({client, provider: process.env.GRIDAGENT_PI_PROVIDER,
     modelId: process.env.GRIDAGENT_PI_MODEL, apiKey: process.env.GRIDAGENT_PI_API_KEY,
-    workspace: process.env.GRIDAGENT_NATIVE_WORKSPACE, allowTasks, runShell: isolatedShell(client)});
+    workspace: process.env.GRIDAGENT_NATIVE_WORKSPACE, allowTasks,
+    runShell: isolatedShell(client, onJob), onJob});
   // Confirm the scoped service is reachable before advertising readiness.
   await client.request("hello");
   await serveWorker({agent, projectEvent, input: process.stdin, output: process.stdout,
-    expectContext: process.env.GRIDAGENT_PI_RESTORE_TEXT === "1"});
+    expectContext: process.env.GRIDAGENT_PI_RESTORE_TEXT === "1",
+    onJob: emit => { jobSink.emit = emit; }});
 } finally {
   client.close();
 }

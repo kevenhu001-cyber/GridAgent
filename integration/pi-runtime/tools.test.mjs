@@ -11,14 +11,15 @@ test("only product-owned tools; no shell or mutation by default", () => {
 });
 
 test("Pi native function dispatch maps to bounded IPC without MCP", async () => {
-  const calls = [];
+  const calls = [], jobs = [];
   const tools = scientificTools({request: async (method, args) => {
     calls.push({method, args}); return {status: "queued"};
-  }}, {allowTasks: true});
+  }}, {allowTasks: true, onJob: id => jobs.push(id)});
   const execute = tools.find(t => t.name === "execute_python");
   const result = await execute.execute("tool-1", {entry: "study.py"});
   assert.equal(calls[0].method, "job.submit");
   assert.match(calls[0].args.job_id, /^[a-f0-9]{32}$/);
+  assert.deepEqual(jobs, [calls[0].args.job_id]);
   assert.equal(result.details.status, "queued");
 });
 
@@ -54,15 +55,16 @@ test("Pi default tools retained and file operations use native IPC", async () =>
 });
 
 test("Pi shell routes to native job, not host command", async () => {
-  const calls = [];
+  const calls = [], jobs = [];
   let output = "";
   const shell = isolatedShell({request: async (method, args) => {
     calls.push({method, args});
     return {status: "ok", exit_code: 0, stdout_stderr_tail: "42"};
-  }});
+  }}, id => jobs.push(id));
   const result = await shell("powershell", "Write-Output 42", {onData: b => {output += b.toString();}});
   assert.equal(calls[0].method, "job.submit_shell");
   assert.equal(calls[0].args.shell, "powershell");
+  assert.deepEqual(jobs, [calls[0].args.job_id]);
   assert.equal(result.exitCode, 0);
   assert.equal(output, "42");
 });

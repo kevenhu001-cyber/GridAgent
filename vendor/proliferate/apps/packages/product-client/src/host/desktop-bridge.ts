@@ -371,7 +371,8 @@ export type PiEvent =
   | { kind: "text"; id: string; delta: string }
   | { kind: "error"; id: string; code: "provider_error" | "agent_failure" }
   | { kind: "tool_started"; id: string; tool_id: string; name: string }
-  | { kind: "tool_finished"; id: string; tool_id: string; name: string; error: boolean };
+  | { kind: "tool_finished"; id: string; tool_id: string; name: string; error: boolean }
+  | { kind: "job_submitted"; id: string; job_id: string };
 
 export type PiProvider = "openai" | "anthropic" | "google";
 export interface PiModelSelection { provider: PiProvider; modelId: string }
@@ -394,6 +395,7 @@ export interface PiHistorySession {
     timestamp: string;
     events: PiEvent[];
     cancellationRequested: boolean;
+    jobs?: string[];
   }>;
 }
 

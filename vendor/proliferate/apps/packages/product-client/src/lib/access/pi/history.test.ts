@@ -48,6 +48,22 @@ describe("Pi history restoration", () => {
     expect(canSendPiSession(sessionId, "workspace")).toBe(false);
   });
 
+  it("names the scientific job on an interrupted turn", () => {
+    const jobId = "c".repeat(32);
+    const interrupted = { ...saved, turns: [{ ...turn, jobs: [jobId], events: [] }] };
+    expect(restorePiHistory("workspace", { sessions: [interrupted], skipped: 0 })).toBe(0);
+    const restored = getSessionRecord(sessionId);
+    expect(restored?.status).toBe("errored");
+    expect(restored?.events.slice(-1)[0]?.event).toMatchObject({ type: "error", code: "PI_DISCONNECTED" });
+    expect(JSON.stringify(restored?.events)).toContain(jobId);
+  });
+
+  it("refuses malformed job IDs rather than restoring a misleading turn", () => {
+    const corrupted = { ...saved, turns: [{ ...turn, jobs: ["not-a-job"], events: [] }] };
+    expect(restorePiHistory("workspace", { sessions: [corrupted], skipped: 0 })).toBe(1);
+    expect(getSessionRecord(sessionId)).toBeNull();
+  });
+
   it("treats settlement after an unconfirmed cancellation as uncertain", () => {
     const cancelled = { ...saved, turns: [{ ...saved.turns[0], cancellationRequested: true }] };
     expect(restorePiHistory("workspace", { sessions: [cancelled], skipped: 0 })).toBe(0);

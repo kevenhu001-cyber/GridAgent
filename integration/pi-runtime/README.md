@@ -102,9 +102,11 @@ credential fields, hidden reasoning, tool arguments and raw provider responses
 are excluded. The host redacts an exact occurrence of the active provider key,
 including across streamed text chunks. The development limits are 1 MiB per
 session and 256 KiB of public events per turn. An oversized turn remains
-visible live, with its recorded prompt and unknown outcome on restore. Model
-context and interrupted scientific job reconciliation remain separate
-milestone 2 work.
+visible live, with its recorded prompt and unknown outcome on restore. Each
+durable scientific job ID is recorded against its originating turn before
+dispatch, so an interrupted turn can name the job it may have submitted and the
+existing job-status tools can reconcile it. Tool-bearing model context remains
+separate milestone 2 work; text-only continuation is unchanged.
 
 ## Remaining integration
 

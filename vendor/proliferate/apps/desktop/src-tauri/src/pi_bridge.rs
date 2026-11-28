@@ -91,6 +91,11 @@ pub(super) fn public_event(value: Value) -> Option<Value> {
             if !matches!(code, "agent_failure" | "provider_error") { return None; }
             Some(json!({"kind": kind, "id": id, "code": code}))
         }
+        "job_submitted" => {
+            let job_id = value["job_id"].as_str()?;
+            if !valid_id(job_id) { return None; }
+            Some(json!({"kind": kind, "id": id, "job_id": job_id}))
+        }
         "tool_started" | "tool_finished" => {
             let tool_id = value["tool_id"].as_str()?;
             let name = value["name"].as_str()?;
@@ -264,6 +269,22 @@ impl PiProcess {
     }
 
     async fn capture(&mut self, event: &Value) -> Result<(), String> {
+        // Record the durable job association before the turn settles, so an
+        // interrupted worker still leaves the job attached to its turn.
+        if event["kind"] == "job_submitted" {
+            if let (Some(turn_id), Some(job_id)) =
+                (event["id"].as_str(), event["job_id"].as_str())
+            {
+                if self.active.as_ref().is_some_and(|turn| turn.id == turn_id) {
+                    // Best effort: a full journal refuses the observation
+                    // without failing the turn.
+                    let _ = self.journal.append(Record::JobObserved {
+                        turn_id: turn_id.to_string(),
+                        job_id: job_id.to_string(),
+                    }).await;
+                }
+            }
+        }
         let turn = self.active.as_mut().ok_or("No active Pi turn")?;
         if let Some(history) = &mut turn.history {
             let bytes = serde_json::to_vec(event).map_err(|_| "Invalid public Pi event")?;
@@ -513,6 +534,10 @@ mod tests {
         let value = public_event(json!({"kind": "tool_started", "id": id,
             "tool_id": "call-1", "name": "read", "args": {"secret": "x"}})).unwrap();
         assert_eq!(value, json!({"kind": "tool_started", "id": id, "tool_id": "call-1", "name": "read"}));
+        let job = "c".repeat(32);
+        assert_eq!(public_event(json!({"kind": "job_submitted", "id": id, "job_id": job})),
+            Some(json!({"kind": "job_submitted", "id": id, "job_id": job})));
+        assert!(public_event(json!({"kind": "job_submitted", "id": id, "job_id": "bad"})).is_none());
     }
 
     #[test]
