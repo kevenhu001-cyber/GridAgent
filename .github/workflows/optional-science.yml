@@ -30,7 +30,8 @@ jobs:
           python-version: '3.11'
       - run: python -m pip install -e ".[dev]"
       - name: Install catalog dependency for trusted test
-        run: python -m pip install --only-binary=:all: "joblib>=1.4,<2"
+        run: |
+          python -m pip install --only-binary=:all: "joblib>=1.4,<2"
       - run: python -m pytest tests/test_plugins.py tests/test_optional_scientific_extensions.py -k "not docling_local" -q --timeout=120
       - name: Check managed plugin install and uninstall
         run: python -c "from gridagent import plugins; print(plugins.install('joblib')); assert plugins.installed_target('joblib'); print(plugins.uninstall('joblib'))"
@@ -48,5 +49,6 @@ jobs:
           python-version: '3.11'
       - run: python -m pip install -e ".[dev]"
       - name: Install document conversion dependencies
-        run: python -m pip install --only-binary=:all: "docling>=2.50,<3"
+        run: |
+          python -m pip install --only-binary=:all: "docling>=2.50,<3"
       - run: python -m pytest tests/test_optional_scientific_extensions.py -k docling_local -q --timeout=180
