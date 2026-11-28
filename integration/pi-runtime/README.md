@@ -118,3 +118,19 @@ and mocked shell job responses; they are not real model or sandbox tests.
 ### Home and workspace selection
 
 In opt-in native mode the existing Home composer receives the same Pi picker props and persisted model selection as the workspace composer. Existing authorized standard local workspaces only: no Cowork/worktree/cloud creation or deferred Agent launch. Both entry points use submitPiWorkspacePrompt and the original outbox. Native workspace selection reuses the original selection and shell-intent stores without bootstrapping an external Agent session. Header tabs derive native slots from the existing directory and suppress the old runtime roster/hierarchy reads. Native project inventory and scientific file transport now use the host-owned registry and per-project IPC. Git and other workspace services still depend on retained services. Standalone runtime migration and real desktop qualification remain pending.
+
+## Tool-bearing context projection (milestone 2, development)
+
+`tool-context.mjs` defines a bounded private projection for completed turns with
+matched SDK tool calls and text results. It strips thinking, signatures, provider
+metadata and raw tool details, rejects incomplete turns and known credential
+occurrences, and can seed a fresh SDK state without dispatching anything. The host can store this context in the existing workspace-scoped journal only
+with explicit developer opt-in GRIDAGENT_PI_PERSIST_TOOLS=1 and an OpenAI
+provider. It is never forwarded to the renderer. Tool arguments and results
+may contain sensitive project text; enable this only for projects where local
+retention is acceptable. The active provider credential is checked, not every
+possible secret. Completed mixed text/tool history can seed a fresh worker
+without dispatching old prompts or tools. The feature remains experimental:
+real provider continuation, Windows credential/privacy behavior, and crash
+recovery must be validated before enabling by default. The existing text-only
+behavior is unchanged.

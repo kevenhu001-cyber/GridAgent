@@ -1,5 +1,6 @@
 import { once } from "node:events";
 import { isCompleteTextTurn, restoreTextContext } from "./text-context.mjs";
+import { projectToolTurn, restoreMixedContext } from "./tool-context.mjs";
 
 const MAX_FRAME = 64 * 1024;
 const validId = id => typeof id === "string" && /^[a-f0-9]{32}$/.test(id);
@@ -25,14 +26,16 @@ export async function* frames(input) {
 }
 
 /** One in-flight prompt; request IDs and tool-call IDs have distinct fields. */
-export async function serveWorker({agent, projectEvent, input, output, expectContext = false, onJob}) {
+export async function serveWorker({agent, projectEvent, input, output, expectContext = false, onJob, contextOptions}) {
   let active = null, pending = null;
   let streamed = "", cancelled = false;
   const requests = frames(input);
   if (expectContext) {
     const first = await requests.next();
     if (!first.value) throw new Error("Missing Pi text context");
-    restoreTextContext(agent, JSON.parse(first.value));
+    const seed = JSON.parse(first.value);
+    if (seed.method === "restore_mixed" && contextOptions) restoreMixedContext(agent, seed, contextOptions);
+    else restoreTextContext(agent, seed);
   }
   let writeQueue = Promise.resolve();
   let queuedBytes = 0;
@@ -100,7 +103,16 @@ export async function serveWorker({agent, projectEvent, input, output, expectCon
       pending = Promise.resolve().then(() => agent.prompt(request.text)).then(() => {
         if (agent.state.errorMessage) emit({kind: "error", id, code: "provider_error"});
         else if (!cancelled && streamed !== null && priorCount !== undefined) {
-          contextOk = isCompleteTextTurn(agent.state.messages.slice(priorCount), request.text, streamed);
+          const messages = agent.state.messages.slice(priorCount);
+          contextOk = isCompleteTextTurn(messages, request.text, streamed);
+          if (!contextOk && contextOptions) {
+            const context = projectToolTurn(messages, contextOptions);
+            const visible = context?.messages.filter(m => m.role === "assistant")
+              .flatMap(m => m.content.filter(p => p.type === "text").map(p => p.text)).join("");
+            if (context && context.messages[0].content === request.text && visible === streamed) {
+              emit({kind: "private_context", id, context});
+            }
+          }
         }
       }).catch(() => emit({kind: "error", id, code: "agent_failure"}))
         .finally(() => {
