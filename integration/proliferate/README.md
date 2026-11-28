@@ -79,3 +79,18 @@ This standalone interface does not authorize GridAgent to launch or manage exter
 - Verify Windows packaging and real native solver runs before distributing the new desktop.
 
 No desktop end-to-end test or sandbox implementation is claimed by this phase.
+
+
+## Standalone scientific project file transport (milestone 3)
+
+The native scientific IPC now exposes `workspace.tree`, `workspace.search`
+and `workspace.inspect` for the already granted `scientific-project`
+directory. They reuse the existing project path, size, link and revision
+constraints; neither the caller nor the model supplies an arbitrary root.
+The desktop scientific client maps these to the retained SDK file response
+shapes and assembles bounded text pages only if their SHA-256 revisions agree.
+Binary files expose metadata, not decoded content. This is a read-only
+transport foundation, not a replacement file browser or a generic repository
+filesystem. The existing product file tree and editor are not yet routed to
+this transport; independent workspace identity, selection, writes, and
+retiring external Agent lifecycle dependencies remain separate steps.

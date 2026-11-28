@@ -46,6 +46,19 @@ class NativeTable(Strict):
     limit: int = Field(default=20, ge=1, le=50)
 
 
+class ProjectDirectory(Strict):
+    path: str = Field(default="", max_length=240)
+
+
+class ProjectSearch(Strict):
+    query: str = Field(min_length=1, max_length=240)
+    limit: int = Field(default=25, ge=1, le=128)
+
+
+class ProjectFile(Strict):
+    path: str = Field(min_length=1, max_length=240)
+
+
 class ProjectRead(Strict):
     path: str = Field(min_length=1, max_length=240)
     offset: int = Field(default=0, ge=0, le=ws.MAX_FILE)
@@ -88,6 +101,9 @@ METHODS = {
     "solver.backends": Empty,
     "solver.table": NativeTable,
     "workspace.files": Empty,
+    "workspace.tree": ProjectDirectory,
+    "workspace.search": ProjectSearch,
+    "workspace.inspect": ProjectFile,
     "workspace.read": ProjectRead,
     "job.status": JobRef,
     "job.latest": Empty,
@@ -117,6 +133,12 @@ def dispatch(root: Path, method: str, params: dict, *, allow_tasks=False):
     ws.require_grant(root)
     if method == "workspace.files":
         return ws.list_project(root)
+    if method == "workspace.tree":
+        return ws.list_project_directory(root, **args)
+    if method == "workspace.search":
+        return ws.search_project_files(root, **args)
+    if method == "workspace.inspect":
+        return ws.inspect_project(root, **args)
     if method == "workspace.read":
         return ws.read_project(root, **args)
     if method == "workspace.write":

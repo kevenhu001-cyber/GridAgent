@@ -139,6 +139,44 @@ def list_project(root):
     return {"status": "ok", "files": scan(project(root))}
 
 
+def list_project_directory(root, path=""):
+    """One directory of the existing authorized scientific project, including empty folders."""
+    base = project(root)
+    scan(base)  # Enforce the same project-wide size, file and link constraints.
+    current = base
+    if path:
+        for part in safe_parts(path):
+            current = current / part
+            plain(current, directory=True)
+    entries = []
+    for child in current.iterdir():
+        relative = child.relative_to(base).as_posix()
+        safe_parts(relative)
+        info = child.lstat()
+        if stat.S_ISDIR(info.st_mode):
+            plain(child, directory=True)
+            entries.append({"path": relative, "name": child.name, "kind": "directory",
+                            "hasChildren": next(child.iterdir(), None) is not None})
+        else:
+            size = plain(child).st_size
+            entries.append({"path": relative, "name": child.name, "kind": "file", "sizeBytes": size})
+        if len(entries) > 2 * MAX_FILES:
+            raise ValueError("Directory exceeds entry limit")
+    entries.sort(key=lambda row: (row["kind"] != "directory", row["name"].casefold(), row["name"]))
+    return {"directoryPath": path, "entries": entries}
+
+
+def search_project_files(root, query, limit=25):
+    """Bounded literal path search; never searches file contents or the host root."""
+    if not isinstance(query, str) or not query.strip() or len(query) > 240 or not 1 <= limit <= 128:
+        raise ValueError("Invalid project search")
+    needle = query.strip().casefold()
+    rows = scan(project(root))
+    matches = [{"path": row["path"], "name": row["path"].rsplit("/", 1)[-1]}
+               for row in rows if needle in row["path"].casefold()]
+    return {"results": matches[:limit]}
+
+
 def read_project(root, path, offset=0, limit=24000):
     if not 0 <= offset <= MAX_FILE or not 1 <= limit <= 24000:
         raise ValueError("Invalid project file pagination")
