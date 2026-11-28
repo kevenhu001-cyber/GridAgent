@@ -22,6 +22,8 @@ const reads = [
   ["latest_scientific_job", "Latest scientific job", "Find this workspace's latest committed job ID and recorded state. A queued or running record leaves the outcome and worker liveness unconfirmed.", "job.latest", schema()],
 ];
 const writes = [
+  ["export_scientific_notebook", "Export scientific notebook", "Export a completed plain Python scientific run to a standard .ipynb in the authorized project. Preserves source and recorded evidence; does not run code or certify reproducibility. Requires optional nbformat.",
+    "scientific.export_notebook", schema({run_id: id, destination: string(240), expected_sha256: {type: "string", pattern: "^[a-f0-9]{64}$"}}, ["run_id", "destination"])],
   ["write_project_file", "Write project file", "Create a project file or replace it using its current SHA-256. The workspace grant is required.", "workspace.write",
     schema({path: string(240), text: string(48000), expected_sha256: {type: "string", pattern: "^[a-f0-9]{64}$"}}, ["path", "text"])],
   ["execute_python", "Execute scientific Python", "Submit project Python to the authorized scientific sandbox. Returns a durable job ID; inspect its status and artifacts. Never runs on the unrestricted host.", "job.submit",
