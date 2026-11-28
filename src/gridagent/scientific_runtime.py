@@ -10,7 +10,7 @@ from filelock import FileLock
 
 from . import plugins
 from . import scientific_workspace as ws
-from .scientific_library import MAX_PLUGINS, managed_targets, preflight, selected_plugins
+from .scientific_library import MAX_PLUGINS, environment_inventory, managed_targets, preflight, selected_plugins
 from .verified_python import require_runtime
 
 PROTOCOL = "scientific-python-v1"
@@ -109,12 +109,30 @@ def recover(root):
         return recovery
 
 
+def kernel_dependencies_present(environment):
+    names = {row["distribution"].lower().replace("_", "-")
+             for row in environment["distributions"] if row["scope"] == "core"}
+    return {"jupyter-client", "ipykernel"} <= names
+
+
 def status(root):
+    from importlib.metadata import PackageNotFoundError, version
+
+    kernel_present = False
     try:
-        require_runtime()
+        _, runtime = require_runtime()
         available = True
+        try:
+            kernel_present = kernel_dependencies_present(environment_inventory(runtime, {}))
+        except (OSError, ValueError):
+            # Metadata may be incomplete; do not advertise a ready kernel.
+            pass
     except ValueError:
         available = False
+    try:
+        notebook_version = version("nbformat")
+    except PackageNotFoundError:
+        notebook_version = None
     try:
         active = active_session(root)
         blocked = active is not None
@@ -127,6 +145,12 @@ def status(root):
                          "managed_available": plugins.installed_target(row["id"]) is not None}
                         for row in plugins.status()],
             "max_plugins_per_run": MAX_PLUGINS,
+            "research_features": {
+                "kernel_dependencies_present": kernel_present,
+                "kernel_scope": "single isolated job; VM execution not certified by metadata",
+                "notebook_dependency_version": notebook_version,
+                "notebook_scope": "successful ordinary script run; export only",
+            },
             "scope": "compatible managed plugins only; no host fallback; no network"}
 
 
@@ -224,11 +248,8 @@ def execute(root, entry, plugin=None, arguments=None, *, probe=None, plugin_ids=
         if active_session(root) is not None:
             raise ValueError("Unresolved sandbox session; ask the user to run scientific recovery")
         environment = preflight(runtime, targets)
-        if kernel_cells is not None:
-            names = {row["distribution"].lower().replace("_", "-")
-                     for row in environment["distributions"] if row["scope"] == "core"}
-            if not {"jupyter-client", "ipykernel"} <= names:
-                raise ValueError("Install the optional kernel extra into the trusted sandbox runtime first")
+        if kernel_cells is not None and not kernel_dependencies_present(environment):
+            raise ValueError("Install the optional kernel extra into the trusted sandbox runtime first")
         identifier = uuid4().hex if run_id is None else run_id
         from re import fullmatch
 

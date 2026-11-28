@@ -6,9 +6,13 @@ The root GitHub Actions workflows are independent of the vendored Proliferate
 release infrastructure. Existing compile checks remain unchanged. This first
 milestone produces **unsigned x64 packaging previews**, not a usable production
 GridAgent distribution. Packaged Windows builds initialize Pi from host-owned Tauri resources, with
-bundled Node and CPython 3.11, locked Pi dependencies and core scientific
-libraries. The staging script checks imports and offline Node/Python handshake
-from a relocated path. Clean-machine validation, dependency locking for Python,
+bundled Node and CPython 3.11, locked Pi dependencies, core scientific
+libraries, Jupyter Client/IPyKernel and nbformat. Docling and other large
+managed plugins remain optional; MXC remains qualification-only. The staging script checks imports and offline Node/Python handshake
+from a relocated path. Fixed trusted kernel and notebook fixtures also run
+with the relocated private interpreter; the CI log reports runtime component
+bytes, dependency versions and fixture timings. These are not cold GUI startup
+or actual VM timings. Clean-machine validation, dependency locking for Python,
 managed-agent seed support and code signing remain release blockers. The Windows diagnostics
 collector is unsupported upstream. Do not enable the debug gate in release
 builds or publish a draft as stable to work around these limitations.

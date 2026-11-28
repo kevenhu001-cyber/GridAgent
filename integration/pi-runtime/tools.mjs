@@ -7,7 +7,7 @@ const schema = (properties = {}, required = []) =>
   ({type: "object", properties, required, additionalProperties: false});
 
 const reads = [
-  ["scientific_environment", "Scientific environment", "Discover workspace authorization and sandbox availability.", "scientific.status", schema()],
+  ["scientific_environment", "Scientific environment", "Discover workspace authorization, sandbox availability, managed plugins, and research feature dependency presence. Metadata is not proof of real VM compatibility.", "scientific.status", schema()],
   ["list_solver_backends", "Solver libraries", "Discover installed numerical solvers and capabilities.", "solver.backends", schema()],
   ["list_project_files", "Project files", "List authorized project files.", "workspace.files", schema()],
   ["read_project_file", "Read project file", "Read a bounded page and its complete SHA-256 revision.", "workspace.read",
@@ -22,14 +22,14 @@ const reads = [
   ["latest_scientific_job", "Latest scientific job", "Find this workspace's latest committed job ID and recorded state. A queued or running record leaves the outcome and worker liveness unconfirmed.", "job.latest", schema()],
 ];
 const writes = [
-  ["export_scientific_notebook", "Export scientific notebook", "Export a completed plain Python scientific run to a standard .ipynb in the authorized project. Preserves source and recorded evidence; does not run code or certify reproducibility. Requires optional nbformat.",
+  ["export_scientific_notebook", "Export scientific notebook", "Export a completed plain Python scientific run to a standard .ipynb in the authorized project. Preserves source and recorded evidence; does not run code or certify reproducibility. Check scientific_environment for notebook dependency version before exporting.",
     "scientific.export_notebook", schema({run_id: id, destination: string(240), expected_sha256: {type: "string", pattern: "^[a-f0-9]{64}$"}}, ["run_id", "destination"])],
   ["write_project_file", "Write project file", "Create a project file or replace it using its current SHA-256. The workspace grant is required.", "workspace.write",
     schema({path: string(240), text: string(48000), expected_sha256: {type: "string", pattern: "^[a-f0-9]{64}$"}}, ["path", "text"])],
   ["execute_python", "Execute scientific Python", "Submit project Python to the authorized scientific sandbox. Returns a durable job ID; inspect its status and artifacts. Never runs on the unrestricted host.", "job.submit",
     schema({entry: string(240), arguments: {type: "array", items: string(1024), maxItems: 32},
       plugin_ids: {type: "array", items: string(80), maxItems: 4}}, ["entry"])],
-  ["execute_kernel_cells", "Execute isolated Jupyter cells", "Run up to eight Python cells in one fresh isolated kernel; variables persist only within this job. Requires the optional kernel runtime. Returns a durable job ID; inspect kernel-results.json after completion. No live kernel or state across jobs.", "job.submit",
+  ["execute_kernel_cells", "Execute isolated Jupyter cells", "Run up to eight Python cells in one fresh isolated kernel; variables persist only within this job. Check scientific_environment for kernel dependency presence before submitting. Returns a durable job ID; inspect kernel-results.json after completion. No live kernel or state across jobs.", "job.submit",
     schema({cells: {type: "array", items: string(12000), minItems: 1, maxItems: 8}}, ["cells"])],
   ["cancel_scientific_job", "Cancel scientific job", "Request cooperative cancellation; poll for confirmed terminal state.", "job.cancel",
     schema({job_id: id}, ["job_id"])],

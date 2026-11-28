@@ -18,6 +18,17 @@ GridAgent remains a local-first LLM-led scientific agent. Reuse mature infrastru
 
 The uv Windows CI lane uses a pinned uv release (0.13.9) and a uv-managed CPython 3.11 development environment. uv obtains managed Python distributions from Python Build Standalone. This tests scientific imports and a real lightweight plugin installation, not the production Windows Sandbox or Tauri resource bundle. Python patch and project dependency resolution remain unpinned in this experimental lane; do not claim a reproducible release. Existing pip-based update discovery remains unchanged, and the default plugin installer remains pip when no explicit trusted host configuration exists. A configured uv failure does not retry with pip. The uv child gets the existing sanitized environment; configuration files are disabled and Python downloads are disabled for plugin installs. Explicit index, wheel-only and copy mode keep plugin generations independent of the shared cache. Installing wheels and importing plugins is still a trusted host operation from the existing first-party catalog, not isolation.
 
+## Consolidation round 1
+
+The six adoption PRs have been merged. The Windows preview now stages the
+existing core, kernel and notebook extras together and runs fixed trusted
+fixtures using the relocated private interpreter. Record byte counts and
+fixture elapsed times rather than claiming a speedup. The native environment
+status reports dependency presence separately from sandbox compatibility.
+Docling, MXC and standalone Python replacement remain opt-in/qualification
+only; the existing Windows Sandbox and managed plugin installer remain the
+production paths. No dependency range is a release lock.
+
 ## Subsequent acceptance
 
 Before promotion: lock the supported release interpreter and dependencies, verify the Windows resource layout with native libraries, check artifact hashes and license notices, measure installation and runtime footprint, exercise rollback/uninstall, and pass actual sandbox execution and clean-machine packaging checks. Keep current host-owned permissions, durable job IDs, solver evidence and existing UI. Do not remove current implementations until the new path passes regression and security tests. Do not introduce cloud services or new databases without a measured need.
