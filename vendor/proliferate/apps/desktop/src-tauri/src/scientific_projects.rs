@@ -99,6 +99,15 @@ fn list_in(directory: &Path) -> Result<Vec<ProjectIdentity>, String> {
         rows.push(identity(&root, record.created_at, available)?);
         if rows.len() > MAX_PROJECTS { return Err("Scientific project registry limit exceeded".into()); }
     }
+    for (index, row) in rows.iter().enumerate() {
+        let root = PathBuf::from(&row.workspace_path);
+        for other in rows.iter().skip(index + 1) {
+            let other_root = PathBuf::from(&other.workspace_path);
+            if root.starts_with(&other_root) || other_root.starts_with(&root) {
+                return Err("Overlapping scientific project roots are not supported".into());
+            }
+        }
+    }
     rows.sort_by(|a, b| a.workspace_path.to_lowercase().cmp(&b.workspace_path.to_lowercase()));
     Ok(rows)
 }
@@ -108,6 +117,13 @@ fn register_in(directory: &Path, selected: &Path) -> Result<ProjectIdentity, Str
     if !root.is_dir() { return Err("Select an existing project folder".into()); }
     let workspace_path = root.to_str().ok_or("Project path is not valid UTF-8")?.to_owned();
     let id = id_for_path(&root);
+    let existing = list_in(directory)?;
+    if existing.iter().any(|row| {
+        let other = PathBuf::from(&row.workspace_path);
+        row.id != id && (root.starts_with(&other) || other.starts_with(&root))
+    }) {
+        return Err("Overlapping scientific project roots are not supported".into());
+    }
     let file_path = record_path(directory, &id)?;
     if file_path.exists() {
         let record = read_record(directory, &id)?;
@@ -187,6 +203,11 @@ pub fn register(selected: PathBuf) -> Result<ProjectIdentity, String> {
     if !existing.iter().any(|row| row.id == id) && existing.len() + usize::from(legacy_extra) >= MAX_PROJECTS {
         return Err("The local scientific project limit has been reached".into());
     }
+    if let Some(legacy) = configured_legacy_path() {
+        if legacy != root && (legacy.starts_with(&root) || root.starts_with(&legacy)) {
+            return Err("Overlapping scientific project roots are not supported".into());
+        }
+    }
     let lock = lock_registry(&directory, true)?;
     let result = register_in(&directory, &root);
     drop(lock);
@@ -237,6 +258,9 @@ mod tests {
         assert_eq!(list_in(&registry).unwrap().len(), 2);
         assert_eq!(resolve_in(&registry, &a.id).unwrap(), first.canonicalize().unwrap());
         assert_eq!(register_in(&registry, &first).unwrap().id, a.id);
+        let nested = first.join("nested");
+        fs::create_dir(&nested).unwrap();
+        assert!(register_in(&registry, &nested).is_err());
         assert!(resolve_in(&registry, "gridagent-scientific:legacy").is_err());
         fs::remove_dir_all(&first).unwrap();
         assert!(resolve_in(&registry, &a.id).is_err());
