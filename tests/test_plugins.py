@@ -64,3 +64,14 @@ def test_plugin_probe_precedes_switch_and_rollback(tmp_path, monkeypatch):
     plugins.rollback("rainflow")
     assert plugins.installed_target("rainflow") == first
     assert plugins.installed_metadata("rainflow")["versions"] == {"rainflow": "3.2"}
+
+
+def test_optional_document_and_parallel_plugins_use_native_api_catalog():
+    for name in ("docling", "joblib"):
+        spec = plugins.spec(name)
+        assert spec["modules"] == [name]
+        assert spec["tools"] == []
+        assert len(spec["packages"]) == 1
+        assert spec["packages"][0].startswith(name + ">=")
+    assert "offline" in plugins.spec("docling")["prompt"]
+    assert "untrusted pickle" in plugins.spec("joblib")["prompt"]
