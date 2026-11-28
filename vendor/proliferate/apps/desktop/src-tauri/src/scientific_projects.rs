@@ -181,6 +181,15 @@ pub fn list() -> Result<Vec<ProjectIdentity>, String> {
             rows.push(identity(&root, "1970-01-01T00:00:00Z".into(), true)?);
         }
     }
+    for (index, row) in rows.iter().enumerate() {
+        let root = PathBuf::from(&row.workspace_path);
+        for other in rows.iter().skip(index + 1) {
+            let other_root = PathBuf::from(&other.workspace_path);
+            if root.starts_with(&other_root) || other_root.starts_with(&root) {
+                return Err("Overlapping scientific project roots are not supported".into());
+            }
+        }
+    }
     rows.sort_by(|a, b| a.workspace_path.to_lowercase().cmp(&b.workspace_path.to_lowercase()));
     if rows.len() > MAX_PROJECTS { return Err("Scientific project registry limit exceeded".into()); }
     Ok(rows)
@@ -215,14 +224,14 @@ pub fn register(selected: PathBuf) -> Result<ProjectIdentity, String> {
 }
 
 pub fn resolve_id(id: &str) -> Result<PathBuf, String> {
-    if let Some(root) = configured_legacy_path() {
-        if id_for_path(&root) == id { return Ok(root); }
+    let project = list()?.into_iter().find(|project| project.id == id && project.available)
+        .ok_or("Scientific project is not registered or its folder is missing")?;
+    let root = PathBuf::from(project.workspace_path);
+    let canonical = root.canonicalize().map_err(|_| "Scientific project folder is unavailable")?;
+    if canonical != root || id_for_path(&canonical) != id {
+        return Err("Scientific project identity changed".into());
     }
-    let directory = registry_directory()?;
-    let lock = lock_registry(&directory, false)?;
-    let result = resolve_in(&directory, id);
-    drop(lock);
-    result
+    Ok(canonical)
 }
 
 pub fn resolve_path(path: &str) -> Option<PathBuf> {
