@@ -1,0 +1,49 @@
+name: MXC sandbox qualification
+on:
+  pull_request:
+    paths:
+      - 'integration/mxc-runtime/**'
+      - '.github/workflows/mxc-qualification.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'integration/mxc-runtime/**'
+      - '.github/workflows/mxc-qualification.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  policy:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: integration/mxc-runtime
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.21.0'
+      - run: npm test
+      - name: Install pinned upstream SDK for API qualification
+        run: npm install --no-audit --no-fund --omit=optional
+      - name: Verify documented dev API loads
+        run: node --input-type=module -e "import {runJson} from '@microsoft/mxc-sdk/v1/dev'; if (typeof runJson !== 'function') process.exit(1)"
+  experimental-vm:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: integration/mxc-runtime
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.21.0'
+      - name: Require Windows Sandbox
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "$env:WINDIR\System32\WindowsSandbox.exe")) { throw "Windows Sandbox unavailable on this runner; run on a dedicated compatible Windows host" }
+      - run: npm install --no-audit --no-fund --omit=optional
+      - run: npm run qualify -- --experimental-vm
