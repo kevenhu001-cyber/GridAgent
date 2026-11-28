@@ -163,7 +163,7 @@ fn resolve_in(directory: &Path, id: &str) -> Result<PathBuf, String> {
 }
 
 fn configured_legacy_path() -> Option<PathBuf> {
-    if !cfg!(debug_assertions) || std::env::var("GRIDAGENT_PI_DEV").as_deref() != Ok("1") { return None; }
+    if !cfg!(debug_assertions) || std::env::var("GRIDAGENT_PI_DEV").ok().as_deref() != Some("1") { return None; }
     let path = PathBuf::from(std::env::var_os("GRIDAGENT_NATIVE_WORKSPACE")?);
     if !path.is_absolute() { return None; }
     let canonical = path.canonicalize().ok()?;
@@ -218,7 +218,8 @@ pub fn register(selected: PathBuf) -> Result<ProjectIdentity, String> {
     let legacy_extra = configured_legacy_path().is_some_and(|legacy| {
         id_for_path(&legacy) != id && !existing.iter().any(|row| row.id == id_for_path(&legacy))
     });
-    if !existing.iter().any(|row| row.id == id) && existing.len() + usize::from(legacy_extra) >= MAX_PROJECTS {
+    let legacy_count = if legacy_extra { 1 } else { 0 };
+    if !existing.iter().any(|row| row.id == id) && existing.len() + legacy_count >= MAX_PROJECTS {
         return Err("The local scientific project limit has been reached".into());
     }
     if let Some(legacy) = configured_legacy_path() {
