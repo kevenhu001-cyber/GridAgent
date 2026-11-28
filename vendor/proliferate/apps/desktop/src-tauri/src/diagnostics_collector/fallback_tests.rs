@@ -101,8 +101,6 @@ fn renderer_ingest_forced_write_never_temporarily_activates_ordinary_callers() {
 
 #[test]
 fn fallback_rotates_whole_records_and_stays_bounded() {
-    use std::os::unix::fs::PermissionsExt;
-
     let path = temp_path();
     let writer = FallbackDiagnosticsWriter::open_for_test(path.clone()).expect("open fallback");
     for index in 0..12 {
@@ -143,14 +141,18 @@ fn fallback_rotates_whole_records_and_stays_bounded() {
             rotated_path(&path, index)
         };
         if segment.exists() {
-            assert_eq!(
-                fs::metadata(&segment)
-                    .expect("segment metadata")
-                    .permissions()
-                    .mode()
-                    & 0o777,
-                0o600
-            );
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                assert_eq!(
+                    fs::metadata(&segment)
+                        .expect("segment metadata")
+                        .permissions()
+                        .mode()
+                        & 0o777,
+                    0o600
+                );
+            }
             assert!(
                 fs::metadata(&segment).expect("segment metadata").len() <= FALLBACK_SEGMENT_BYTES
             );

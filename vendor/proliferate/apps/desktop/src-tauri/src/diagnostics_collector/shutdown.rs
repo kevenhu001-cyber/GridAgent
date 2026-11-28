@@ -274,6 +274,8 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+// Shutdown recovery exercises the Unix collector supervisor, process launcher
+// and broker server; the Windows build provides `*_unsupported` stubs instead.
+#[cfg(all(test, unix))]
 #[path = "shutdown_tests.rs"]
 mod integration_tests;
