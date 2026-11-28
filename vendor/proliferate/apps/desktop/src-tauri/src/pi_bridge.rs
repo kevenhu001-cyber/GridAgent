@@ -577,6 +577,17 @@ mod tests {
     }
 
     #[test]
+    fn private_context_never_passes_public_event_projection() {
+        let id = "a".repeat(32);
+        let frame = json!({"kind":"private_context","id":id,
+            "context":{"version":1,"messages":[{}, {}, {}, {}]}});
+        assert!(public_event(frame.clone()).is_none());
+        assert!(worker_event(frame).is_some());
+        assert!(worker_event(json!({"kind":"private_context","id":id,
+            "context":{"version":1,"messages":[]}})).is_none());
+    }
+
+    #[test]
     fn excludes_unrelated_credentials_and_execution_overrides() {
         assert!(!allowed_env("OPENAI_API_KEY"));
         assert!(!allowed_env("NODE_OPTIONS"));

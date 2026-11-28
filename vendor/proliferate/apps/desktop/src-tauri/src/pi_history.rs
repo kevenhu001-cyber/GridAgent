@@ -726,6 +726,51 @@ mod tests {
         assert!(restored.sessions[0].resume_revision.is_none());
     }
 
+    #[tokio::test]
+    async fn private_tool_context_is_opt_in_and_never_serialized_to_renderer() {
+        let root = TestDir::new();
+        let id = "a".repeat(32);
+        let turn = "b".repeat(32);
+        let mut journal = Journal::new(&root.0, &id, "test-model", "openai");
+        journal.append(prompt(&turn)).await.unwrap();
+        let context = json!({"version":1,"messages":[
+            {"role":"user","content":"Analyze the voltage drop.","timestamp":1},
+            {"role":"assistant","stopReason":"toolUse","timestamp":2,"content":[
+                {"type":"toolCall","id":"call_1","name":"read","arguments":{"path":"private-project.py"}}
+            ]},
+            {"role":"toolResult","toolCallId":"call_1","toolName":"read","timestamp":3,
+                "isError":false,"content":[{"type":"text","text":"private result"}]},
+            {"role":"assistant","stopReason":"stop","timestamp":4,
+                "content":[{"type":"text","text":"Verified answer"}]}
+        ]});
+        let events = vec![
+            json!({"kind":"tool_started","id":turn,"tool_id":"call_1","name":"read"}),
+            json!({"kind":"tool_finished","id":turn,"tool_id":"call_1","name":"read","error":false}),
+            json!({"kind":"text","id":turn,"delta":"Verified answer"}),
+            json!({"kind":"settled","id":turn}),
+        ];
+        assert!(context_matches_events(&context, &events));
+        assert!(contains_credential(&context, "private result"));
+        journal.append(Record::Settled {
+            id: turn.clone(), events, cancellation_requested: false,
+            context_safe: false, tool_context: Some(context),
+        }).await.unwrap();
+        drop(journal);
+
+        assert!(recent(&root.0).unwrap().sessions[0].resume_revision.is_none());
+        assert!(resume(&root.0, &id, &turn).is_err());
+        let history = recent_with_tools(&root.0, true).unwrap();
+        assert_eq!(history.sessions[0].resume_revision.as_deref(), Some(turn.as_str()));
+        let public = serde_json::to_string(&history).unwrap();
+        assert!(!public.contains("private result"));
+        assert!(!public.contains("private-project.py"));
+        let (_, writer, seed) = resume_with_tools(&root.0, &id, &turn, true).unwrap();
+        assert_eq!(seed["method"], "restore_mixed");
+        assert_eq!(seed["turns"][0]["context"]["messages"][2]["content"][0]["text"], "private result");
+        assert!(resume_with_tools(&root.0, &id, &turn, true).is_err());
+        drop(writer);
+    }
+
     #[test]
     fn reads_version_one_journals_without_job_records() {
         let root = TestDir::new();

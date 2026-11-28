@@ -62,3 +62,51 @@ test("worker correlates tool and request IDs, rejects concurrent prompt, and abo
   assert.deepEqual(events.find(e => e.kind === "rejected"), {kind: "rejected", id: other});
   assert.equal(events.find(e => e.kind === "settled").id, id);
 });
+
+test("private tool context is emitted only on explicitly enabled completed turns", async () => {
+  for (const enabled of [false, true]) {
+    const input = new PassThrough(), output = new PassThrough();
+    let listener;
+    const agent = {
+      state: {messages: []},
+      subscribe(fn) { listener = fn; return () => {}; },
+      async prompt(prompt) {
+        this.state.messages = [
+          {role: "user", content: prompt, timestamp: 1},
+          {role: "assistant", timestamp: 2, stopReason: "toolUse", content: [
+            {type: "toolCall", id: "call_1", name: "read", arguments: {path: "project.py"}},
+          ]},
+          {role: "toolResult", timestamp: 3, toolCallId: "call_1", toolName: "read",
+            content: [{type: "text", text: "result"}], isError: false},
+          {role: "assistant", timestamp: 4, stopReason: "stop",
+            content: [{type: "text", text: "Done"}]},
+        ];
+        listener({kind: "text", delta: "Done"});
+      },
+      abort() {},
+    };
+    const events = [];
+    let buffer = "";
+    output.on("data", chunk => {
+      buffer += chunk.toString();
+      let end;
+      while ((end = buffer.indexOf("\n")) >= 0) {
+        const event = JSON.parse(buffer.slice(0, end));
+        buffer = buffer.slice(end + 1);
+        events.push(event);
+        if (event.kind === "ready") input.write(JSON.stringify({
+          method: "prompt", id: "a".repeat(32), text: "Review",
+        }) + "\n");
+        if (event.kind === "settled") input.end();
+      }
+    });
+    await serveWorker({agent, projectEvent: event => event, input, output,
+      contextOptions: enabled ? {credential: "test-credential", toolNames: ["read"]} : undefined});
+    assert.equal(events.filter(event => event.kind === "private_context").length, enabled ? 1 : 0);
+    if (enabled) {
+      const frame = events.find(event => event.kind === "private_context");
+      assert.equal(frame.context.messages[2].content[0].text, "result");
+      assert.ok(events.indexOf(frame) < events.findIndex(event => event.kind === "settled"));
+    }
+  }
+});
