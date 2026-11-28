@@ -40,11 +40,12 @@ pub fn native_dev_profile() -> bool {
 }
 
 pub fn app_dir_name() -> &'static str {
+    if crate::gridagent_runtime::packaged_build() { return ".gridagent"; }
     app_dir_name_for_native_dev_profile(native_dev_profile())
 }
 
 fn dev_home_override_path() -> Option<PathBuf> {
-    if !native_dev_profile() {
+    if crate::gridagent_runtime::packaged_build() || !native_dev_profile() {
         return None;
     }
 

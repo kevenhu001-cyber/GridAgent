@@ -1,0 +1,72 @@
+name: GridAgent Windows preview release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gridagent-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require a version tag on main
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git merge-base --is-ancestor HEAD origin/main
+          python3 - <<'PY'
+          import os, tomllib
+          with open("pyproject.toml", "rb") as f:
+              version = tomllib.load(f)["project"]["version"]
+          if os.environ["GITHUB_REF_NAME"] != f"v{version}":
+              raise SystemExit(f"Tag must equal v{version}")
+          PY
+
+  package:
+    needs: validate
+    uses: ./.github/workflows/windows-package.yml
+
+  draft-release:
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: gridagent-windows-x64-preview
+          path: installers
+      - name: Verify assets and create draft prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cd installers
+          sha256sum --check SHA256SUMS.txt
+          shopt -s nullglob
+          msi=( *.msi )
+          exe=( *.exe )
+          [[ "${#msi[@]}" == 1 && "${#exe[@]}" == 1 ]]
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "::error::Release already exists; inspect it rather than overwrite assets."
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" "${msi[@]}" "${exe[@]}" SHA256SUMS.txt \
+            --verify-tag --draft --prerelease --generate-notes \
+            --title "GridAgent $GITHUB_REF_NAME Windows packaging preview" \
+            --notes "Unsigned packaging preview only. Node, Pi and Python are bundled; installed GUI, real provider, workspace authorization and Windows Sandbox execution are not yet validated. Do not publish as production."
