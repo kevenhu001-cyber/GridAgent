@@ -190,6 +190,15 @@ pub fn list() -> Result<Vec<ProjectIdentity>, String> {
             }
         }
     }
+    for (index, row) in rows.iter().enumerate() {
+        let root = PathBuf::from(&row.workspace_path);
+        for other in rows.iter().skip(index + 1) {
+            let other_root = PathBuf::from(&other.workspace_path);
+            if root.starts_with(&other_root) || other_root.starts_with(&root) {
+                return Err("Overlapping scientific project roots are not supported".into());
+            }
+        }
+    }
     rows.sort_by(|a, b| a.workspace_path.to_lowercase().cmp(&b.workspace_path.to_lowercase()));
     if rows.len() > MAX_PROJECTS { return Err("Scientific project registry limit exceeded".into()); }
     Ok(rows)
