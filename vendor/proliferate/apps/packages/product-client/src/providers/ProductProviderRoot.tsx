@@ -80,6 +80,7 @@ function WorkspaceProviders({ children }: { children: ReactNode }) {
         <AnyHarnessWorkspace
           workspaceId={providerWorkspaceId}
           resolveConnection={resolveAnyHarnessConnection}
+          nativeFiles={host.desktop?.scientificFiles}
         >
           <WorkspacePathProvider>{children}</WorkspacePathProvider>
         </AnyHarnessWorkspace>

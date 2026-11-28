@@ -12,6 +12,7 @@ import type {
 import {
   useAnyHarnessWorkspaceContext,
   resolveWorkspaceConnectionFromContext,
+  nativeProjectFiles,
 } from "../context/AnyHarnessWorkspace.js";
 import { useAnyHarnessCacheScopeKey } from "../context/AnyHarnessRuntime.js";
 import { getAnyHarnessClient } from "../lib/client-cache.js";
@@ -54,6 +55,8 @@ export function useWorkspaceFilesQuery(options: {
     enabled,
     notifyOnChangeProps: ["data", "error", "status"],
     queryFn: async ({ signal }) => {
+      const native = nativeProjectFiles(workspace, workspaceId);
+      if (native) { signal.throwIfAborted(); return native.list(workspaceId!, path); }
       const resolved = await resolveWorkspaceConnectionFromContext(workspace, workspaceId);
       const client = getAnyHarnessClient(resolved.connection);
       return client.files.list(
@@ -86,6 +89,8 @@ export function useReadWorkspaceFileQuery(options: {
     queryKey,
     enabled,
     queryFn: async ({ signal }) => {
+      const native = nativeProjectFiles(workspace, workspaceId);
+      if (native) { signal.throwIfAborted(); return native.read(workspaceId!, options.path!); }
       const resolved = await resolveWorkspaceConnectionFromContext(workspace, workspaceId);
       const client = getAnyHarnessClient(resolved.connection);
       return client.files.read(
@@ -108,10 +113,10 @@ export function useReadWorkspaceFileMutation(options?: { workspaceId?: string | 
       workspaceId?: string | null;
       path: string;
     }) => {
-      const resolved = await resolveWorkspaceConnectionFromContext(
-        workspace,
-        workspaceId ?? options?.workspaceId ?? workspace.workspaceId,
-      );
+      const target = workspaceId ?? options?.workspaceId ?? workspace.workspaceId;
+      const native = nativeProjectFiles(workspace, target);
+      if (native) return native.read(target!, path);
+      const resolved = await resolveWorkspaceConnectionFromContext(workspace, target);
       const client = getAnyHarnessClient(resolved.connection);
       return client.files.read(resolved.connection.anyharnessWorkspaceId, path);
     },
@@ -144,6 +149,8 @@ export function useSearchWorkspaceFilesQuery(options: {
     staleTime: 30_000,
     enabled,
     queryFn: async ({ signal }) => {
+      const native = nativeProjectFiles(workspace, workspaceId);
+      if (native) { signal.throwIfAborted(); return native.search(workspaceId!, query, Math.min(limit, 128)); }
       const resolved = await resolveWorkspaceConnectionFromContext(workspace, workspaceId);
       const client = getAnyHarnessClient(resolved.connection);
       return client.files.search(
@@ -179,6 +186,8 @@ export function useStatWorkspaceFileQuery(options: {
     queryKey,
     enabled,
     queryFn: async ({ signal }) => {
+      const native = nativeProjectFiles(workspace, workspaceId);
+      if (native) { signal.throwIfAborted(); return native.stat(workspaceId!, options.path!); }
       const resolved = await resolveWorkspaceConnectionFromContext(workspace, workspaceId);
       const client = getAnyHarnessClient(resolved.connection);
       return client.files.stat(
@@ -198,6 +207,8 @@ export function useWriteWorkspaceFileMutation(options?: { workspaceId?: string |
 
   return useMutation({
     mutationFn: async (input: WriteWorkspaceFileRequest) => {
+      const native = nativeProjectFiles(workspace, workspaceId);
+      if (native) return native.write(workspaceId!, input);
       const resolved = await resolveWorkspaceConnectionFromContext(workspace, workspaceId);
       const client = getAnyHarnessClient(resolved.connection);
       return client.files.write(resolved.connection.anyharnessWorkspaceId, input);
@@ -244,6 +255,11 @@ export function useRenameWorkspaceEntryMutation(options?: { workspaceId?: string
 
   return useMutation({
     mutationFn: async (input: RenameWorkspaceFileEntryRequest) => {
+      const native = nativeProjectFiles(workspace, workspaceId);
+      if (native) {
+        if (!native.rename) throw new Error("Native project rename unavailable.");
+        return native.rename(workspaceId!, input);
+      }
       const resolved = await resolveWorkspaceConnectionFromContext(workspace, workspaceId);
       const client = getAnyHarnessClient(resolved.connection);
       return client.files.renameEntry(resolved.connection.anyharnessWorkspaceId, input);
@@ -300,6 +316,11 @@ export function useDeleteWorkspaceEntryMutation(options?: { workspaceId?: string
 
   return useMutation({
     mutationFn: async (input: { path: string }) => {
+      const native = nativeProjectFiles(workspace, workspaceId);
+      if (native) {
+        if (!native.delete) throw new Error("Native project delete unavailable.");
+        return native.delete(workspaceId!, input.path);
+      }
       const resolved = await resolveWorkspaceConnectionFromContext(workspace, workspaceId);
       const client = getAnyHarnessClient(resolved.connection);
       return client.files.deleteEntry(resolved.connection.anyharnessWorkspaceId, input.path);
@@ -349,6 +370,12 @@ function useCreateWorkspaceEntryMutation(
 
   return useMutation({
     mutationFn: async (input: { path: string; content?: string }) => {
+      const native = nativeProjectFiles(workspace, workspaceId);
+      if (native) {
+        if (!native.create) throw new Error("Native project create unavailable.");
+        return native.create(workspaceId!, {kind, path: input.path,
+          ...(kind === "file" ? {content: input.content ?? ""} : {})});
+      }
       const resolved = await resolveWorkspaceConnectionFromContext(workspace, workspaceId);
       const client = getAnyHarnessClient(resolved.connection);
       return client.files.createEntry(resolved.connection.anyharnessWorkspaceId, {

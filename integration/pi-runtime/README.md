@@ -22,14 +22,14 @@ With GridAgent installed in the current Python environment, run
 
 The worker reads JSON lines (prompt and abort, with an optional startup text seed) on stdin and emits public
 text, tool status and terminal events on stdout. Configure it in the trusted
-host environment: GRIDAGENT_NATIVE_PYTHON, GRIDAGENT_NATIVE_WORKSPACE,
+host environment: GRIDAGENT_NATIVE_PYTHON, optional legacy GRIDAGENT_NATIVE_WORKSPACE,
 GRIDAGENT_PI_PROVIDER (openai/anthropic/google), GRIDAGENT_PI_MODEL,
 GRIDAGENT_PI_API_KEY. Do not log credentials. Developer task opt-in
 GRIDAGENT_NATIVE_TASKS=1 does not bypass the existing workspace grant.
 
 ## Desktop development bridge
 
-The debug Tauri host exposes `pi_open`, `pi_prompt`, `pi_poll`, `pi_abort` and `pi_close` via the typed desktop `embeddedPi` client. Set `GRIDAGENT_PI_DEV=1`, `GRIDAGENT_PI_NODE` to an absolute Node executable and `GRIDAGENT_PI_WORKER` to the absolute `worker.mjs`, in addition to the trusted configuration above. The host returns a unique session ID from `pi_open` for use in subsequent commands. Poll for protocol `ready` before prompting and keep polling through `settled`. Tool IDs are separate from prompt IDs. Up to four live development workers share the host-authorized workspace. The host bounds public events and rejects unauthorized paths and cross-session requests. Failed requests are never replayed. The original Home and workspace composers use this capability in development mode. See the [Windows desktop build check](../proliferate/README.md#windows-desktop-build-check) for compile validation.
+The debug Tauri host exposes `pi_open`, `pi_prompt`, `pi_poll`, `pi_abort` and `pi_close` via the typed desktop `embeddedPi` client. Set `GRIDAGENT_PI_DEV=1`, `GRIDAGENT_PI_NODE` to an absolute Node executable and `GRIDAGENT_PI_WORKER` to the absolute `worker.mjs`, in addition to the trusted configuration above. The host returns a unique session ID from `pi_open` for use in subsequent commands. Poll for protocol `ready` before prompting and keep polling through `settled`. Tool IDs are separate from prompt IDs. Up to four live development workers may use independently registered host-authorized workspaces. The native folder picker adds projects to a bounded persistent registry; workers receive their selected canonical root, not a renderer-supplied path. The host bounds public events and rejects unauthorized paths and cross-session requests. Failed requests are never replayed. The original Home and workspace composers use this capability in development mode. See the [Windows desktop build check](../proliferate/README.md#windows-desktop-build-check) for compile validation.
 
 ## Tools
 
@@ -61,7 +61,7 @@ No external executable extension discovery is enabled.
 The pinned SDK model registry supplies OpenAI, Anthropic and Google chat
 catalog metadata; `pi_list_models` runs a bounded credential-free discovery
 process. The existing model picker contract is projected by
-`buildPiModelSelector`; the original workspace composer model-selector facade now consumes this data in opt-in native mode, using the existing user-preference store and a reserved nonsecret map entry. Add provider / Settings route to the existing API Keys page. Explicit native session open accepts the selected provider/model and requires its stored credential. The original workspace and Home composers use the same native model selection and session admission in opt-in mode, limited to existing authorized local workspaces. Unknown mode refuses rather than launching an old Agent. The original API Keys settings pane, modal, rows and confirmation UI
+`buildPiModelSelector`; the original workspace composer model-selector facade now consumes this data in opt-in native mode, using the existing user-preference store and a reserved nonsecret map entry. Add provider / Settings route to the existing API Keys page. Explicit native session open accepts the selected provider/model and requires its stored credential. The original workspace and Home composers use the same native model selection and session admission in opt-in mode, limited to the host-registered local project roots (up to 32 disjoint roots). Unknown mode refuses rather than launching an old Agent. The original API Keys settings pane, modal, rows and confirmation UI
 are shared with an opt-in local credential data source in Pi development mode.
 This source stores one key per supported provider using the existing serialized
 keyring worker with Windows/macOS native features. The renderer can only list
@@ -84,13 +84,13 @@ sessions are admitted up to the host bound (currently four worker processes,
 each with its own scoped scientific service); every command stays keyed to
 its own session ID. Unsupported attachments/config interactions fail
 explicitly. Disconnection/uncertain submission is not replayed. There is no
-second conversation store. The existing workspace composer calls this materialization seam, enqueues into the original outbox and activates the original chat tab. Admission checks the host-authorized path and selection generation, retains drafts on pre-enqueue failure, and pins the running worker model. Native session dismissal closes an idle worker; pending sends prevent closure. This remains opt-in development mode, bounded live workers sharing the existing authorized local workspace inventory, text-only prompts. Eligible pure-text sessions can continue after restart. Tool context, per-session workspaces, independent workspace inventory and production desktop validation remain open.
+second conversation store. The existing workspace composer calls this materialization seam, enqueues into the original outbox and activates the original chat tab. Admission checks the host-authorized path and selection generation, retains drafts on pre-enqueue failure, and pins the running worker model. Native session dismissal closes an idle worker; pending sends prevent closure. This remains opt-in development mode, bounded live workers across the host-registered workspace inventory, text-only prompts. Each worker is bound to its selected canonical root. Eligible pure-text sessions can continue after restart. Durable tool context, project removal/forget, explicit per-project grant UI, Git migration and production desktop validation remain open.
 
 ## Desktop history and text continuation
 
 After reopening an authorized workspace, the existing session directory and tabs
 show up to 12 recent Pi sessions from the current app profile. Each session is
-keyed by its original ID and the canonical configured workspace. The transport
+keyed by its original ID and the canonical selected workspace root. The transport
 journal commits a prompt before worker dispatch and commits bounded public
 events after observing settlement. A prompt without a settlement record
 appears with an unknown outcome. Startup and history reads never dispatch that
@@ -117,4 +117,4 @@ and mocked shell job responses; they are not real model or sandbox tests.
 
 ### Home and workspace selection
 
-In opt-in native mode the existing Home composer receives the same Pi picker props and persisted model selection as the workspace composer. Existing authorized standard local workspaces only: no Cowork/worktree/cloud creation or deferred Agent launch. Both entry points use submitPiWorkspacePrompt and the original outbox. Native workspace selection reuses the original selection and shell-intent stores without bootstrapping an external Agent session. Header tabs derive native slots from the existing directory and suppress the old runtime roster/hierarchy reads. The workspace inventory and file transport still depend on retained services. Standalone runtime migration and real desktop qualification remain pending.
+In opt-in native mode the existing Home composer receives the same Pi picker props and persisted model selection as the workspace composer. Existing authorized standard local workspaces only: no Cowork/worktree/cloud creation or deferred Agent launch. Both entry points use submitPiWorkspacePrompt and the original outbox. Native workspace selection reuses the original selection and shell-intent stores without bootstrapping an external Agent session. Header tabs derive native slots from the existing directory and suppress the old runtime roster/hierarchy reads. Native project inventory and scientific file transport now use the host-owned registry and per-project IPC. Git and other workspace services still depend on retained services. Standalone runtime migration and real desktop qualification remain pending.

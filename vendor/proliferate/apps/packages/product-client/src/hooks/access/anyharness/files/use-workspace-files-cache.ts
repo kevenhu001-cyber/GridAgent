@@ -6,6 +6,8 @@ import {
   anyHarnessWorkspaceFileTreeKey,
   anyHarnessWorkspaceFilesScopeKey,
   useAnyHarnessCacheScopeKey,
+  useOptionalAnyHarnessWorkspaceContext,
+  nativeProjectFiles,
 } from "@anyharness/sdk-react";
 import { useCallback } from "react";
 import {
@@ -33,6 +35,7 @@ interface WorkspaceFileCacheTarget {
 export function useWorkspaceFilesCache() {
   const queryClient = useQueryClient();
   const cacheScopeKey = useAnyHarnessCacheScopeKey();
+  const workspace = useOptionalAnyHarnessWorkspaceContext();
 
   const invalidateWorkspaceFiles = useCallback(async ({
     workspaceId,
@@ -47,7 +50,7 @@ export function useWorkspaceFilesCache() {
         queryKey: anyHarnessWorkspaceFileSearchScopeKey(cacheScopeKey, workspaceId),
       }),
     ]);
-  }, [cacheScopeKey, queryClient]);
+  }, [cacheScopeKey, queryClient, workspace]);
 
   const prefetchWorkspaceDirectory = useCallback(async ({
     materializedWorkspaceId,
@@ -65,6 +68,8 @@ export function useWorkspaceFilesCache() {
         dirPath,
       ),
       queryFn: async ({ signal }) => {
+        const native = nativeProjectFiles(workspace, materializedWorkspaceId);
+        if (native) { signal.throwIfAborted(); return native.list(materializedWorkspaceId, dirPath); }
         return listWorkspaceFiles(
           buildConnection(runtimeUrl, authToken),
           anyharnessWorkspaceId,
@@ -73,7 +78,7 @@ export function useWorkspaceFilesCache() {
         );
       },
     });
-  }, [cacheScopeKey, queryClient]);
+  }, [cacheScopeKey, queryClient, workspace]);
 
   const reloadWorkspaceFile = useCallback(async ({
     materializedWorkspaceId,
@@ -93,6 +98,8 @@ export function useWorkspaceFilesCache() {
     return queryClient.fetchQuery({
       queryKey,
       queryFn: async ({ signal }) => {
+        const native = nativeProjectFiles(workspace, materializedWorkspaceId);
+        if (native) { signal.throwIfAborted(); return native.read(materializedWorkspaceId, filePath); }
         return readWorkspaceFile(
           buildConnection(runtimeUrl, authToken),
           anyharnessWorkspaceId,
@@ -102,7 +109,7 @@ export function useWorkspaceFilesCache() {
       },
       staleTime: 0,
     });
-  }, [cacheScopeKey, queryClient]);
+  }, [cacheScopeKey, queryClient, workspace]);
 
   return {
     invalidateWorkspaceFiles,

@@ -1,5 +1,6 @@
 //! Development-only bridge to the embedded Pi worker. No external Agent fallback.
 use crate::pi_history::{self, Journal, Record, MAX_TURN_EVENT_BYTES};
+use crate::scientific_projects;
 use serde_json::{json, Value};
 use std::{collections::HashMap, path::PathBuf, process::Stdio, time::Duration};
 use tauri::State;
@@ -117,11 +118,7 @@ pub(crate) fn pi_enabled() -> bool {
 // Only compare a selected path to the already configured root. Never accept
 // a renderer path as authority to launch Python or access a new workspace.
 fn authorized_workspace(path: &str) -> Option<PathBuf> {
-    let selected = PathBuf::from(path);
-    if !selected.is_absolute() { return None; }
-    let selected = selected.canonicalize().ok()?;
-    let configured = configured_path("GRIDAGENT_NATIVE_WORKSPACE", false).ok()?.canonicalize().ok()?;
-    (selected == configured).then_some(configured)
+    scientific_projects::resolve_path(path)
 }
 
 #[tauri::command]
@@ -143,16 +140,16 @@ pub async fn pi_list_history(workspace_path: String) -> Result<pi_history::Histo
     if !pi_enabled() { return Err("Native Pi development mode is disabled".into()); }
     let workspace = authorized_workspace(&workspace_path)
         .ok_or("Selected workspace is not authorized for Pi history")?;
-    let dir = history_directory(workspace).await?;
+    let dir = history_directory(workspace.clone()).await?;
     tauri::async_runtime::spawn_blocking(move || pi_history::recent(&dir))
         .await.map_err(|_| "Pi history unavailable")?
 }
 
 #[tauri::command]
-pub async fn pi_dismiss_history(state: State<'_, PiState>, session_id: String) -> Result<(), String> {
+pub async fn pi_dismiss_history(state: State<'_, PiState>, workspace_path: String, session_id: String) -> Result<(), String> {
     if !pi_enabled() { return Err("Native Pi development mode is disabled".into()); }
-    let workspace = configured_path("GRIDAGENT_NATIVE_WORKSPACE", false)?
-        .canonicalize().map_err(|_| "Cannot resolve Pi workspace")?;
+    let workspace = authorized_workspace(&workspace_path)
+        .ok_or("Selected workspace is not authorized for Pi history")?;
     let dir = history_directory(workspace).await?;
     let guard = state.0.lock().await;
     if guard.contains_key(&session_id) { return Err("Close the live Pi session first".into()); }
@@ -204,6 +201,7 @@ impl PiProcess {
         stored_key: Option<String>,
         journal: Journal,
         expect_restore: bool,
+        workspace: PathBuf,
     ) -> Result<Self, String> {
         if !pi_enabled() {
             return Err("Embedded Pi bridge requires explicit development opt-in".into());
@@ -211,7 +209,6 @@ impl PiProcess {
         let node = configured_path("GRIDAGENT_PI_NODE", true)?;
         let worker = configured_path("GRIDAGENT_PI_WORKER", true)?;
         configured_path("GRIDAGENT_NATIVE_PYTHON", true)?;
-        configured_path("GRIDAGENT_NATIVE_WORKSPACE", false)?;
         let cwd = worker.parent().ok_or("Invalid worker directory")?;
         let mut command = Command::new(node);
         command.arg(&worker).current_dir(cwd).env_clear()
@@ -220,6 +217,7 @@ impl PiProcess {
         for (key, value) in std::env::vars_os() {
             if allowed_env(&key.to_string_lossy().to_ascii_uppercase()) { command.env(key, value); }
         }
+        command.env("GRIDAGENT_NATIVE_WORKSPACE", &workspace);
         // Native credential lookup is host-only; no secret is returned to UI.
         // Explicit developer environment remains supported if no stored key exists.
         command.env("GRIDAGENT_PI_PROVIDER", provider);
@@ -345,7 +343,7 @@ pub async fn pi_open(state: State<'_, PiState>, workspace_path: String, selectio
     if !pi_enabled() { return Err("Native Pi development mode is disabled".into()); }
     let workspace = authorized_workspace(&workspace_path)
         .ok_or("Selected workspace does not match the configured Pi workspace")?;
-    let history_dir = history_directory(workspace).await?;
+    let history_dir = history_directory(workspace.clone()).await?;
     let mut guard = state.0.lock().await;
     if guard.len() >= MAX_PI_SESSIONS { return Err("Pi session limit reached".into()); }
     let explicit = selection.is_some();
@@ -364,7 +362,7 @@ pub async fn pi_open(state: State<'_, PiState>, workspace_path: String, selectio
     }
     let id = uuid::Uuid::new_v4().simple().to_string();
     let journal = Journal::new(&history_dir, &id, &model_id, &provider);
-    let process = PiProcess::start(&provider, &model_id, stored_key, journal, false)?;
+    let process = PiProcess::start(&provider, &model_id, stored_key, journal, false, workspace)?;
     guard.insert(id.clone(), process);
     Ok(id)
 }
@@ -379,7 +377,7 @@ pub async fn pi_resume(
     if !pi_enabled() { return Err("Native Pi development mode is disabled".into()); }
     let workspace = authorized_workspace(&workspace_path)
         .ok_or("Selected workspace is not authorized for Pi history")?;
-    let dir = history_directory(workspace).await?;
+    let dir = history_directory(workspace.clone()).await?;
     let mut guard = state.0.lock().await;
     if guard.len() >= MAX_PI_SESSIONS { return Err("Pi session limit reached".into()); }
     if guard.contains_key(&session_id) { return Err("Pi session is already open".into()); }
@@ -401,7 +399,7 @@ pub async fn pi_resume(
     })) {
         return Err("Saved Pi text cannot be restored with the active credential".into());
     }
-    let mut process = PiProcess::start(&provider, &saved.model_id, Some(key), journal, true)?;
+    let mut process = PiProcess::start(&provider, &saved.model_id, Some(key), journal, true, workspace)?;
     process.send(frame).await?;
     guard.insert(session_id, process);
     Ok(PiModelSelection { provider, model_id: saved.model_id })

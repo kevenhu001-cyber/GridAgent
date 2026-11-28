@@ -49,9 +49,19 @@ jobs:
         working-directory: integration/pi-runtime
         run: python smoke_install.py
       - run: pnpm install --frozen-lockfile
+      - name: Build SDK contracts for file hook regression tests
+        run: pnpm --filter @anyharness/sdk build
+      - name: Verify native file routing and legacy isolation
+        run: pnpm --filter @anyharness/sdk-react test src/hooks/files.test.tsx
       - name: Build the retained desktop frontend
         run: pnpm --filter proliferate build
+      - name: Verify retained native project inventory and path integration
+        run: pnpm --filter @proliferate/product-client test src/lib/access/pi/native-project.test.ts src/hooks/workspaces/cache/use-workspaces.test.tsx src/providers/WorkspacePathProvider.test.tsx
       - name: Compile-check the Tauri host and its tests
         run: cargo check --locked --target x86_64-pc-windows-msvc -p proliferate --tests
       - name: Verify Pi history recovery and workspace isolation
-        run: cargo test --locked --target x86_64-pc-windows-msvc -p proliferate --lib pi_history::tests
+        run: |
+          cargo test --locked --target x86_64-pc-windows-msvc -p proliferate --lib pi_history::tests
+          cargo test --locked --target x86_64-pc-windows-msvc -p proliferate --lib scientific_projects::tests
+      - name: Verify native project identity binding
+        run: cargo test --locked --target x86_64-pc-windows-msvc -p proliferate --lib scientific::tests

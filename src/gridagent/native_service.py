@@ -46,6 +46,19 @@ class NativeTable(Strict):
     limit: int = Field(default=20, ge=1, le=50)
 
 
+class ProjectDirectory(Strict):
+    path: str = Field(default="", max_length=240)
+
+
+class ProjectSearch(Strict):
+    query: str = Field(min_length=1, max_length=240)
+    limit: int = Field(default=25, ge=1, le=128)
+
+
+class ProjectFile(Strict):
+    path: str = Field(min_length=1, max_length=240)
+
+
 class ProjectRead(Strict):
     path: str = Field(min_length=1, max_length=240)
     offset: int = Field(default=0, ge=0, le=ws.MAX_FILE)
@@ -56,6 +69,20 @@ class ProjectWrite(Strict):
     path: str = Field(min_length=1, max_length=240)
     text: str = Field(max_length=48000)
     expected_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+
+
+class ProjectCreate(ProjectFile):
+    kind: Literal["file", "directory"]
+    text: str = Field(default="", max_length=48000)
+
+
+class ProjectDelete(ProjectFile):
+    kind: Literal["file", "directory"]
+    expected_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+
+
+class ProjectRename(ProjectDelete):
+    new_path: str = Field(min_length=1, max_length=240)
 
 
 class JobRef(Strict):
@@ -88,13 +115,17 @@ METHODS = {
     "solver.backends": Empty,
     "solver.table": NativeTable,
     "workspace.files": Empty,
+    "workspace.tree": ProjectDirectory,
+    "workspace.search": ProjectSearch,
+    "workspace.inspect": ProjectFile,
     "workspace.read": ProjectRead,
     "job.status": JobRef,
     "job.latest": Empty,
 }
 
 
-TASK_METHODS = {"workspace.write": ProjectWrite, "job.submit": JobSubmit, "job.cancel": JobRef,
+TASK_METHODS = {"workspace.create": ProjectCreate, "workspace.rename": ProjectRename,
+                "workspace.delete": ProjectDelete, "workspace.write": ProjectWrite, "job.submit": JobSubmit, "job.cancel": JobRef,
                 "job.submit_shell": ShellSubmit}
 
 
@@ -117,8 +148,20 @@ def dispatch(root: Path, method: str, params: dict, *, allow_tasks=False):
     ws.require_grant(root)
     if method == "workspace.files":
         return ws.list_project(root)
+    if method == "workspace.tree":
+        return ws.list_project_directory(root, **args)
+    if method == "workspace.search":
+        return ws.search_project_files(root, **args)
+    if method == "workspace.inspect":
+        return ws.inspect_project(root, **args)
     if method == "workspace.read":
         return ws.read_project(root, **args)
+    if method == "workspace.create":
+        return ws.create_project_entry(root, **args)
+    if method == "workspace.rename":
+        return ws.rename_project_entry(root, **args)
+    if method == "workspace.delete":
+        return ws.delete_project_entry(root, **args)
     if method == "workspace.write":
         return ws.write_project(root, **args)
     if method.startswith("job."):

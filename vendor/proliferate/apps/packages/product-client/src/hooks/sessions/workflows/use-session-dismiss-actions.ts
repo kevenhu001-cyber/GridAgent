@@ -45,7 +45,12 @@ export function useSessionDismissActions() {
         return false;
       }
       try {
-        await host.desktop?.pi?.history?.dismiss(sessionId);
+        const pi = host.desktop?.pi;
+        const scientificProject = host.desktop?.scientificProject;
+        if (!pi?.history || !scientificProject || !workspaceId) throw new Error("Native project history is unavailable.");
+        const project = (await scientificProject.list()).find(item => item.id === workspaceId);
+        if (!project?.available) throw new Error("Native project folder is unavailable.");
+        await pi.history.dismiss(project.workspacePath, sessionId);
       } catch {
         showToast("Pi session history could not be dismissed.");
         return false;
@@ -89,6 +94,7 @@ export function useSessionDismissActions() {
     showToast,
     cloudClient,
     host.desktop?.pi,
+    host.desktop?.scientificProject,
   ]);
 
   return { dismissSession };

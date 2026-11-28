@@ -139,6 +139,139 @@ def list_project(root):
     return {"status": "ok", "files": scan(project(root))}
 
 
+def list_project_directory(root, path=""):
+    """One directory of the existing authorized scientific project, including empty folders."""
+    base = project(root)
+    scan(base)  # Enforce the same project-wide size, file and link constraints.
+    current = base
+    if path:
+        for part in safe_parts(path):
+            current = current / part
+            plain(current, directory=True)
+    entries = []
+    for child in current.iterdir():
+        relative = child.relative_to(base).as_posix()
+        safe_parts(relative)
+        info = child.lstat()
+        if stat.S_ISDIR(info.st_mode):
+            plain(child, directory=True)
+            entries.append({"path": relative, "name": child.name, "kind": "directory",
+                            "hasChildren": next(child.iterdir(), None) is not None})
+        else:
+            size = plain(child).st_size
+            entries.append({"path": relative, "name": child.name, "kind": "file", "sizeBytes": size})
+        if len(entries) > 2 * MAX_FILES:
+            raise ValueError("Directory exceeds entry limit")
+    entries.sort(key=lambda row: (row["kind"] != "directory", row["name"].casefold(), row["name"]))
+    return {"directoryPath": path, "entries": entries}
+
+
+def search_project_files(root, query, limit=25):
+    """Bounded literal path search; never searches file contents or the host root."""
+    if not isinstance(query, str) or not query.strip() or len(query) > 240 or not 1 <= limit <= 128:
+        raise ValueError("Invalid project search")
+    needle = query.strip().casefold()
+    rows = scan(project(root))
+    matches = [{"path": row["path"], "name": row["path"].rsplit("/", 1)[-1]}
+               for row in rows if needle in row["path"].casefold()]
+    return {"results": matches[:limit]}
+
+
+def _entry_target(base, path):
+    """Resolve an existing parent; never create parents for UI mutations."""
+    current = base
+    parts = safe_parts(path)
+    plain(base, directory=True)
+    for part in parts[:-1]:
+        current = current / part
+        plain(current, directory=True)
+    return current / parts[-1]
+
+
+def _require_absent(target):
+    # Treat case-insensitive collisions consistently across platforms.
+    if any(child.name.casefold() == target.name.casefold() for child in target.parent.iterdir()):
+        raise ValueError("Project entry already exists")
+
+
+def _checked_entry(target, kind, expected_sha256):
+    if kind == "directory":
+        plain(target, directory=True)
+        if expected_sha256 is not None or next(target.iterdir(), None) is not None:
+            raise ValueError("Only empty directories can be renamed or deleted")
+    elif kind == "file":
+        data = bounded_bytes(target, MAX_FILE)
+        if expected_sha256 != sha(data):
+            raise ValueError("Project file changed; read the latest revision")
+    else:
+        raise ValueError("Unsupported project entry kind")
+
+
+def create_project_entry(root, path, kind, text=""):
+    base = project(root)
+    if "\x00" in text:
+        raise ValueError("Project text cannot contain NUL")
+    data = text.encode("utf-8")
+    with FileLock(str(Path(root).resolve() / "scientific-project.lock"), timeout=5):
+        require_grant(root)
+        rows = scan(base)
+        target = _entry_target(base, path)
+        _require_absent(target)
+        if kind == "directory":
+            if text:
+                raise ValueError("Directories cannot have file content")
+            if sum(len(dirs) for _, dirs, _ in os.walk(base, followlinks=False)) >= MAX_FILES:
+                raise ValueError("Too many directories")
+            target.mkdir()
+            return {"entry": {"path": path, "name": target.name, "kind": kind, "hasChildren": False}}
+        if kind != "file" or len(data) > MAX_FILE or len(rows) >= MAX_FILES:
+            raise ValueError("Invalid project file or file count exceeded")
+        if sum(row["size_bytes"] for row in rows) + len(data) > MAX_PROJECT:
+            raise ValueError("Project storage budget exceeded")
+        # Exclusive creation, never replace an existing file.
+        with target.open("xb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        return {"entry": {"path": path, "name": target.name, "kind": kind,
+                          "sizeBytes": len(data), "isText": "\x00" not in text},
+                "file": {"path": path, "kind": kind, "content": text, "versionToken": sha(data),
+                         "encoding": "utf-8", "sizeBytes": len(data), "isText": True, "tooLarge": False}}
+
+
+def rename_project_entry(root, path, new_path, kind, expected_sha256=None):
+    base = project(root)
+    with FileLock(str(Path(root).resolve() / "scientific-project.lock"), timeout=5):
+        require_grant(root)
+        scan(base)
+        target, destination = _entry_target(base, path), _entry_target(base, new_path)
+        _checked_entry(target, kind, expected_sha256)
+        _require_absent(destination)
+        # The project lock serializes cooperating writers, including the Agent.
+        # External programs modifying this directory concurrently are unsupported.
+        target.rename(destination)
+        entry = {"path": new_path, "name": destination.name, "kind": kind}
+        if kind == "file":
+            entry["sizeBytes"] = plain(destination).st_size
+        else:
+            entry["hasChildren"] = False
+        return {"oldPath": path, "entry": entry}
+
+
+def delete_project_entry(root, path, kind, expected_sha256=None):
+    base = project(root)
+    with FileLock(str(Path(root).resolve() / "scientific-project.lock"), timeout=5):
+        require_grant(root)
+        scan(base)
+        target = _entry_target(base, path)
+        _checked_entry(target, kind, expected_sha256)
+        if kind == "directory":
+            target.rmdir()  # Never recursively remove a directory.
+        else:
+            target.unlink()
+        return {"path": path, "kind": kind}
+
+
 def read_project(root, path, offset=0, limit=24000):
     if not 0 <= offset <= MAX_FILE or not 1 <= limit <= 24000:
         raise ValueError("Invalid project file pagination")

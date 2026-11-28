@@ -2,7 +2,7 @@
 //! The default lane is read-only. Mutations require explicit debug-host opt-in.
 //! No model or renderer supplies an executable or root.
 use serde_json::{json, Value};
-use std::{path::PathBuf, process::Stdio, time::Duration};
+use std::{collections::HashMap, path::PathBuf, process::Stdio, time::{Duration, Instant}};
 use tauri::State;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -15,12 +15,13 @@ const MAX_REQUEST: usize = 64 * 1024;
 const MAX_RESPONSE: u64 = 4 * 1024 * 1024 + 1;
 
 #[derive(Default)]
-pub struct ScientificState(Mutex<Option<ScientificProcess>>);
+pub struct ScientificState(Mutex<HashMap<PathBuf, ScientificProcess>>);
 
 struct ScientificProcess {
     _child: Child,
     input: ChildStdin,
     output: BufReader<ChildStdout>,
+    last_used: Instant,
 }
 
 fn configured_path(key: &str, file: bool) -> Result<PathBuf, String> {
@@ -46,11 +47,10 @@ fn developer_tasks_enabled() -> bool {
 }
 
 impl ScientificProcess {
-    fn start() -> Result<Self, String> {
-        // Development-only host configuration. Packaged runtime discovery and
-        // user-authorized workspace selection replace this in the next phase.
+    fn start(root: PathBuf) -> Result<Self, String> {
+        // The selected canonical root is supplied by the host; packaged Python
+        // runtime discovery remains a separate release prerequisite.
         let python = configured_path("GRIDAGENT_NATIVE_PYTHON", true)?;
-        let root = configured_path("GRIDAGENT_NATIVE_WORKSPACE", false)?;
         let mut command = Command::new(python);
         command.args(["-I", "-X", "utf8", "-m", "gridagent.native_service"])
             .arg(&root).current_dir(python_parent()?)
@@ -72,7 +72,7 @@ impl ScientificProcess {
         let mut child = command.spawn().map_err(|_| "Cannot start scientific service".to_string())?;
         let input = child.stdin.take().ok_or("Scientific stdin unavailable")?;
         let output = BufReader::new(child.stdout.take().ok_or("Scientific stdout unavailable")?);
-        Ok(Self { _child: child, input, output })
+        Ok(Self { _child: child, input, output, last_used: Instant::now() })
     }
 
     async fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
@@ -107,7 +107,8 @@ pub async fn scientific_read(
 ) -> Result<Value, String> {
     if !matches!(method.as_str(), "hello" | "scientific.status" | "scientific.runs" |
         "scientific.artifact" | "solver.backends" | "solver.table" | "workspace.files" |
-        "workspace.read" | "job.status" | "job.latest") {
+        "workspace.read" | "workspace.tree" | "workspace.search" | "workspace.inspect" |
+        "job.status" | "job.latest") {
         return Err("Unknown or non-read scientific operation".into());
     }
     exchange(&state, &method, params).await
@@ -127,19 +128,143 @@ pub async fn scientific_task(
 }
 
 async fn exchange(state: &ScientificState, method: &str, params: Value) -> Result<Value, String> {
+    let root = configured_path("GRIDAGENT_NATIVE_WORKSPACE", false)?;
+    exchange_at(state, &root, method, params).await
+}
+
+async fn exchange_at(state: &ScientificState, root: &std::path::Path, method: &str, params: Value) -> Result<Value, String> {
+    const MAX_IDLE_PROJECT_SERVICES: usize = 4;
     let mut guard = state.0.lock().await;
-    // Own the child during the exchange: cancellation drops it rather than
-    // leaving a stale response queued for the next request.
-    let mut process = match guard.take() {
+    // Requests are serialized. A worker removed from the map is the only one
+    // in flight; idle services are safely evicted by least-recent use.
+    let mut process = match guard.remove(root) {
         Some(process) => process,
-        None => ScientificProcess::start()?,
+        None => {
+            if guard.len() >= MAX_IDLE_PROJECT_SERVICES {
+                if let Some(oldest) = guard.iter().min_by_key(|(_, worker)| worker.last_used)
+                    .map(|(path, _)| path.clone()) {
+                    guard.remove(&oldest);
+                }
+            }
+            ScientificProcess::start(root.to_path_buf())?
+        }
     };
     match timeout(Duration::from_secs(30), process.request(method, params)).await {
         Ok(Ok(response)) => {
-            *guard = Some(process);
+            process.last_used = Instant::now();
+            guard.insert(root.to_path_buf(), process);
             Ok(response)
         }
         Ok(Err(error)) => Err(error),
         Err(_) => Err("Scientific request timed out; connection discarded".into()),
+    }
+}
+
+
+// Native project IDs deliberately do not collide with repository/AnyHarness
+// workspace IDs. Relative paths address scientific-project, not its parent.
+fn project_id(root: &std::path::Path) -> String {
+    crate::scientific_projects::id_for_path(root)
+}
+
+fn bound_project(root: &std::path::Path, id: &str) -> Result<(), String> {
+    if id != project_id(root) {
+        return Err("Scientific project identity mismatch".into());
+    }
+    Ok(())
+}
+
+fn project_root(id: &str) -> Result<PathBuf, String> {
+    if !crate::pi_bridge::pi_enabled() {
+        return Err("Native project development mode is disabled".into());
+    }
+    let root = crate::scientific_projects::resolve_id(id)?;
+    if project_id(&root) != id { return Err("Scientific project identity mismatch".into()); }
+    Ok(root)
+}
+
+#[tauri::command]
+pub fn scientific_project_list() -> Result<Vec<crate::scientific_projects::ProjectIdentity>, String> {
+    if !crate::pi_bridge::pi_enabled() {
+        return Err("Native project development mode is disabled".into());
+    }
+    crate::scientific_projects::list()
+}
+
+#[tauri::command]
+pub async fn scientific_project_add_from_picker() -> Result<Option<crate::scientific_projects::ProjectIdentity>, String> {
+    if !crate::pi_bridge::pi_enabled() {
+        return Err("Native project development mode is disabled".into());
+    }
+    let selected = tokio::task::spawn_blocking(|| {
+        rfd::FileDialog::new().set_title("Open GridAgent Project").pick_folder()
+    }).await.map_err(|_| "Project folder picker failed")?;
+    match selected {
+        Some(path) => crate::scientific_projects::register(path).map(Some),
+        None => Ok(None),
+    }
+}
+
+#[tauri::command]
+pub async fn scientific_project_read(
+    state: State<'_, ScientificState>, project_id: String, method: String, params: Value,
+) -> Result<Value, String> {
+    let root = project_root(&project_id)?;
+    bound_project(&root, &project_id)?;
+    if !matches!(method.as_str(), "workspace.tree" | "workspace.search" |
+        "workspace.inspect" | "workspace.read") {
+        return Err("Unknown native project read operation".into());
+    }
+    exchange_at(&state, &root, &method, params).await
+}
+
+#[tauri::command]
+pub async fn scientific_project_write(
+    state: State<'_, ScientificState>, project_id: String, path: String,
+    text: String, expected_sha256: String,
+) -> Result<Value, String> {
+    let root = project_root(&project_id)?;
+    bound_project(&root, &project_id)?;
+    if !developer_tasks_enabled() {
+        return Err("Scientific project writing requires explicit development opt-in".into());
+    }
+    if expected_sha256.len() != 64 ||
+        !expected_sha256.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+        return Err("A valid observed file revision is required".into());
+    }
+    exchange_at(&state, &root, "workspace.write",
+        json!({"path":path,"text":text,"expected_sha256":expected_sha256})).await
+}
+
+#[tauri::command]
+pub async fn scientific_project_mutate(
+    state: State<'_, ScientificState>, project_id: String, method: String, params: Value,
+) -> Result<Value, String> {
+    let root = project_root(&project_id)?;
+    bound_project(&root, &project_id)?;
+    if !developer_tasks_enabled() {
+        return Err("Scientific project mutation requires explicit development opt-in".into());
+    }
+    if !matches!(method.as_str(), "workspace.create" | "workspace.rename" | "workspace.delete") {
+        return Err("Unknown native project mutation".into());
+    }
+    exchange_at(&state, &root, &method, params).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_project_identity_is_stable_and_bound_to_root() {
+        let first = PathBuf::from("workspace-a");
+        let second = PathBuf::from("workspace-b");
+        let id = project_id(&first);
+        assert!(id.starts_with("gridagent-scientific:"));
+        assert_eq!(id, project_id(&first));
+        assert_ne!(id, project_id(&second));
+        assert!(bound_project(&first, &id).is_ok());
+        assert!(bound_project(&second, &id).is_err());
+        assert!(bound_project(&first, "legacy-workspace-id").is_err());
     }
 }
