@@ -24,7 +24,7 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-pip311-unit-v1-${{ hashFiles('pyproject.toml') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-pip311-unit-v1-
-      - run: pip install -e '.[dev]'
+      - run: pip install -e '.[dev,mcp]'
       - name: Restore pinned public benchmark assets
         uses: actions/cache@v4
         with:
@@ -33,7 +33,7 @@ jobs:
       - run: python scripts/sync_benchmark.py benchmark-assets
       - run: python scripts/sync_evaluator.py offline-evaluation/test_memory.json
       - run: ruff check src tests
-      - run: pytest -m 'not integration' -q
+      - run: pytest -m 'not integration' -q --timeout=300
   andes:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -50,7 +50,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-pip311-andes-v1-
       - run: pip install -e '.[dev,engineering]'
-      - run: pytest -m integration -q
+      - run: pytest -m integration -q --timeout=900
   windows-scientific:
     runs-on: windows-latest
     timeout-minutes: 60
@@ -65,5 +65,7 @@ jobs:
       - run: python scripts/sync_evaluator.py offline-evaluation/test_memory.json
       # Verbose output identifies the exact test that fails or stalls when the
       # Windows runner is far slower than Linux; -q hides that information.
-      - run: python -m pytest -m 'not integration' -v --durations=30
-      - run: python -m pytest -m integration -v --durations=15
+      # Per-test timeouts turn an indefinite transport deadlock into a named
+      # failure instead of consuming the full job timeout.
+      - run: python -m pytest -m 'not integration' -v --durations=30 --timeout=300 --timeout-method=thread
+      - run: python -m pytest -m integration -v --durations=15 --timeout=900 --timeout-method=thread
