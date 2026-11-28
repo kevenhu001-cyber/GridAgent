@@ -3,7 +3,7 @@
 //! No model or renderer supplies an executable or root.
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{path::PathBuf, process::Stdio, time::Duration};
+use std::{collections::HashMap, path::PathBuf, process::Stdio, time::{Duration, Instant}};
 use tauri::State;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -16,13 +16,14 @@ const MAX_REQUEST: usize = 64 * 1024;
 const MAX_RESPONSE: u64 = 4 * 1024 * 1024 + 1;
 
 #[derive(Default)]
-pub struct ScientificState(Mutex<Option<ScientificProcess>>);
+pub struct ScientificState(Mutex<HashMap<PathBuf, ScientificProcess>>);
 
 struct ScientificProcess {
     _child: Child,
     root: PathBuf,
     input: ChildStdin,
     output: BufReader<ChildStdout>,
+    last_used: Instant,
 }
 
 fn configured_path(key: &str, file: bool) -> Result<PathBuf, String> {
@@ -73,7 +74,7 @@ impl ScientificProcess {
         let mut child = command.spawn().map_err(|_| "Cannot start scientific service".to_string())?;
         let input = child.stdin.take().ok_or("Scientific stdin unavailable")?;
         let output = BufReader::new(child.stdout.take().ok_or("Scientific stdout unavailable")?);
-        Ok(Self { _child: child, root, input, output })
+        Ok(Self { _child: child, root, input, output, last_used: Instant::now() })
     }
 
     async fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
@@ -134,16 +135,26 @@ async fn exchange(state: &ScientificState, method: &str, params: Value) -> Resul
 }
 
 async fn exchange_at(state: &ScientificState, root: &std::path::Path, method: &str, params: Value) -> Result<Value, String> {
+    const MAX_IDLE_PROJECT_SERVICES: usize = 4;
     let mut guard = state.0.lock().await;
-    // Own the child during the exchange: cancellation drops it rather than
-    // leaving a stale response queued for the next request.
-    let mut process = match guard.take() {
-        Some(process) if process.root == root => process,
-        _ => ScientificProcess::start(root.to_path_buf())?,
+    // Requests are serialized. A worker removed from the map is the only one
+    // in flight; idle services are safely evicted by least-recent use.
+    let mut process = match guard.remove(root) {
+        Some(process) => process,
+        None => {
+            if guard.len() >= MAX_IDLE_PROJECT_SERVICES {
+                if let Some(oldest) = guard.iter().min_by_key(|(_, worker)| worker.last_used)
+                    .map(|(path, _)| path.clone()) {
+                    guard.remove(&oldest);
+                }
+            }
+            ScientificProcess::start(root.to_path_buf())?
+        }
     };
     match timeout(Duration::from_secs(30), process.request(method, params)).await {
         Ok(Ok(response)) => {
-            *guard = Some(process);
+            process.last_used = Instant::now();
+            guard.insert(root.to_path_buf(), process);
             Ok(response)
         }
         Ok(Err(error)) => Err(error),
@@ -155,7 +166,7 @@ async fn exchange_at(state: &ScientificState, root: &std::path::Path, method: &s
 // Native project IDs deliberately do not collide with repository/AnyHarness
 // workspace IDs. Relative paths address scientific-project, not its parent.
 fn project_id(root: &std::path::Path) -> String {
-    format!("gridagent-scientific:{:x}", Sha256::digest(root.as_os_str().as_encoded_bytes()))
+    crate::scientific_projects::id_for_path(root)
 }
 
 fn bound_project(root: &std::path::Path, id: &str) -> Result<(), String> {
@@ -165,25 +176,42 @@ fn bound_project(root: &std::path::Path, id: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn project_root() -> Result<PathBuf, String> {
+fn project_root(id: &str) -> Result<PathBuf, String> {
     if !crate::pi_bridge::pi_enabled() {
         return Err("Native project development mode is disabled".into());
     }
-    configured_path("GRIDAGENT_NATIVE_WORKSPACE", false)
+    let root = crate::scientific_projects::resolve_id(id)?;
+    if project_id(&root) != id { return Err("Scientific project identity mismatch".into()); }
+    Ok(root)
 }
 
 #[tauri::command]
-pub fn scientific_project_identity() -> Result<Value, String> {
-    let root = project_root()?;
-    Ok(json!({"id": project_id(&root), "workspacePath": root,
-        "projectPath": root.join("scientific-project")}))
+pub fn scientific_project_list() -> Result<Vec<crate::scientific_projects::ProjectIdentity>, String> {
+    if !crate::pi_bridge::pi_enabled() {
+        return Err("Native project development mode is disabled".into());
+    }
+    crate::scientific_projects::list()
+}
+
+#[tauri::command]
+pub async fn scientific_project_add_from_picker() -> Result<Option<crate::scientific_projects::ProjectIdentity>, String> {
+    if !crate::pi_bridge::pi_enabled() {
+        return Err("Native project development mode is disabled".into());
+    }
+    let selected = tokio::task::spawn_blocking(|| {
+        rfd::FileDialog::new().set_title("Open GridAgent Project").pick_folder()
+    }).await.map_err(|_| "Project folder picker failed")?;
+    match selected {
+        Some(path) => crate::scientific_projects::register(path).map(Some),
+        None => Ok(None),
+    }
 }
 
 #[tauri::command]
 pub async fn scientific_project_read(
     state: State<'_, ScientificState>, project_id: String, method: String, params: Value,
 ) -> Result<Value, String> {
-    let root = project_root()?;
+    let root = project_root(&project_id)?;
     bound_project(&root, &project_id)?;
     if !matches!(method.as_str(), "workspace.tree" | "workspace.search" |
         "workspace.inspect" | "workspace.read") {
@@ -197,7 +225,7 @@ pub async fn scientific_project_write(
     state: State<'_, ScientificState>, project_id: String, path: String,
     text: String, expected_sha256: String,
 ) -> Result<Value, String> {
-    let root = project_root()?;
+    let root = project_root(&project_id)?;
     bound_project(&root, &project_id)?;
     if !developer_tasks_enabled() {
         return Err("Scientific project writing requires explicit development opt-in".into());
@@ -214,7 +242,7 @@ pub async fn scientific_project_write(
 pub async fn scientific_project_mutate(
     state: State<'_, ScientificState>, project_id: String, method: String, params: Value,
 ) -> Result<Value, String> {
-    let root = project_root()?;
+    let root = project_root(&project_id)?;
     bound_project(&root, &project_id)?;
     if !developer_tasks_enabled() {
         return Err("Scientific project mutation requires explicit development opt-in".into());
