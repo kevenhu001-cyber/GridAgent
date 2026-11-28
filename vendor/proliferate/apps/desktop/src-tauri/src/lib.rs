@@ -11,6 +11,7 @@ mod sidecar;
 mod scientific;
 mod scientific_projects;
 mod pi_bridge;
+mod gridagent_runtime;
 mod pi_credentials;
 mod pi_history;
 mod state;
@@ -383,6 +384,10 @@ pub fn run() {
 
     builder
         .setup(move |app| {
+            if gridagent_runtime::packaged_build() {
+                let resource_dir = app.path().resource_dir()?;
+                gridagent_runtime::initialize(&resource_dir).map_err(std::io::Error::other)?;
+            }
             #[cfg(target_os = "macos")]
             apply_dev_app_display_name();
 

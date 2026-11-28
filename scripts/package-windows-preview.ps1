@@ -1,4 +1,4 @@
-# Build the retained Tauri application without weakening the native Pi development gate.
+# Build the retained Tauri app with the production resource-bound Pi runtime.
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -21,11 +21,14 @@ $config.app.windows[0].title = 'GridAgent'
 $config.bundle.publisher = 'TopoDrive'
 $config.bundle.targets = @('msi', 'nsis')
 $config.bundle.createUpdaterArtifacts = $false
+$config.bundle.resources += 'gridagent-runtime/'
+$env:GRIDAGENT_PACKAGED_BUILD = '1'
 $config.plugins.updater.endpoints = @()
 # Avoid registering the upstream application's deep-link protocol.
 $config.plugins['deep-link'].desktop.schemes = @('gridagent')
 $originalConfig = Get-Content $configPath -Raw
 try {
+    & (Join-Path $PSScriptRoot 'stage-windows-runtime.ps1') -Destination (Join-Path $tauri 'gridagent-runtime')
     $config | ConvertTo-Json -Depth 100 | Set-Content -Path $configPath -Encoding utf8
     $env:CARGO_TARGET_DIR = Join-Path $vendor 'target'
     $release = Join-Path $env:CARGO_TARGET_DIR "$target/release"
@@ -68,7 +71,7 @@ try {
         "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)"
     }
     $checksums | Set-Content (Join-Path $out 'SHA256SUMS.txt') -Encoding ascii
-    Write-Host 'Created unsigned installer preview; production Pi/Python runtime is not integrated.'
+    Write-Host 'Created unsigned installer preview with bundled Node, Pi and Python runtime.'
 } finally {
     Set-Content -Path $configPath -Value $originalConfig -Encoding utf8 -NoNewline
 }

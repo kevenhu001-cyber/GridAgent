@@ -21,7 +21,7 @@ fn require_secure_backend() -> Result<(), String> {
 }
 
 fn require_mode() -> Result<(), String> {
-    if !pi_enabled() { return Err("Native Pi development mode is disabled".into()); }
+    if !pi_enabled() { return Err("Native Pi runtime is unavailable".into()); }
     require_secure_backend()
 }
 

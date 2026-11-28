@@ -25,11 +25,7 @@ struct ScientificProcess {
 }
 
 fn configured_path(key: &str, file: bool) -> Result<PathBuf, String> {
-    let path = std::env::var_os(key).map(PathBuf::from)
-        .ok_or_else(|| format!("Scientific development configuration missing: {key}"))?;
-    if !path.is_absolute() || (if file { !path.is_file() } else { !path.is_dir() }) {
-        return Err(format!("Invalid scientific development configuration: {key}"));
-    }
+    let path = crate::gridagent_runtime::path(key, file)?;
     // Keep the selected interpreter path: resolving a venv Python symlink can
     // bypass the virtual environment. Canonicalize the workspace only.
     if file { Ok(path) } else {
@@ -51,7 +47,7 @@ impl ScientificProcess {
         // The selected canonical root is supplied by the host; packaged Python
         // runtime discovery remains a separate release prerequisite.
         let python = configured_path("GRIDAGENT_NATIVE_PYTHON", true)?;
-        let mut command = Command::new(python);
+        let mut command = Command::new(&python);
         command.args(["-I", "-X", "utf8", "-m", "gridagent.native_service"])
             .arg(&root).current_dir(python_parent()?)
             .env_clear().env("PYTHONNOUSERSITE", "1")
@@ -66,7 +62,11 @@ impl ScientificProcess {
                 command.env(key, value);
             }
         }
-        if developer_tasks_enabled() {
+        if crate::gridagent_runtime::ready() {
+            command.env("GRIDAGENT_SANDBOX_RUNTIME", python.parent().ok_or("Invalid installed Python path")?);
+            command.env_remove("GRIDAGENT_PLUGIN_ROOT");
+        }
+        if developer_tasks_enabled() || crate::gridagent_runtime::ready() {
             command.arg("--tasks");
         }
         let mut child = command.spawn().map_err(|_| "Cannot start scientific service".to_string())?;
@@ -176,7 +176,7 @@ fn bound_project(root: &std::path::Path, id: &str) -> Result<(), String> {
 
 fn project_root(id: &str) -> Result<PathBuf, String> {
     if !crate::pi_bridge::pi_enabled() {
-        return Err("Native project development mode is disabled".into());
+        return Err("Native project runtime is unavailable".into());
     }
     let root = crate::scientific_projects::resolve_id(id)?;
     if project_id(&root) != id { return Err("Scientific project identity mismatch".into()); }
@@ -186,7 +186,7 @@ fn project_root(id: &str) -> Result<PathBuf, String> {
 #[tauri::command]
 pub fn scientific_project_list() -> Result<Vec<crate::scientific_projects::ProjectIdentity>, String> {
     if !crate::pi_bridge::pi_enabled() {
-        return Err("Native project development mode is disabled".into());
+        return Err("Native project runtime is unavailable".into());
     }
     crate::scientific_projects::list()
 }
@@ -194,7 +194,7 @@ pub fn scientific_project_list() -> Result<Vec<crate::scientific_projects::Proje
 #[tauri::command]
 pub async fn scientific_project_add_from_picker() -> Result<Option<crate::scientific_projects::ProjectIdentity>, String> {
     if !crate::pi_bridge::pi_enabled() {
-        return Err("Native project development mode is disabled".into());
+        return Err("Native project runtime is unavailable".into());
     }
     let selected = tokio::task::spawn_blocking(|| {
         rfd::FileDialog::new().set_title("Open GridAgent Project").pick_folder()

@@ -6,6 +6,8 @@ on:
       - '.github/workflows/windows-package.yml'
       - '.github/workflows/release.yml'
       - 'scripts/package-windows-preview.ps1'
+      - 'scripts/stage-windows-runtime.ps1'
+      - 'vendor/proliferate/apps/desktop/src-tauri/src/gridagent_runtime.rs'
   workflow_dispatch:
   workflow_call:
 

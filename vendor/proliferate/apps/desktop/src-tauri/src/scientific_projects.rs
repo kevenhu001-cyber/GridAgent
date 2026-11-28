@@ -157,6 +157,9 @@ fn resolve_in(directory: &Path, id: &str) -> Result<PathBuf, String> {
     let root = PathBuf::from(record.workspace_path);
     if !root.is_dir() { return Err("Registered project folder is missing".into()); }
     let canonical = root.canonicalize().map_err(|_| "Registered project folder is unavailable")?;
+    if crate::gridagent_runtime::overlaps_installation(&canonical) {
+        return Err("Scientific project overlaps GridAgent installation".into());
+    }
     if canonical != root || id_for_path(&canonical) != id {
         return Err("Registered project folder identity changed".into());
     }
@@ -205,6 +208,9 @@ pub fn register(selected: PathBuf) -> Result<ProjectIdentity, String> {
     let root = selected.canonicalize().map_err(|_| "Selected project folder is unavailable")?;
     let app = crate::app_config::app_dir_path()?.canonicalize()
         .map_err(|_| "Cannot resolve GridAgent application data directory")?;
+    if crate::gridagent_runtime::overlaps_installation(&root) {
+        return Err("Choose a folder outside the GridAgent installation".into());
+    }
     if app.starts_with(&root) || root.starts_with(&app) {
         return Err("Choose a project folder that does not contain GridAgent application data".into());
     }
@@ -233,6 +239,9 @@ pub fn resolve_id(id: &str) -> Result<PathBuf, String> {
         .ok_or("Scientific project is not registered or its folder is missing")?;
     let root = PathBuf::from(project.workspace_path);
     let canonical = root.canonicalize().map_err(|_| "Scientific project folder is unavailable")?;
+    if crate::gridagent_runtime::overlaps_installation(&canonical) {
+        return Err("Scientific project overlaps GridAgent installation".into());
+    }
     if canonical != root || id_for_path(&canonical) != id {
         return Err("Scientific project identity changed".into());
     }
