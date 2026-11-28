@@ -1,0 +1,3 @@
+# Include the maintained desktop source in GitHub Linguist language statistics.
+# This does not change upstream attribution, licensing, or build behavior.
+vendor/proliferate/** -linguist-vendored

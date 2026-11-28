@@ -1,157 +1,159 @@
-# GridAgent
+<p align="center">
+  <img src="desktop/branding/gridagent-logo.webp" alt="GridAgent logo" width="112">
+</p>
 
-<img src="desktop/branding/gridagent-logo.webp" alt="GridAgent logo" width="220">
+<h1 align="center">GridAgent</h1>
 
-Developed by **TopoDrive**. Lead developer: **Adex Hu**.
+<p align="center">
+  <strong>An open-source scientific coding agent for power systems, electrical engineering, and energy storage.</strong>
+</p>
 
-An open-source **LLM-first scientific coding agent for power systems, electrical engineering and energy storage**. GridAgent provides the scientific workspace, professional solvers, documentation, execution and visualization; the LLM formulates models, writes code, designs experiments and interprets results.
+<p align="center">
+  <a href="ROADMAP.md">Roadmap</a> ·
+  <a href="docs/architecture.md">Architecture</a> ·
+  <a href="integration/proliferate/README.md">Desktop development</a> ·
+  <a href="https://github.com/kevenhu001-cyber/GridAgent/issues">Issues</a>
+</p>
 
-**Product direction:** not an expert system with an AI front end. General-purpose isolated scientific execution and native solver API access are the highest-priority development goals. Read [AGENTS.md](AGENTS.md), the [active roadmap](ROADMAP.md) and [ADR 0001](docs/adr/0001-llm-first.md) before contributing. Existing fixed workflows are optional research tools. The [scientific workspace preview](docs/scientific-workspace.md) adds opt-in Python execution on Windows; real sandbox acceptance and stronger resource controls remain pending.
+> **Early development:** The Windows desktop is under active integration. The Python CLI and TUI are available for development and research; a production-ready desktop installer has not yet been validated.
 
-**Status: early development.** Independent implementation; not an official reproduction or production grid-control system.
+## What is GridAgent?
 
-## Quick start
+GridAgent is an LLM-first engineering workspace designed to help researchers and engineers formulate physical and mathematical models, write simulation code, run professional numerical solvers, inspect results, and iteratively improve their experiments.
 
-Python 3.11–3.13. Install the editable package in a virtual environment:
+Unlike a conventional expert system, GridAgent leaves the choice of modeling approach, algorithms, experiments, and next actions to the language model. The application supplies the tools, scientific libraries, workspace, execution environment, and evidence needed to carry out that work.
 
-    python -m venv .venv
-    source .venv/bin/activate
-    pip install -e '.[andes]'
-    export GRIDAGENT_MODEL='your-tool-capable-model'
-    export GRIDAGENT_API_KEY='your-key'
-    export GRIDAGENT_BASE_URL='https://openrouter.ai/api/v1'  # optional; omit for OpenAI
-    gridagent
+## Capabilities
 
-On Windows PowerShell use .venv\Scripts\Activate.ps1 and $env:VARIABLE='value'.
+| Capability | Scope |
+| --- | --- |
+| Power-system modeling | Network inspection, AC power flow, topology analysis, contingency scenarios and dynamic simulation |
+| Scientific computation | Numerical methods, optimization, control analysis and parameter studies |
+| Engineering solvers | ANDES and pandapower as core backends; additional libraries installable on demand |
+| Scientific coding | Embedded Pi coding tools and native scientific IPC in the desktop development runtime |
+| Research workspace | Local sessions, model files, run artifacts, numerical results and reproducible study records |
+| Desktop workbench | Retained React/Tauri chat, model selection, settings, workspace and file-management UI |
+| Knowledge and verification | Engineering documentation, evidence-backed comparisons, and optional benchmark and research workflows |
 
-One-shot mode:
-
-    gridagent --budget 3 --ask "Inspect the Kundur case, run power flow, and simulate a 100 ms fault at bus 5."
-
-The API key is local and must not be committed. Only OpenAI-compatible providers are supported in this milestone; native Anthropic and Gemini adapters are planned.
-
-## Local sessions
-
-    gridagent --sessions
-    gridagent --session <full-id>
-    gridagent --workspace ./research --ask "Run a baseline power flow"
-
-In the TUI, use /sessions, /open ID and /new. The local workspace contains
-research.sqlite3 and solver artifacts; keep sensitive project data private.
-Failed tasks retain their audit events but are not replayed into model context.
-A process crash may leave an unfinished task; automatic mid-task resume is not yet implemented.
-
-## Dynamic risk screening (open baseline)
-
-    gridagent --dsr examples/dsr-kundur.json
-
-Or type /dsr examples/dsr-kundur.json in the TUI. Resume an interrupted frozen
-DSR study using gridagent --resume-dsr STUDY_ID. This ranks ten candidate
-faults, freezes estimates, and attempts only the selected three simulations.
-See [DSR protocol and offline evaluation](docs/dsr.md) for limitations.
-
-## Dynamic model quality review (open surrogate)
-
-    gridagent --dmq
-
-Or type /dmq in the TUI. Eight numerical tests on a fixed synthetic PI model,
-with four permitted gains and at most five repair proposals. Every accepted
-proposal triggers a new suite. See [DMQ protocol](docs/dmq.md). This is not
-the original WECC/DMView benchmark.
-
-## Scientific workspace
-
-    gridagent --eigen
-    gridagent --optimize 24
-    gridagent --sweep 5 0.04 0.08 0.12
-    gridagent --runs
-    gridagent --study STUDY_ID
-    gridagent --wave RUN_ID CHANNEL
-
-See [workspace commands](docs/workspace.md) for TUI and offline result inspection.
-
-## Verified research tasks
-
-In the TUI, type `/model` or press `Ctrl+P`, including when starting offline.
-
-```text
-gridagent --research "Check AC bus voltages for the IEEE14 base case and a 10% load increase"
-gridagent --research-manifest examples/power-flow-research.json
-gridagent --research-tasks
-gridagent --research-resume TASK_ID
-gridagent --research-report TASK_ID report.json
-```
-
-The TUI `/research` command and CLI use the same engine. Choose **Run with multiple agents**, `/research-multi`, or
-`--research-mode multi` for the specialist workflow. The research engine supports resume, cancellation, clarifications, repair approval and JSON export.
-See [verified workflow and experiments](docs/research-tasks.md) for the model
-contract, references, sandbox, external runtimes and public benchmarks.
-
-## Proliferate desktop migration
-
-The new desktop direction reuses the preserved Proliferate 0.4.27 Tauri/React workbench rather than starting another interface from scratch. GridAgent's scientific Python core is being integrated as a first-party desktop runtime via persistent native IPC. Pi is the sole supported desktop Agent engine and owns the LLM loop; external Agent hosting will be removed. MCP may remain optional tool interoperability. See [integration setup and acceptance gates](integration/proliferate/README.md). This migration is not yet a validated desktop release.
-
-## Desktop status
-
-The retired WinUI/WPF desktop is removed from this migration branch. The Proliferate-based desktop is the only supported development direction; Windows packaging and desktop end-to-end validation are pending. TUI and CLI remain available.
+General autonomous code execution, durable tool context, comprehensive scientific visualization and full desktop integration remain active development areas. See the [roadmap](ROADMAP.md) for acceptance criteria and limitations.
 
 ## Architecture
 
-Proliferate desktop → embedded Pi SDK → native Rust/Python scientific IPC (target); Pi integration and external Agent retirement are pending. See [ADR 0003](docs/adr/0003-native-scientific-runtime.md).
+```mermaid
+flowchart TD
+    UI["Desktop workbench · React / Tauri"] --> PI["Embedded Pi Agent SDK · LLM and coding tools"]
+    PI --> IPC["Native Rust / Python IPC"]
+    IPC --> CORE["GridAgent scientific runtime"]
+    CORE --> LIB["ANDES · pandapower · numerical libraries"]
+    CORE --> WS["Workspace · jobs · results · artifacts"]
+    WS --> PI
+    CLI["Python CLI / Textual TUI"] --> LG["LangGraph agent"]
+    LG --> CORE
+```
 
-Textual TUI / CLI → LLM-led LangGraph tool loop → scoped scientific workspace and execution runtime → professional numerical libraries → artifacts, logs and independent verification → LLM.
+The desktop reuses the preserved Proliferate workbench and embeds Pi as its designated Agent engine. GridAgent's scientific tools are integrated through first-party native interfaces, rather than requiring MCP for internal communication. MCP remains available for optional external interoperability. The Python CLI/TUI currently retain their existing LangGraph loop.
 
-The current chat path supports typed native solver tools and script drafting. General autonomous Python execution is a target capability, not yet available through the normal chat loop. Numerical attempts are bounded and saved locally; solver non-convergence is not proof of physical instability.
+The diagram describes the intended product architecture with development-stage integrations; the remaining external Agent paths are scheduled for removal before production release.
 
-## Roadmap
+## Getting started
 
-The [active LLM-first roadmap](ROADMAP.md) prioritizes general sandbox execution, persistent projects, native API access, versioned documentation, long-horizon agent capability, scientific visualization and unseen-task validation. Specialized benchmark and diagnostic workflows are optional, not the primary product architecture.
+### Python CLI / TUI
 
-## Development
+Requires Python 3.11–3.13. Clone the repository and create a virtual environment:
 
-    pip install -e '.[dev,andes]'
-    pytest -m 'not integration'
-    pytest -m integration
+```bash
+git clone https://github.com/kevenhu001-cyber/GridAgent.git
+cd GridAgent
+python -m venv .venv
+```
 
-The unit test simulator is a test double and must never be represented as a real simulation. See docs/architecture.md and docs/benchmark-roadmap.md for the research boundaries.
+**Windows PowerShell**
 
-## Original paper assets
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e ".[core]"
+$env:GRIDAGENT_MODEL = "your-tool-capable-model"
+$env:GRIDAGENT_API_KEY = "your-api-key"
+# Optional for an OpenAI-compatible provider:
+# $env:GRIDAGENT_BASE_URL = "https://openrouter.ai/api/v1"
+gridagent
+```
 
-`python scripts/sync_benchmark.py benchmark-assets` stages the pinned MIT-licensed
-PowerAgentBench source, case files and training memory (not test memory).
-`gridagent --paper-rank` freezes estimates for the ten original cases;
-`gridagent --paper-kpi CSV CLEARING_S` calls the original KPI implementation;
-`gridagent --paper-edit Kqp Kqi Kvp Kvi` creates an isolated, verified Solar model edit.
-Paper ranking alone is prediction-only. Optional licensed adapters are available via
---paper-dmq PROFILE and --paper-dsr PROFILE; see docs/upstream-integration.md.
-They require dedicated installed simulator environments and are not yet license-tested.
+**Linux / macOS**
 
-## General research agent
+```bash
+source .venv/bin/activate
+python -m pip install -e ".[core]"
+export GRIDAGENT_MODEL="your-tool-capable-model"
+export GRIDAGENT_API_KEY="your-api-key"
+# Optional: export GRIDAGENT_BASE_URL="https://openrouter.ai/api/v1"
+gridagent
+```
 
-The default chat now supports recorded engineering plans, user-approved ANDES
-workbook registration, Kundur/IEEE14/IEEE39, topology inspection, branch-hop
-paths, existing-run retrieval, waveform analysis and fingerprinted comparisons.
-Use `gridagent --import-model case.xlsx`, `gridagent --models`, then ask a
-research question in chat.
+The Python agent currently uses OpenAI-compatible provider configuration. Keep credentials local and never commit them.
 
-General chat can also compare hypothetical steady-state scenarios with bounded
-uniform PQ load scaling and one in-service branch outage, without modifying the
-original workbook. See [general agent](docs/general-agent.md) for boundaries.
+Example one-shot request:
 
-## Native simulation libraries
+```bash
+gridagent --ask "Inspect the Kundur case and run a power flow."
+```
 
-Install `.[core]` for the default ANDES/pandapower scientific runtime.
-The full developer extra `.[engineering]` includes PyPSA; production installs it on demand. The normal agent can compose typed
-native simulation programs and read result tables; `--native-program FILE.json`
-also runs them offline. See [native backends](docs/native-backends.md).
+For sessions, model imports, research tasks and result inspection, see the [general agent guide](docs/general-agent.md), [workspace guide](docs/workspace.md) and [research workflows](docs/research-tasks.md).
 
-### Simulation plugins
+### Windows desktop (development)
 
-Use `gridagent --plugins`,
-`gridagent --plugin-install pypsa`, `gridagent --plugin-remove pypsa`.
-Optional managed backends: PyPSA, OpenDSS, PyBaMM, pvlib, windpowerlib, CVXPY, Pyomo, CasADi, PYPOWER, PyPowSyBl, OSQP, scikit-rf, CoolProp and rainflow. Tools and curated prompts are
-bound on the next chat turn, without restarting the application. See [plugin design](docs/plugins.md).
+The desktop source is in [vendor/proliferate](vendor/proliferate). Development requires Node.js 22.19.0, pnpm 10.11.0, Rust with the x86_64 Windows MSVC target, Windows SDK, and Python with the core scientific dependencies.
 
-### Architecture
+See the [desktop integration guide](integration/proliferate/README.md) for environment variables, locked dependency installation, build checks, and development-mode native runtime setup.
 
-See [GridAgent architectural direction](docs/architecture.md) for the native workbench, execution boundaries, evidence-backed presentation contracts, and long-term acceptance gates.
+A packaged, clean-machine-tested Windows installer is not yet available as a validated release.
+
+## Scientific libraries
+
+| Core | Optional managed backends |
+| --- | --- |
+| ANDES, pandapower | PyPSA, OpenDSS, PYPOWER, PyPowSyBl |
+| NumPy, SciPy, SymPy | CVXPY, Pyomo, CasADi, OSQP |
+| HiGHS, Python Control | PyBaMM, pvlib, windpowerlib |
+| pandas, NetworkX | scikit-rf, CoolProp, rainflow |
+
+The Python CLI can inspect and manage optional backends:
+
+```bash
+gridagent --plugins
+gridagent --plugin-install pypsa
+```
+
+See [native backends](docs/native-backends.md) and [plugin management](docs/plugins.md) for supported operations and limitations. Commercial adapters require their own installed and licensed environments; they are not represented as production-validated integrations.
+
+## Repository structure
+
+```text
+GridAgent/
+├── vendor/proliferate/   # Preserved React/Tauri desktop workbench
+├── src/gridagent/       # Python agent and scientific runtime
+├── integration/        # Desktop runtime integration and setup
+├── desktop/branding/   # GridAgent product assets
+├── examples/           # Example research inputs
+├── tests/              # Python tests and research validation
+├── docs/               # Architecture and engineering documentation
+└── ROADMAP.md          # Active development plan
+```
+
+## Development and contributing
+
+```bash
+python -m pip install -e ".[dev,core]"
+pytest -m "not integration"
+pytest -m integration
+```
+
+Read [AGENTS.md](AGENTS.md), the [LLM-first architecture decision](docs/adr/0001-llm-first.md), and the [native scientific runtime decision](docs/adr/0003-native-scientific-runtime.md) before contributing. Reuse existing desktop components and scientific services rather than creating parallel implementations. Validate numerical claims using actual solver results and distinguish development tests from real end-to-end execution.
+
+## License and acknowledgments
+
+GridAgent's original Python core is licensed under [GPL-3.0-or-later](LICENSE). The preserved Proliferate 0.4.27 desktop source is licensed under [AGPL-3.0](vendor/proliferate/LICENSE). See the [upstream notices](vendor/proliferate/THIRD_PARTY_NOTICES.md) and [integration guide](integration/proliferate/README.md) for provenance and attribution. Combined distribution must comply with applicable license obligations.
+
+GridAgent is an independent research application, not a certified engineering system or an operational power-grid controller. Numerical convergence does not establish physical validity; engineering results require appropriate independent review.
+
+Developed by **TopoDrive**. Lead developer: **Adex Hu**.
