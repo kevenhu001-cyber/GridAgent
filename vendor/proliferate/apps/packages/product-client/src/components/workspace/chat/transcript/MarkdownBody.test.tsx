@@ -190,3 +190,22 @@ describe("MarkdownBody presentation", () => {
     expect(html).not.toContain("hover:text-foreground");
   });
 });
+
+
+describe("scientific math in the retained Markdown renderer", () => {
+  it("renders inline and display math without changing source", () => {
+    const source = "Voltage $V=IR$\n\n$$\nP=VI\n$$";
+    const html = renderMarkdown(source);
+    expect(html).toContain('data-scientific-math="inline"');
+    expect(html).toContain('data-scientific-math="display"');
+    expect(html).toContain("katex-mathml");
+    expect(renderMarkdown(String.fromCharCode(96) + "$V$" + String.fromCharCode(96))).not.toContain("data-scientific-math=");
+  });
+  it("does not enable untrusted math links or raw HTML", () => {
+    const html = renderMarkdown("$\\href{javascript:alert(1)}{x}$");
+    expect(html).not.toContain('href="javascript:');
+    expect(html).not.toContain("<script");
+    const invalid = renderMarkdown("$\\notARealMacro{a}$");
+    expect(invalid).toContain('data-scientific-math="invalid"');
+  });
+});

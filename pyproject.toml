@@ -29,6 +29,7 @@ dev = ["pytest>=8,<10", "pytest-timeout>=2,<3", "ruff>=0.9,<1"]
 retrieval = ["sentence-transformers>=4,<6"]
 kernel = ["jupyter-client>=8.6,<9", "ipykernel>=6.29,<8"]
 mcp = ["mcp>=1.12,<2"]
+notebook = ["nbformat>=5.10,<6"]
 [project.scripts]
 gridagent = "gridagent.cli:main"
 [tool.hatch.build.targets.wheel]

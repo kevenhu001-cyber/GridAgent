@@ -39,6 +39,12 @@ class ArtifactPage(Strict):
     limit: int = Field(default=12000, ge=1, le=12000)
 
 
+class NotebookExport(Strict):
+    run_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    destination: str = Field(min_length=1, max_length=240)
+    expected_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+
+
 class NativeTable(Strict):
     run_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     table: str = Field(min_length=1, max_length=80)
@@ -125,7 +131,7 @@ METHODS = {
 }
 
 
-TASK_METHODS = {"workspace.create": ProjectCreate, "workspace.rename": ProjectRename,
+TASK_METHODS = {"scientific.export_notebook": NotebookExport, "workspace.create": ProjectCreate, "workspace.rename": ProjectRename,
                 "workspace.delete": ProjectDelete, "workspace.write": ProjectWrite, "job.submit": JobSubmit, "job.cancel": JobRef,
                 "job.submit_shell": ShellSubmit}
 
@@ -147,6 +153,10 @@ def dispatch(root: Path, method: str, params: dict, *, allow_tasks=False):
 
         return available_backends(root)
     ws.require_grant(root)
+    if method == "scientific.export_notebook":
+        from .scientific_notebook import export_run
+
+        return export_run(root, **args)
     if method == "workspace.files":
         return ws.list_project(root)
     if method == "workspace.tree":

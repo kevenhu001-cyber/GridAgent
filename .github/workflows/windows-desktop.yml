@@ -59,6 +59,8 @@ jobs:
         run: pnpm --filter @proliferate/product-client test src/lib/access/pi/native-project.test.ts src/hooks/workspaces/cache/use-workspaces.test.tsx src/providers/WorkspacePathProvider.test.tsx
       - name: Verify scientific data and retained viewer
         run: pnpm --filter @proliferate/product-client test src/lib/domain/files/scientific-preview.test.ts src/components/workspace/files/FileViewerContent.test.tsx
+      - name: Verify scientific Markdown math
+        run: pnpm --filter @proliferate/product-client test src/components/workspace/chat/transcript/MarkdownBody.test.tsx
       - name: Compile-check the Tauri host and its tests
         run: cargo check --locked --target x86_64-pc-windows-msvc -p proliferate --tests
       - name: Verify Pi history recovery and workspace isolation
