@@ -9,6 +9,7 @@ export {
   AnyHarnessWorkspace,
   resolveWorkspaceConnectionFromContext,
   useAnyHarnessWorkspaceContext,
+  useOptionalAnyHarnessWorkspaceContext,
   nativeProjectFiles,
   isNativeProjectId,
 } from "./context/AnyHarnessWorkspace.js";

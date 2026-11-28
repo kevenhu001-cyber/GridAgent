@@ -6,7 +6,7 @@ import {
   anyHarnessWorkspaceFileTreeKey,
   anyHarnessWorkspaceFilesScopeKey,
   useAnyHarnessCacheScopeKey,
-  useAnyHarnessWorkspaceContext,
+  useOptionalAnyHarnessWorkspaceContext,
   nativeProjectFiles,
 } from "@anyharness/sdk-react";
 import { useCallback } from "react";
@@ -35,7 +35,7 @@ interface WorkspaceFileCacheTarget {
 export function useWorkspaceFilesCache() {
   const queryClient = useQueryClient();
   const cacheScopeKey = useAnyHarnessCacheScopeKey();
-  const workspace = useAnyHarnessWorkspaceContext();
+  const workspace = useOptionalAnyHarnessWorkspaceContext();
 
   const invalidateWorkspaceFiles = useCallback(async ({
     workspaceId,

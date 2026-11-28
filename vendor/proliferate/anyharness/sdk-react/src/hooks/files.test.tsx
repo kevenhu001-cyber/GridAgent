@@ -3,6 +3,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
+import type { WriteWorkspaceFileRequest } from "@anyharness/sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AnyHarnessRuntime } from "../context/AnyHarnessRuntime.js";
 import { AnyHarnessWorkspace, type NativeProjectFiles } from "../context/AnyHarnessWorkspace.js";
@@ -100,7 +101,7 @@ describe("native scientific project file routing", () => {
     read: vi.fn(async () => ({path: "study.py", kind: "file" as const, content: "x=1",
       versionToken: "a".repeat(64), encoding: "utf-8", sizeBytes: 3, isText: true, tooLarge: false})),
     stat: vi.fn(async (_id: string, path: string) => ({path, kind: "directory" as const})),
-    write: vi.fn(async (_id: string, input) => ({path: input.path, versionToken: "b".repeat(64), sizeBytes: 3})),
+    write: vi.fn(async (_id: string, input: WriteWorkspaceFileRequest) => ({path: input.path, versionToken: "b".repeat(64), sizeBytes: 3})),
   });
 
   function wrapper(nativeFiles?: NativeProjectFiles) {

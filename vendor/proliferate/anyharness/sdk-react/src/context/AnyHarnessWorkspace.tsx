@@ -13,14 +13,14 @@ export interface NativeProjectFiles {
   write(id: string, input: WriteWorkspaceFileRequest): Promise<WriteWorkspaceFileResponse>;
 }
 
-export function isNativeProjectId(id: string | null | undefined): id is string {
+export function isNativeProjectId(id: string | null | undefined): boolean {
   return typeof id === "string" && id.startsWith("gridagent-scientific:");
 }
 
 /** A reserved identity may never fall through to the legacy filesystem. */
-export function nativeProjectFiles(context: AnyHarnessWorkspaceContextValue, id: string | null | undefined) {
-  if (!isNativeProjectId(id)) return null;
-  if (!/^gridagent-scientific:[a-f0-9]{64}$/.test(id) || !context.nativeFiles) {
+export function nativeProjectFiles(context: AnyHarnessWorkspaceContextValue | null, id: string | null | undefined) {
+  if (!id || !isNativeProjectId(id)) return null;
+  if (!/^gridagent-scientific:[a-f0-9]{64}$/.test(id) || !context?.nativeFiles) {
     throw new Error("Native scientific project file transport unavailable.");
   }
   return context.nativeFiles;
@@ -52,6 +52,10 @@ export function AnyHarnessWorkspace({
       {children}
     </AnyHarnessWorkspaceContext.Provider>
   );
+}
+
+export function useOptionalAnyHarnessWorkspaceContext(): AnyHarnessWorkspaceContextValue | null {
+  return useContext(AnyHarnessWorkspaceContext);
 }
 
 export function useAnyHarnessWorkspaceContext(): AnyHarnessWorkspaceContextValue {
