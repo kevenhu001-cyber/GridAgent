@@ -50,7 +50,7 @@ fn registry_directory() -> Result<PathBuf, String> {
     fs::create_dir_all(&app).map_err(|_| "Cannot create GridAgent application data directory")?;
     let directory = app.join(REGISTRY_NAME);
     fs::create_dir_all(&directory).map_err(|_| "Cannot create scientific project registry")?;
-    directory.canonicalize().map_err(|_| "Cannot resolve scientific project registry")
+    directory.canonicalize().map_err(|_| "Cannot resolve scientific project registry".to_string())
 }
 
 fn lock_registry(directory: &Path, exclusive: bool) -> Result<std::fs::File, String> {
@@ -90,7 +90,8 @@ fn list_in(directory: &Path) -> Result<Vec<ProjectIdentity>, String> {
     for entry in fs::read_dir(directory).map_err(|_| "Cannot read scientific project registry")? {
         let entry = entry.map_err(|_| "Cannot read scientific project registry entry")?;
         if entry.path().extension().and_then(|s| s.to_str()) != Some("json") { continue; }
-        let hash = entry.path().file_stem().and_then(|s| s.to_str())
+        let entry_path = entry.path();
+        let hash = entry_path.file_stem().and_then(|s| s.to_str())
             .ok_or("Invalid scientific project registry filename")?;
         let id = format!("gridagent-scientific:{hash}");
         let record = read_record(directory, &id)?;
