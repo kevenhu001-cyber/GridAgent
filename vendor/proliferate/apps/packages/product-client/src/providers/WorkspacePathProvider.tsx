@@ -88,10 +88,12 @@ export function WorkspacePathProvider({ children }: { children: ReactNode }) {
         setOriginResolution({materializedWorkspaceId: id, state: {status: "rejected", origin: null}});
       };
       if (!scientificProject) fail();
-      else void scientificProject.identity().then(identity => {
+      else void scientificProject.list().then(projects => {
         if (!current) return;
+        const identity = projects.find(project => project.id === id);
+        if (!identity?.available) { fail(); return; }
         const path = normalizeRuntimeWorkspaceRoot(identity.projectPath);
-        if (identity.id !== id || path === null) { fail(); return; }
+        if (path === null) { fail(); return; }
         setNativeRoot({id, root: {status: "settled", path}});
         setOriginResolution({materializedWorkspaceId: id, state: {status: "settled", origin: "desktop-local"}});
       }, fail);

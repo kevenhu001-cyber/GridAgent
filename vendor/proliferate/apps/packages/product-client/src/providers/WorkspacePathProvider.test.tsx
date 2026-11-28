@@ -11,11 +11,11 @@ const mocks = vi.hoisted(() => ({
     isError: false,
   },
   queryOptions: [] as Array<{ workspaceId: string | null; enabled: boolean }>,
-  identity: vi.fn(),
+  list: vi.fn(),
 }));
 
 vi.mock("@proliferate/product-client/host/ProductHostProvider", () => {
-  const host = {desktop: {scientificProject: {identity: mocks.identity}}};
+  const host = {desktop: {scientificProject: {list: mocks.list}}};
   return {useProductHost: () => host};
 });
 
@@ -74,7 +74,7 @@ beforeEach(() => {
   mocks.query.isPending = true;
   mocks.query.isError = false;
   mocks.queryOptions.length = 0;
-  mocks.identity.mockReset();
+  mocks.list.mockReset();
   useSessionSelectionStore.setState({
     selectedWorkspaceId: null,
     selectedLogicalWorkspaceId: null,
@@ -89,7 +89,7 @@ describe("WorkspacePathProvider", () => {
   it("uses the scientific-project subdirectory instead of the Pi authorization root", async () => {
     const id = "gridagent-scientific:" + "a".repeat(64);
     useSessionSelectionStore.setState({selectedWorkspaceId: id, selectedLogicalWorkspaceId: id});
-    mocks.identity.mockResolvedValue({id, workspacePath: "/study", projectPath: "/study/scientific-project"});
+    mocks.list.mockResolvedValue([{id, workspacePath: "/study", projectPath: "/study/scientific-project", available: true, createdAt: "2026-11-28T00:00:00Z"}]);
     const resolveConnection = vi.fn<ProductWorkspaceConnectionResolver>();
     renderProvider(resolveConnection);
     await waitFor(() => expect(state().workspaceRoot).toEqual({status:"settled",path:"/study/scientific-project"}));
