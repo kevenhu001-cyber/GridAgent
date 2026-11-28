@@ -209,7 +209,7 @@ def _checked_entry(target, kind, expected_sha256):
 
 def create_project_entry(root, path, kind, text=""):
     base = project(root)
-    if "\\x00" in text:
+    if "\x00" in text:
         raise ValueError("Project text cannot contain NUL")
     data = text.encode("utf-8")
     with FileLock(str(Path(root).resolve() / "scientific-project.lock"), timeout=5):
@@ -234,7 +234,7 @@ def create_project_entry(root, path, kind, text=""):
             handle.flush()
             os.fsync(handle.fileno())
         return {"entry": {"path": path, "name": target.name, "kind": kind,
-                          "sizeBytes": len(data), "isText": "\\x00" not in text},
+                          "sizeBytes": len(data), "isText": "\x00" not in text},
                 "file": {"path": path, "kind": kind, "content": text, "versionToken": sha(data),
                          "encoding": "utf-8", "sizeBytes": len(data), "isText": True, "tooLarge": False}}
 

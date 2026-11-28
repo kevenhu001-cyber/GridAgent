@@ -100,6 +100,9 @@ def test_native_project_mutations_are_granted_and_revision_checked(tmp_path):
     set_enabled(tmp_path, True)
     with pytest.raises(ValueError, match="Unknown"):
         dispatch(tmp_path, "workspace.create", {"path": "study.py", "kind": "file"})
+    with pytest.raises(ValueError, match="NUL"):
+        call("workspace.create", path="binary.py", kind="file", text="a\x00b")
+    assert not (tmp_path / "scientific-project/binary.py").exists()
     call("workspace.create", path="models", kind="directory")
     created = call("workspace.create", path="models/study.py", kind="file", text="x = 1")
     revision = created["file"]["versionToken"]
