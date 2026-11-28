@@ -285,7 +285,8 @@ export function useAddRepoFlowController({
       // In embedded Pi mode, reuse this existing Add Folder entry but let the
       // native host own the picker and registration. A renderer-provided path
       // is never accepted as authorization for a new project root.
-      if (host.desktop?.pi && host.desktop.scientificProject && await host.desktop.pi.mode()) {
+      if (host.desktop?.pi && await host.desktop.pi.mode()) {
+        if (!host.desktop.scientificProject) throw new Error("Native project registry unavailable.");
         const added = await host.desktop.scientificProject.addFromPicker();
         if (!added) return;
         await invalidateWorkspaceCollectionsForRuntime(useHarnessConnectionStore.getState().runtimeUrl);

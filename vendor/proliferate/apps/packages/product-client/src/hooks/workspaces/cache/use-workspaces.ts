@@ -110,7 +110,7 @@ export function useWorkspaces(options?: UseWorkspacesOptions) {
   const runtimeUrl = useHarnessConnectionStore((state) => state.runtimeUrl);
   const hasLocalRuntime = runtimeUrl.trim().length > 0;
   const desktop = useProductHost().desktop;
-  const canDiscoverNative = Boolean(desktop?.pi && desktop.scientificProject);
+  const canDiscoverNative = Boolean(desktop?.pi);
   const authUserId = useProductAuthUserId();
   const { cloudActive } = useCloudAvailabilityState();
   const canQuery = (options?.enabled ?? true) && (hasLocalRuntime || canDiscoverNative);
@@ -122,7 +122,8 @@ export function useWorkspaces(options?: UseWorkspacesOptions) {
   return useQuery<WorkspaceCollections>({
     queryKey,
     queryFn: async ({ signal }) => {
-      if (desktop?.pi && desktop.scientificProject && await desktop.pi.mode()) {
+      if (desktop?.pi && await desktop.pi.mode()) {
+        if (!desktop.scientificProject) throw new Error("Native project inventory unavailable.");
         signal.throwIfAborted();
         const identities = await desktop.scientificProject.list();
         signal.throwIfAborted();
