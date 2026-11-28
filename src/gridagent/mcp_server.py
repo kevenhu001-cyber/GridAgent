@@ -55,9 +55,11 @@ def create_server(root: Path, *, allow_native_solvers: bool = False):
         """Execute authorized project Python in the existing sandbox, never on the host.
         Unsupported platforms or disabled grants fail closed; no dependency or network grants.
         """
+        # Check authorization before importing the sandbox runtime; a denied
+        # call must not pay the platform-specific import cost.
+        workspace.require_grant(root)
         from .scientific_runtime import execute
 
-        workspace.require_grant(root)
         return execute(root, entry, None, arguments, plugin_ids=plugin_ids)
 
     @server.tool()
