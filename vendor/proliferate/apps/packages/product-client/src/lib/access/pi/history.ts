@@ -18,7 +18,7 @@ export function restorePiHistory(workspaceId: string, history: PiHistory): numbe
         timestamp = new Date(turn.timestamp).toISOString();
         // The durable request ID is only a transcript identity here. The
         // live transport still reconciles the original outbox prompt ID.
-        envelopes.push(...adapter.begin(turn.id, turn.id, turn.text));
+        envelopes.push(...adapter.begin(turn.id, turn.id, turn.text, turn.jobs ?? []));
         if (turn.cancellationRequested) adapter.noteCancellation(turn.id);
         for (const event of turn.events) envelopes.push(...adapter.accept(event));
         envelopes.push(...adapter.disconnect());

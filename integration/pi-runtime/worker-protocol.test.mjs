@@ -12,11 +12,12 @@ test("bounded frames recover after oversized input and reject partial EOF", asyn
 
 test("worker correlates tool and request IDs, rejects concurrent prompt, and aborts", async () => {
   const input = new PassThrough(), output = new PassThrough();
-  let listener, resolvePrompt, aborted = 0;
+  let listener, resolvePrompt, emitJob, aborted = 0;
   const agent = {
     state: {},
     subscribe(fn) { listener = fn; return () => {}; },
-    prompt() { listener({kind: "tool_started", tool_id: "tool-1", name: "read"});
+    prompt() { emitJob("c".repeat(32));
+      listener({kind: "tool_started", tool_id: "tool-1", name: "read"});
       return new Promise(resolve => { resolvePrompt = resolve; }); },
     abort() { aborted++; resolvePrompt?.(); },
   };
@@ -37,12 +38,14 @@ test("worker correlates tool and request IDs, rejects concurrent prompt, and abo
       await new Promise(resolve => waiters.push(resolve));
     }
   }
-  const running = serveWorker({agent, projectEvent: e => e, input, output});
+  const running = serveWorker({agent, projectEvent: e => e, input, output,
+    onJob: bind => { emitJob = bind; }});
   const send = request => input.write(JSON.stringify(request) + "\n");
   const id = "a".repeat(32), other = "b".repeat(32);
   await wait("ready");
   send({method: "prompt", id, text: "model"});
   await wait("tool_started");
+  await wait("job_submitted");
   send({method: "prompt", id: other, text: "second"});
   await wait("rejected");
   send({method: "abort", id});
@@ -54,6 +57,8 @@ test("worker correlates tool and request IDs, rejects concurrent prompt, and abo
   assert.equal(events.filter(e => e.kind === "rejected").length, 1);
   assert.deepEqual(events.find(e => e.kind === "tool_started"),
     {kind: "tool_started", id, tool_id: "tool-1", name: "read"});
+  assert.deepEqual(events.find(e => e.kind === "job_submitted"),
+    {kind: "job_submitted", id, job_id: "c".repeat(32)});
   assert.deepEqual(events.find(e => e.kind === "rejected"), {kind: "rejected", id: other});
   assert.equal(events.find(e => e.kind === "settled").id, id);
 });

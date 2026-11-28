@@ -25,7 +25,7 @@ export async function* frames(input) {
 }
 
 /** One in-flight prompt; request IDs and tool-call IDs have distinct fields. */
-export async function serveWorker({agent, projectEvent, input, output, expectContext = false}) {
+export async function serveWorker({agent, projectEvent, input, output, expectContext = false, onJob}) {
   let active = null, pending = null;
   let streamed = "", cancelled = false;
   const requests = frames(input);
@@ -54,6 +54,14 @@ export async function serveWorker({agent, projectEvent, input, output, expectCon
       failed = true; agent.abort(); input.destroy();
     }).finally(() => { queuedBytes -= size; });
   };
+  // Tools report a durable job ID before dispatch; attach it to the active turn.
+  if (typeof onJob === "function") {
+    onJob(jobId => {
+      if (active !== null && typeof jobId === "string" && /^[a-f0-9]{32}$/.test(jobId)) {
+        emit({kind: "job_submitted", id: active, job_id: jobId});
+      }
+    });
+  }
   const unsubscribe = agent.subscribe(event => {
     const projected = projectEvent(event);
     if (!projected || active === null) return;

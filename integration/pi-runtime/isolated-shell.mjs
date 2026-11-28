@@ -2,10 +2,11 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 
 /** Pi shell operation: submit once to isolated guest, await actual terminal status. */
-export function isolatedShell(client) {
+export function isolatedShell(client, onJob) {
   return async (shell, command, {onData, signal, timeout} = {}) => {
     if (signal?.aborted) throw new Error("Shell cancelled before submission");
     const job_id = randomUUID().replaceAll("-", "");
+    if (typeof onJob === "function") onJob(job_id);
     const deadline = Date.now() + Math.min(240, Math.max(1, timeout ?? 240)) * 1000;
     let job;
     try {

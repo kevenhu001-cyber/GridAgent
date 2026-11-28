@@ -10,12 +10,12 @@ export const SYSTEM_PROMPT = "You are GridAgent, an LLM-led scientific engineeri
   "An asynchronous job submission is not a completed calculation. Report pending work honestly. " +
   "Preserve fixed user requirements and ask for authorization when needed.";
 
-export function createGridAgent({client, provider, modelId, apiKey, workspace, allowTasks = false, runShell}) {
+export function createGridAgent({client, provider, modelId, apiKey, workspace, allowTasks = false, runShell, onJob}) {
   const models = modelRegistry(provider);
   const model = models.getModel(provider, modelId);
   if (!model) throw new Error("Unknown model for selected provider");
   const tools = [...defaultTools(client, {workspace, allowTasks, runShell}),
-    ...scientificTools(client, {allowTasks})];
+    ...scientificTools(client, {allowTasks, onJob})];
   const agent = new Agent({
     initialState: {systemPrompt: SYSTEM_PROMPT, model, tools},
     streamFn: models.streamSimple.bind(models),

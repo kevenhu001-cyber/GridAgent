@@ -11,10 +11,11 @@ use std::{
 };
 use tokio::{fs::OpenOptions, io::AsyncWriteExt};
 
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const MAX_JOURNAL_BYTES: usize = 1024 * 1024;
 const MAX_RECENT_SESSIONS: usize = 12;
 const MAX_CONTEXT_BYTES: usize = 48 * 1024;
+const MAX_JOBS_PER_TURN: usize = 32;
 pub const MAX_TURN_EVENT_BYTES: usize = 256 * 1024;
 
 #[derive(Serialize, Deserialize)]
@@ -38,6 +39,12 @@ pub enum Record {
         #[serde(default)]
         context_safe: bool,
     },
+    // Written while the turn runs, so a worker that dies before settlement
+    // still leaves its durable scientific job attached to the originating turn.
+    JobObserved {
+        turn_id: String,
+        job_id: String,
+    },
 }
 
 #[derive(Serialize)]
@@ -48,6 +55,7 @@ pub struct Turn {
     timestamp: chrono::DateTime<chrono::Utc>,
     events: Vec<Value>,
     cancellation_requested: bool,
+    jobs: Vec<String>,
     #[serde(skip)]
     context_safe: bool,
 }
@@ -298,13 +306,16 @@ fn read_session(path: &Path, id: String) -> Result<Session, &'static str> {
         .take_while(|line| line.last() == Some(&b'\n'))
         .map(|line| serde_json::from_slice::<Record>(line).map_err(|_| "invalid record"));
     let Some(Ok(Record::Header {
-        version: VERSION,
+        version,
         model_id,
         provider,
     })) = rows.next()
     else {
         return Err("invalid history header");
     };
+    if !(1..=VERSION).contains(&version) {
+        return Err("invalid history header");
+    }
     let mut turns = Vec::<Turn>::new();
     let mut seen = HashSet::new();
     for row in rows {
@@ -326,6 +337,7 @@ fn read_session(path: &Path, id: String) -> Result<Session, &'static str> {
                     timestamp,
                     events: Vec::new(),
                     cancellation_requested: false,
+                    jobs: Vec::new(),
                     context_safe: false,
                 });
             }
@@ -361,6 +373,25 @@ fn read_session(path: &Path, id: String) -> Result<Session, &'static str> {
                             Some("started" | "text" | "finished" | "settled")
                         )
                     });
+            }
+            Record::JobObserved { turn_id, job_id } => {
+                if version < 2
+                    || !crate::pi_bridge::valid_id(&turn_id)
+                    || !crate::pi_bridge::valid_id(&job_id)
+                {
+                    return Err("invalid job observation");
+                }
+                let turn = turns
+                    .iter_mut()
+                    .rev()
+                    .find(|turn| turn.id == turn_id)
+                    .filter(|turn| turn.events.is_empty())
+                    .ok_or("unmatched job observation")?;
+                if turn.jobs.len() < MAX_JOBS_PER_TURN
+                    && !turn.jobs.iter().any(|seen| seen == &job_id)
+                {
+                    turn.jobs.push(job_id);
+                }
             }
             Record::Header { .. } => return Err("unexpected header"),
         }
@@ -590,13 +621,68 @@ mod tests {
         assert!(resume(&root.0, &id, &second).is_err());
     }
 
+    #[tokio::test]
+    async fn records_jobs_for_interrupted_and_settled_turns() {
+        let root = TestDir::new();
+        let session = "a".repeat(32);
+        let first = "b".repeat(32);
+        let second = "c".repeat(32);
+        let job = "e".repeat(32);
+        let mut journal = Journal::new(&root.0, &session, "test-model", "openai");
+        journal.append(prompt(&first)).await.unwrap();
+        journal
+            .append(Record::JobObserved {
+                turn_id: first.clone(),
+                job_id: job.clone(),
+            })
+            .await
+            .unwrap();
+        // Duplicate observations are ignored.
+        journal
+            .append(Record::JobObserved {
+                turn_id: first.clone(),
+                job_id: job.clone(),
+            })
+            .await
+            .unwrap();
+        journal.append(prompt(&second)).await.unwrap();
+        drop(journal);
+
+        let restored = recent(&root.0).unwrap();
+        let turns = &restored.sessions[0].turns;
+        assert_eq!(turns[0].jobs, vec![job]);
+        assert!(turns[1].jobs.is_empty());
+        // A job-bearing turn is not a verified pure-text context.
+        assert!(restored.sessions[0].resume_revision.is_none());
+    }
+
+    #[test]
+    fn reads_version_one_journals_without_job_records() {
+        let root = TestDir::new();
+        let id = "a".repeat(32);
+        let turn = "b".repeat(32);
+        let path = root.0.join(format!("{id}.jsonl"));
+        std::fs::write(
+            &path,
+            format!(
+                "{{\"kind\":\"header\",\"version\":1,\"model_id\":\"test-model\",\"provider\":\"openai\"}}\n\
+                 {{\"kind\":\"submitted\",\"id\":\"{turn}\",\"text\":\"Legacy prompt\",\"timestamp\":\"2026-11-28T00:00:00Z\"}}\n"
+            ),
+        )
+        .unwrap();
+        let saved = read_session(&path, id.clone()).unwrap();
+        assert_eq!(saved.turns.len(), 1);
+        assert!(saved.turns[0].jobs.is_empty());
+        assert_eq!(recent(&root.0).unwrap().sessions[0].id, id);
+    }
+
     #[test]
     fn skips_corrupt_and_unknown_version_journals() {
         let root = TestDir::new();
         std::fs::write(root.0.join(format!("{}.jsonl", "a".repeat(32))), "bad\n").unwrap();
         std::fs::write(
             root.0.join(format!("{}.jsonl", "b".repeat(32))),
-            "{\"kind\":\"header\",\"version\":2,\"model_id\":\"test\"}\n",
+            "{\"kind\":\"header\",\"version\":3,\"model_id\":\"test\"}\n",
         )
         .unwrap();
         let result = recent(&root.0).unwrap();

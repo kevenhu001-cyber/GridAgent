@@ -11,7 +11,7 @@ export class PiEventAdapter {
   private seq: number;
   private active: {requestId: string; turnId: string; textId: string | null;
     tools: Map<string, {itemId: string; name: string}>; seenTools: Set<string>;
-    failed: boolean; cancellationRequested: boolean} | null = null;
+    failed: boolean; cancellationRequested: boolean; jobs: string[]} | null = null;
   private readonly sessionId: string;
   private readonly now: () => string;
   constructor(sessionId: string, afterSeq = 0, now = () => new Date().toISOString()) {
@@ -32,10 +32,12 @@ export class PiEventAdapter {
   }
 
   /** Called only after native prompt admission, using the existing outbox ID. */
-  begin(requestId: string, promptId: string, text: string): SessionEventEnvelope[] {
+  begin(requestId: string, promptId: string, text: string, jobs: string[] = []): SessionEventEnvelope[] {
     if (this.active || !/^[a-f0-9]{32}$/.test(requestId) || !promptId || !text.trim()) throw new Error("Invalid Pi turn admission");
+    if (!Array.isArray(jobs) || jobs.length > 32 || jobs.some(job => !/^[a-f0-9]{32}$/.test(job)))
+      throw new Error("Invalid Pi turn jobs");
     this.active = {requestId, turnId: requestId, textId: null, tools: new Map(), seenTools: new Set(),
-      failed: false, cancellationRequested: false};
+      failed: false, cancellationRequested: false, jobs: [...jobs]};
     return [this.envelope({type: "turn_started"}),
       this.envelope({type: "item_completed", item: this.item("user_message", "completed",
         {promptId, contentParts: [{type: "text", text}]})}, requestId + ":user")];
@@ -66,11 +68,17 @@ export class PiEventAdapter {
     turn.tools.clear();
   }
 
+  private failureMessage(message: string) {
+    const jobs = this.active?.jobs ?? [];
+    return jobs.length ? `${message} Unconfirmed scientific jobs: ${jobs.join(", ")}.` : message;
+  }
+
   private fail(out: SessionEventEnvelope[], code: string, message: string) {
     if (!this.active) return;
     this.finishText(out);
     this.failOpenTools(out);
-    out.push(this.envelope({type: "error", code, message}, this.active.turnId + ":error:" + (this.seq + 1)));
+    out.push(this.envelope({type: "error", code, message: this.failureMessage(message)},
+      this.active.turnId + ":error:" + (this.seq + 1)));
     this.active.failed = true;
   }
 
@@ -111,6 +119,8 @@ export class PiEventAdapter {
           item: this.toolPayload(event.tool_id, tool.name, event.error ? "failed" : "completed")}, tool.itemId));
         break;
       }
+      case "job_submitted": // durable job association is held by history, not the transcript
+        break;
       case "error":
       case "rejected":
         if (!turn.failed) this.fail(out, "PI_TURN_FAILED", "The Pi turn failed or was rejected. Inspect the workspace before retrying.");
