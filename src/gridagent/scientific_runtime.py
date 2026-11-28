@@ -199,10 +199,16 @@ def isolated_shell_source(shell, command):
 
 
 def execute(root, entry, plugin=None, arguments=None, *, probe=None, plugin_ids=None,
-            run_id=None, cancelled=None, shell_command=None):
-    if shell_command is not None and probe is not None:
-        raise ValueError("Cannot combine API probe and shell command")
+            run_id=None, cancelled=None, shell_command=None, kernel_cells=None):
+    if sum(item is not None for item in (shell_command, probe, kernel_cells)) > 1:
+        raise ValueError("Cannot combine special scientific execution modes")
     ws.require_grant(root)
+    if kernel_cells is not None:
+        from .kernel_batch import validate_cells
+
+        validate_cells(kernel_cells)
+        if plugin is not None or plugin_ids:
+            raise ValueError("Kernel batch currently uses the bundled scientific environment only")
     ws.safe_parts(entry)
     if not entry.endswith(".py"):
         raise ValueError("Entry must be a project Python file")
@@ -218,6 +224,11 @@ def execute(root, entry, plugin=None, arguments=None, *, probe=None, plugin_ids=
         if active_session(root) is not None:
             raise ValueError("Unresolved sandbox session; ask the user to run scientific recovery")
         environment = preflight(runtime, targets)
+        if kernel_cells is not None:
+            names = {row["distribution"].lower().replace("_", "-")
+                     for row in environment["distributions"] if row["scope"] == "core"}
+            if not {"jupyter-client", "ipykernel"} <= names:
+                raise ValueError("Install the optional kernel extra into the trusted sandbox runtime first")
         identifier = uuid4().hex if run_id is None else run_id
         from re import fullmatch
 
@@ -236,6 +247,16 @@ def execute(root, entry, plugin=None, arguments=None, *, probe=None, plugin_ids=
             path = ws.scoped(inputs / "project", entry)
             if path.exists():
                 raise ValueError("Internal shell launcher filename collision")
+            path.write_bytes(source)
+            snapshot.append({"path": entry, "size_bytes": len(source), "sha256": ws.sha(source)})
+        if kernel_cells is not None:
+            from .kernel_batch import launcher_source
+
+            source = launcher_source(kernel_cells)
+            entry = "gridagent_kernel_" + identifier + ".py"
+            path = ws.scoped(inputs / "project", entry)
+            if path.exists():
+                raise ValueError("Internal kernel launcher filename collision")
             path.write_bytes(source)
             snapshot.append({"path": entry, "size_bytes": len(source), "sha256": ws.sha(source)})
         if probe is not None:
@@ -269,6 +290,9 @@ def execute(root, entry, plugin=None, arguments=None, *, probe=None, plugin_ids=
                 "plugin_ids": list(ids),
                 "plugin_versions": plugins.installed_metadata(ids[0]).get("versions", {}) if len(ids) == 1 else {},
                 "environment": environment, "timeout_seconds": TIMEOUT}
+        if kernel_cells is not None:
+            plan["kernel"] = {"mode": "single_job_batch", "cell_count": len(kernel_cells),
+                              "source_sha256": ws.sha(source)}
         ws.atomic_bytes(folder / "manifest.json", json.dumps(plan, allow_nan=False).encode())
         config = configuration(runtime, inputs, output, plugin_targets=targets.values())
         ws.atomic_bytes(folder / "sandbox.wsb", config.encode())

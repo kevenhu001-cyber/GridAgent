@@ -39,6 +39,12 @@ class ArtifactPage(Strict):
     limit: int = Field(default=12000, ge=1, le=12000)
 
 
+class NotebookExport(Strict):
+    run_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    destination: str = Field(min_length=1, max_length=240)
+    expected_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+
+
 class NativeTable(Strict):
     run_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     table: str = Field(min_length=1, max_length=80)
@@ -93,6 +99,7 @@ class JobSubmit(JobRef):
     entry: str = Field(min_length=1, max_length=240)
     arguments: list[str] = Field(default_factory=list, max_length=32)
     plugin_ids: list[str] = Field(default_factory=list, max_length=4)
+    kernel_cells: list[str] | None = Field(default=None, max_length=8)
 
 
 class ShellSubmit(JobRef):
@@ -124,7 +131,7 @@ METHODS = {
 }
 
 
-TASK_METHODS = {"workspace.create": ProjectCreate, "workspace.rename": ProjectRename,
+TASK_METHODS = {"scientific.export_notebook": NotebookExport, "workspace.create": ProjectCreate, "workspace.rename": ProjectRename,
                 "workspace.delete": ProjectDelete, "workspace.write": ProjectWrite, "job.submit": JobSubmit, "job.cancel": JobRef,
                 "job.submit_shell": ShellSubmit}
 
@@ -146,6 +153,10 @@ def dispatch(root: Path, method: str, params: dict, *, allow_tasks=False):
 
         return available_backends(root)
     ws.require_grant(root)
+    if method == "scientific.export_notebook":
+        from .scientific_notebook import export_run
+
+        return export_run(root, **args)
     if method == "workspace.files":
         return ws.list_project(root)
     if method == "workspace.tree":
@@ -169,6 +180,8 @@ def dispatch(root: Path, method: str, params: dict, *, allow_tasks=False):
 
         handler = {"job.status": native_jobs.status, "job.latest": native_jobs.latest, "job.submit": native_jobs.submit,
                    "job.cancel": native_jobs.cancel, "job.submit_shell": native_jobs.submit_shell}[method]
+        if method == "job.submit" and args.get("kernel_cells") is None:
+            args.pop("kernel_cells", None)
         return handler(root, **args)
     if method == "scientific.runs":
         return ws.list_scientific_runs(root, **args)

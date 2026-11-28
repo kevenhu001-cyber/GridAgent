@@ -22,11 +22,15 @@ const reads = [
   ["latest_scientific_job", "Latest scientific job", "Find this workspace's latest committed job ID and recorded state. A queued or running record leaves the outcome and worker liveness unconfirmed.", "job.latest", schema()],
 ];
 const writes = [
+  ["export_scientific_notebook", "Export scientific notebook", "Export a completed plain Python scientific run to a standard .ipynb in the authorized project. Preserves source and recorded evidence; does not run code or certify reproducibility. Requires optional nbformat.",
+    "scientific.export_notebook", schema({run_id: id, destination: string(240), expected_sha256: {type: "string", pattern: "^[a-f0-9]{64}$"}}, ["run_id", "destination"])],
   ["write_project_file", "Write project file", "Create a project file or replace it using its current SHA-256. The workspace grant is required.", "workspace.write",
     schema({path: string(240), text: string(48000), expected_sha256: {type: "string", pattern: "^[a-f0-9]{64}$"}}, ["path", "text"])],
   ["execute_python", "Execute scientific Python", "Submit project Python to the authorized scientific sandbox. Returns a durable job ID; inspect its status and artifacts. Never runs on the unrestricted host.", "job.submit",
     schema({entry: string(240), arguments: {type: "array", items: string(1024), maxItems: 32},
       plugin_ids: {type: "array", items: string(80), maxItems: 4}}, ["entry"])],
+  ["execute_kernel_cells", "Execute isolated Jupyter cells", "Run up to eight Python cells in one fresh isolated kernel; variables persist only within this job. Requires the optional kernel runtime. Returns a durable job ID; inspect kernel-results.json after completion. No live kernel or state across jobs.", "job.submit",
+    schema({cells: {type: "array", items: string(12000), minItems: 1, maxItems: 8}}, ["cells"])],
   ["cancel_scientific_job", "Cancel scientific job", "Request cooperative cancellation; poll for confirmed terminal state.", "job.cancel",
     schema({job_id: id}, ["job_id"])],
 ];
@@ -37,8 +41,10 @@ export function scientificTools(client, {allowTasks = false, onJob} = {}) {
     name, label, description, parameters, replay: "never", executionMode: "sequential",
     async execute(_callId, params, signal) {
       if (signal?.aborted) throw new Error("Tool call cancelled before dispatch");
+      const payload = name === "execute_kernel_cells" ?
+        {entry: "internal-kernel.py", kernel_cells: params.cells} : params;
       const args = method === "job.submit" ?
-        {...params, job_id: randomUUID().replaceAll("-", "")} : params;
+        {...payload, job_id: randomUUID().replaceAll("-", "")} : payload;
       // Report the durable job ID before dispatch so an interrupted turn can
       // still be reconciled with the job it may have submitted.
       if (method === "job.submit" && typeof onJob === "function") onJob(args.job_id);

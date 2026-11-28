@@ -171,6 +171,27 @@ def guidance():
     return "\n".join(row["prompt"] for key, row in CATALOG.items() if available(key))
 
 
+def install_command(target, requirements):
+    """Host-configured uv is optional until the packaged runtime is qualified.
+
+    Never discover uv from PATH or accept an executable from a model tool.
+    An explicitly configured but invalid executable is a hard failure.
+    """
+    override = os.environ.get("GRIDAGENT_UV")
+    if override is not None:
+        uv = Path(override)
+        if not uv.is_absolute() or not uv.is_file():
+            raise ValueError("GRIDAGENT_UV must point to an absolute installed executable")
+        return [str(uv.resolve()), "--no-config", "pip", "install",
+                "--python", sys.executable, "--no-python-downloads",
+                "--only-binary", ":all:", "--default-index", "https://pypi.org/simple",
+                "--link-mode", "copy", "--target", str(target), *requirements]
+    return [sys.executable, "-I", "-m", "pip", "--isolated", "install",
+            "--disable-pip-version-check", "--no-input", "--only-binary=:all:",
+            "--ignore-installed", "--index-url", "https://pypi.org/simple",
+            "--target", str(target), *requirements]
+
+
 def install(plugin, *, update=False):
     row = spec(plugin)
     root = plugin_root()
@@ -189,10 +210,7 @@ def install(plugin, *, update=False):
         target = stage / "packages"
         try:
             with (stage / "install.log").open("w", encoding="utf-8") as log:
-                subprocess.run([sys.executable, "-I", "-m", "pip", "--isolated", "install",
-                                "--disable-pip-version-check", "--no-input", "--only-binary=:all:",
-                                "--ignore-installed", "--index-url", "https://pypi.org/simple",
-                                "--target", str(target), *row["packages"]],
+                subprocess.run(install_command(target, row["packages"]),
                                env=clean_env(), cwd=stage, stdout=log, stderr=subprocess.STDOUT,
                                check=True, timeout=1200)
             probe = subprocess.run([sys.executable, "-I", "-c", PROBE, str(target), *row["modules"]],

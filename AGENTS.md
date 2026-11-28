@@ -35,6 +35,10 @@ Preserve the existing Proliferate UI and mature non-Agent infrastructure. Before
 - The temporary NativePiChat/NativePiChatGate and PiConversation preview UI/state have been removed from this branch. ChatView is restored to the Proliferate baseline. Use the typed Pi event adapter and existing directory, ingest and transcript contracts; do not reintroduce the preview UI or a duplicate product conversation store. Production Pi cutover is not yet complete.
 - Every implementation PR must identify reused paths, adaptation seams, genuinely new gaps and retirement scope. Explain any new UI component, durable store or service by concrete unmet requirements; no broad visual changes without separate owner approval. Validate interactions and desktop builds before calling migration complete.
 
+## Open-source-first infrastructure
+
+Before adding general infrastructure, inspect existing repository capabilities and mature upstream libraries. Prefer existing implementations, then maintained dependencies via their documented APIs, and write only the GridAgent-specific adapter. Avoid duplicating package managers, sandbox engines, kernel protocols, databases or renderers. Record license, Windows support, maintenance, dependencies, distribution and security implications; pin release dependencies and test them. Heavy optional capabilities must not increase the base install unnecessarily. Replacements require compatibility and security regression tests; never weaken isolation or add a second Agent loop. See [infrastructure reuse plan](docs/infrastructure-reuse.md).
+
 ## Review and implementation discipline
 
 Before opening or merging a PR, ask: does this increase the LLM's ability to solve an engineering problem that the developers did not anticipate? Prefer reusable tools and safe native-library access over adding a hardcoded domain procedure. If a solver-specific adapter is useful, justify its scope and show that it does not block general code execution.

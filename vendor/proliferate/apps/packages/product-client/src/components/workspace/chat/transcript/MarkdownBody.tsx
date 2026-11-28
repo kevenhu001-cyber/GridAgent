@@ -6,6 +6,8 @@ import {
 } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import { ScientificMath } from "./ScientificMath";
 import { ProviderLinkMention } from "./ProviderLinkMention";
 import { CHAT_TRANSCRIPT_LINK_CLASS } from "#product/config/transcript-link-styles";
 import { MarkdownCodeBlockShell } from "./MarkdownCodeBlock";
@@ -218,7 +220,7 @@ export const MarkdownBody = memo(function MarkdownBody({
           data-markdown-surface={surface}
         >
           <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
+            remarkPlugins={[remarkGfm, remarkMath]}
             urlTransform={markdownUrlTransform}
             components={components}
           >
@@ -265,6 +267,9 @@ function MarkdownCode({
   }
   const match = /language-([^\s]+)/.exec(codeClassName || "");
   const codeString = String(children ?? "").replace(/\n$/, "");
+  if (match?.[1] === "math") {
+    return <ScientificMath source={codeString} display={isCodeBlock || (codeClassName ?? "").includes("math-display")} />;
+  }
   if (isCodeBlock || match) {
     const language = match?.[1] ?? null;
     const renderedCodeBlock = renderCodeBlock?.({ code: codeString, language });

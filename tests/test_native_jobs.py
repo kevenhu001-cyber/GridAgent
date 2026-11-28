@@ -88,3 +88,25 @@ def test_shell_guest_launcher_validates_and_compiles():
         isolated_shell_source("unknown", "echo 42")
     with pytest.raises(ValueError):
         isolated_shell_source("bash", "x" * 8001)
+
+
+def test_kernel_batch_uses_existing_durable_job(tmp_path):
+    ws.set_enabled(tmp_path, True)
+    identifier = "d" * 32
+    cells = ["x = 2", "print(x)"]
+    jobs.submit(tmp_path, identifier, "internal-kernel.py", [], [],
+                kernel_cells=cells, launch=lambda *args: None)
+
+    def fake_execute(root, **request):
+        assert request["kernel_cells"] == cells
+        assert request["run_id"] == identifier
+        return {"status": "ok", "run_id": identifier}
+
+    jobs.run_worker(tmp_path, identifier, execute=fake_execute)
+    assert jobs.status(tmp_path, identifier)["status"] == "ok"
+    with pytest.raises(ValueError, match="another request"):
+        jobs.submit(tmp_path, identifier, "internal-kernel.py", [], [],
+                    kernel_cells=["x = 3"], launch=lambda *args: None)
+    with pytest.raises(ValueError, match="Unknown"):
+        dispatch(tmp_path, "job.submit", {"job_id": "e" * 32, "entry": "internal-kernel.py",
+                                         "kernel_cells": cells})
