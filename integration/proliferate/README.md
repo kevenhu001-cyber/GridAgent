@@ -89,8 +89,14 @@ directory. They reuse the existing project path, size, link and revision
 constraints; neither the caller nor the model supplies an arbitrary root.
 The desktop scientific client maps these to the retained SDK file response
 shapes and assembles bounded text pages only if their SHA-256 revisions agree.
-Binary files expose metadata, not decoded content. This is a read-only
-transport foundation, not a replacement file browser or a generic repository
-filesystem. The existing product file tree and editor are not yet routed to
-this transport; independent workspace identity, selection, writes, and
-retiring external Agent lifecycle dependencies remain separate steps.
+Binary files expose metadata, not decoded content. Native project commands
+now require a distinct host-issued ID derived from the canonical configured
+workspace. Read and existing-file save share that identity; save additionally
+requires the original SHA-256 revision, scientific grant and explicit task
+opt-in. No renderer-supplied root and no fallback to an AnyHarness workspace
+are allowed. The project namespace is the scientific-project subdirectory,
+not the surrounding repository. This is a typed transport foundation, not a
+replacement file browser or a generic filesystem. The existing product file
+tree and editor are not yet routed to it: selection and cache identity must
+be adapted together, and unsupported create/rename/delete and host-open
+operations must not fall through to the legacy path.

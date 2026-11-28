@@ -31,10 +31,10 @@ def test_native_service_real_process(tmp_path):
 
 
 def test_native_project_browser_is_scoped_and_preserves_revisions(tmp_path):
+    import pytest
+
     from gridagent.native_service import dispatch
     from gridagent.scientific_workspace import write_bytes, write_project
-
-    import pytest
 
     for method, args in [("workspace.tree", {}), ("workspace.search", {"query": "py"}),
                          ("workspace.inspect", {"path": "study.py"})]:

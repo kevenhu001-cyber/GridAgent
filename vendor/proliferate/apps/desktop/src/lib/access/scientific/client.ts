@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ListWorkspaceFilesResponse, SearchWorkspaceFilesResponse, ReadWorkspaceFileResponse } from "@anyharness/sdk";
+import type { ListWorkspaceFilesResponse, SearchWorkspaceFilesResponse, ReadWorkspaceFileResponse, WriteWorkspaceFileRequest, WriteWorkspaceFileResponse } from "@anyharness/sdk";
 
 export type ScientificReadMethod =
   | "hello" | "scientific.status" | "scientific.runs" | "scientific.artifact"
@@ -81,12 +81,32 @@ export function writeScientificFile(path: string, text: string, expectedSha256: 
 /** Native scientific-project file transport primitives. No caller-supplied root or
  * AnyHarness process is needed. Consumers must bind these to an authorized
  * workspace before replacing the retained file tree's current transport. */
-export function listScientificDirectory(path = "") {
-  return scientificRead<ListWorkspaceFilesResponse>("workspace.tree", { path });
+export interface ScientificProjectIdentity {
+  id: string;
+  workspacePath: string;
+  projectPath: string;
 }
 
-export function searchScientificFiles(query: string, limit = 25) {
-  return scientificRead<SearchWorkspaceFilesResponse>("workspace.search", { query, limit });
+export function getScientificProjectIdentity() {
+  return invoke<ScientificProjectIdentity>("scientific_project_identity");
+}
+
+async function projectRead<T>(
+  projectId: string, method: "workspace.tree" | "workspace.search" | "workspace.inspect" | "workspace.read",
+  params: Record<string, unknown>,
+): Promise<T> {
+  const response = await invoke<ScientificResponse<T>>("scientific_project_read", { projectId, method, params });
+  if (response.version !== 1) throw new Error("Scientific protocol version mismatch");
+  if (!response.ok) throw new Error(response.error.code);
+  return response.result;
+}
+
+export function listScientificDirectory(projectId: string, path = "") {
+  return projectRead<ListWorkspaceFilesResponse>(projectId, "workspace.tree", { path });
+}
+
+export function searchScientificFiles(projectId: string, query: string, limit = 25) {
+  return projectRead<SearchWorkspaceFilesResponse>(projectId, "workspace.search", { query, limit });
 }
 
 interface ProjectMetadata {
@@ -105,14 +125,15 @@ interface ProjectPage {
 
 /** Reuse the existing read response contract and revision guard. Binary files
  * get metadata only. Each page must belong to the same content revision. */
-export async function readScientificProjectFile(path: string): Promise<ReadWorkspaceFileResponse> {
-  const meta = await scientificRead<ProjectMetadata>("workspace.inspect", { path });
+export async function readScientificProjectFile(projectId: string, path: string): Promise<ReadWorkspaceFileResponse> {
+  const meta = await projectRead<ProjectMetadata>(projectId, "workspace.inspect", { path });
+  if (meta.path !== path) throw new Error("Scientific file identity mismatch");
   let content: string | null = null;
   if (meta.text_readable) {
     let offset = 0;
     const chunks: string[] = [];
     for (let count = 0; count < 90; count++) {
-      const page = await scientificRead<ProjectPage>("workspace.read", { path, offset });
+      const page = await projectRead<ProjectPage>(projectId, "workspace.read", { path, offset });
       if (page.path !== path || page.sha256 !== meta.sha256) {
         throw new Error("Scientific file changed while reading");
       }
@@ -135,4 +156,21 @@ export async function readScientificProjectFile(path: string): Promise<ReadWorks
     encoding: meta.text_readable ? "utf-8" : null, sizeBytes: meta.size_bytes,
     isText: meta.text_readable, tooLarge: false,
   };
+}
+
+
+/** Existing-file save uses the same native project identity as reads and the
+ * editor's observed revision. Never route to a legacy repository on failure. */
+export async function saveScientificProjectFile(
+  projectId: string, input: WriteWorkspaceFileRequest,
+): Promise<WriteWorkspaceFileResponse> {
+  const response = await invoke<ScientificResponse<{path: string; sha256: string; size_bytes: number}>>(
+    "scientific_project_write", {
+      projectId, path: input.path, text: input.content, expectedSha256: input.expectedVersionToken,
+    },
+  );
+  if (response.version !== 1) throw new Error("Scientific protocol version mismatch");
+  if (!response.ok) throw new Error(response.error.code);
+  if (response.result.path !== input.path) throw new Error("Scientific file identity mismatch");
+  return {path: response.result.path, versionToken: response.result.sha256, sizeBytes: response.result.size_bytes};
 }
