@@ -11,10 +11,13 @@ import { batchSessionStoreWrites } from "#product/lib/infra/scheduling/react-bat
 import type { PromptOutboxEntry } from "#product/domain/sessions/intents/session-intent-model";
 
 export const PI_AGENT_KIND = "pi";
+// Mirrors MAX_PI_SESSIONS in apps/desktop/src-tauri/src/pi_bridge.rs; the
+// host remains the authority and rejects opens beyond its own bound.
+export const PI_MAX_LIVE_SESSIONS = 4;
 type Binding = { clientId: string; workspaceId: string; hostId: string;
   controller: PiSessionController; adapter: PiEventAdapter; selection: PiModelSelection; busy: boolean; failed: boolean };
-let binding: Binding | null = null;
-let opening = false;
+const bindings = new Map<string, Binding>();
+let openingCount = 0;
 
 // Transport ownership only. Transcript, directory, freshness and prompt outbox
 // are the existing ProductClient stores, not a parallel conversation store.
@@ -54,29 +57,33 @@ function markInterrupted(current: Binding) {
 }
 
 /** Explicitly admitted local workspace and model. No restored session may
- * open a new worker implicitly. Initial host supports one live session.
+ * open a new worker implicitly. Multiple live sessions are admitted up to the
+ * host bound; each keeps its own worker, adapter and outbox identity.
  * Called by the retained workspace composer workflow, not a new UI.
  */
 export async function openPiProductSession(input:{bridge:DesktopPiBridge;workspaceId:string;workspacePath:string;selection:PiModelSelection}):Promise<string> {
-  if (binding || opening) throw new Error("A native Pi session is already open");
   if (!input.workspaceId || !input.workspacePath) throw new Error("Missing workspace");
-  opening = true;
+  openingCount++;
+  if (bindings.size + openingCount > PI_MAX_LIVE_SESSIONS) {
+    openingCount--;
+    throw new Error("Native Pi session limit reached");
+  }
   const controller = new PiSessionController(input.bridge);
   try {
     if (!await input.bridge.mode() || !await input.bridge.matchesWorkspace(input.workspacePath)) throw new Error("Workspace is not authorized for native Pi");
     await controller.open(input.workspacePath,input.selection);
     const hostId = controller.getSnapshot().sessionId;
-    if (!hostId || getSessionRecord(hostId)) throw new Error("Native session identity collision");
+    if (!hostId || getSessionRecord(hostId) || bindings.has(hostId)) throw new Error("Native session identity collision");
     const record = createEmptySessionRecord(hostId,PI_AGENT_KIND,{workspaceId:input.workspaceId,
       materializedSessionId:hostId,modelId:input.selection.modelId,sessionRelationship:{kind:"root"}});
     putSessionRecord({...record,status:"idle",streamConnectionState:"open",transcriptHydrated:true});
-    binding={clientId:hostId,workspaceId:input.workspaceId,hostId,controller,
-      adapter:new PiEventAdapter(hostId),selection:{...input.selection},busy:false,failed:false};
+    bindings.set(hostId,{clientId:hostId,workspaceId:input.workspaceId,hostId,controller,
+      adapter:new PiEventAdapter(hostId),selection:{...input.selection},busy:false,failed:false});
     return hostId;
   } catch (error) {
     try {await controller.close();} catch { /* native admission uncertain; no retry */ }
     throw error;
-  } finally {opening=false;}
+  } finally {openingCount--;}
 }
 
 function failIntent(entry:PromptOutboxEntry, uncertain:boolean,message:string) {
@@ -94,7 +101,7 @@ export async function dispatchPiPromptIntent(entry:PromptOutboxEntry):Promise<vo
   const store=useSessionIntentStore.getState();
   const latest=store.entriesById[entry.intentId];
   if (latest?.kind!=="send_prompt" || latest.deliveryState!=="waiting_for_session") return;
-  const current=binding;
+  const current=bindings.get(entry.clientSessionId);
   if (!current || current.clientId!==entry.clientSessionId || current.hostId!==entry.materializedSessionId ||
     current.workspaceId!==entry.workspaceId || current.failed || current.busy || current.controller.getSnapshot().status!=="ready") {
     failIntent(entry,false,"Native Pi session is not available. Do not resume a restored session automatically."); return;
@@ -124,7 +131,7 @@ export async function dispatchPiPromptIntent(entry:PromptOutboxEntry):Promise<vo
 }
 
 export async function cancelPiProductSession(sessionId:string):Promise<void> {
-  const current=binding;
+  const current=bindings.get(sessionId);
   if (!current || current.clientId!==sessionId || current.failed) throw new Error("Native Pi session unavailable");
   const id=current.controller.getSnapshot().requestId;
   if (!id) throw new Error("No admitted Pi turn");
@@ -133,22 +140,25 @@ export async function cancelPiProductSession(sessionId:string):Promise<void> {
 }
 
 export async function closePiProductSession(sessionId:string):Promise<void> {
-  const current=binding;
+  const current=bindings.get(sessionId);
   if (!current || current.clientId!==sessionId || current.busy) throw new Error("Native Pi session is not idle");
   if (Object.values(useSessionIntentStore.getState().entriesById).some(intent=>intent.clientSessionId===sessionId && intent.kind==="send_prompt" && ["waiting_for_session","preparing","dispatching","accepted_running","accepted_queued"].includes(intent.deliveryState))) throw new Error("Native Pi has a pending prompt");
   await current.controller.close();
-  binding=null;
+  bindings.delete(sessionId);
   patchSessionRecord(sessionId,{status:"closed",streamConnectionState:"ended",
     executionSummary:{phase:"closed",hasLiveHandle:false,pendingInteractions:[],updatedAt:new Date().toISOString()}});
 }
 
 // Nonsecret transport metadata; never store another transcript.
 export function getPiSessionSelection(sessionId:string): PiModelSelection | null {
-  return binding?.clientId===sessionId ? {...binding.selection} : null;
+  const current=bindings.get(sessionId);
+  return current?.clientId===sessionId ? {...current.selection} : null;
 }
 export function canSendPiSession(sessionId:string,workspaceId:string):boolean {
-  return binding?.clientId===sessionId && binding.workspaceId===workspaceId && !binding.failed &&
-    !!getSessionRecord(sessionId) && ["ready","sending","running","cancelling"].includes(binding.controller.getSnapshot().status);
+  const current=bindings.get(sessionId);
+  return !!current && current.workspaceId===workspaceId && !current.failed &&
+    !!getSessionRecord(sessionId) && ["ready","sending","running","cancelling"].includes(current.controller.getSnapshot().status);
 }
-export function hasOpenPiSession():boolean { return binding!==null || opening; }
-export function ownsPiSession(sessionId:string):boolean {return binding?.clientId===sessionId;}
+export function hasOpenPiSession():boolean { return bindings.size>0 || openingCount>0; }
+export function hasPiSessionCapacity():boolean { return bindings.size+openingCount<PI_MAX_LIVE_SESSIONS; }
+export function ownsPiSession(sessionId:string):boolean {return bindings.get(sessionId)?.clientId===sessionId;}

@@ -4,7 +4,7 @@ import { usePiModelSelector, usePiMode } from "#product/hooks/chat/derived/use-p
 import { useWorkspaces } from "#product/hooks/workspaces/cache/use-workspaces";
 import { useSessionPromptWorkflow } from "#product/hooks/sessions/workflows/use-session-prompt-workflow";
 import { submitPiWorkspacePrompt } from "#product/lib/access/pi/workspace-submit";
-import { hasOpenPiSession } from "#product/lib/access/pi/product-session";
+import { hasPiSessionCapacity } from "#product/lib/access/pi/product-session";
 import { createPromptId } from "#product/lib/domain/chat/composer/prompt-id";
 import { writeChatShellIntentForSession } from "#product/hooks/workspaces/workflows/tabs/workspace-shell-intent-writer";
 import type { PromptAttachmentSnapshot } from "#product/domain/chats/composer/prompt-attachment-snapshot";
@@ -93,8 +93,8 @@ export function useHomeNextLaunch() {
   }: HomeNextLaunchInput): Promise<HomeNextLaunchOutcome> => {
     if (piMode !== "legacy") {
       if (piMode!=="native" || !pi || target.kind!=="local" || !target.existingWorkspaceId ||
-        nativeLaunchInFlight.current || hasOpenPiSession()) {
-        showToast("Select an existing local workspace and close any open Pi session before launching. Your draft is preserved.");
+        nativeLaunchInFlight.current || !hasPiSessionCapacity()) {
+        showToast("Select an existing local workspace and close a Pi session before launching. Your draft is preserved.");
         return "refused";
       }
       const workspace=workspaceCollections?.localWorkspaces.find(w=>w.id===target.existingWorkspaceId && w.surface==="standard");

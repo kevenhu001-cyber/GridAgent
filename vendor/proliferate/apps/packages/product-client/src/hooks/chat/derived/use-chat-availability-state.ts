@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { usePiModelSelector } from "#product/hooks/chat/derived/use-pi-model-selector";
-import { canSendPiSession, hasOpenPiSession } from "#product/lib/access/pi/product-session";
+import { canSendPiSession, hasPiSessionCapacity } from "#product/lib/access/pi/product-session";
 import { useSessionDirectoryStore } from "#product/stores/sessions/session-directory-store";
 import { selectPrimaryPendingInteraction } from "@anyharness/sdk";
 import { useWorkspaces } from "#product/hooks/workspaces/cache/use-workspaces";
@@ -116,7 +116,7 @@ export function useChatAvailabilityState(options?: {
       : isWorkspaceDirectoryMissing(selectedLocalWorkspace) ? missingCheckoutCopy(selectedLocalWorkspace.kind).sendBlockedReason
       : activeSessionId ? (activeDirectory?.agentKind==="pi" && canSendPiSession(activeSessionId,selectedLocalWorkspace.id)
         ? null : "This session is read-only. Start a native Pi chat.")
-      : hasOpenPiSession() ? "Close the current native Pi session before starting another."
+      : !hasPiSessionCapacity() ? "Close a native Pi session before starting another."
       : !native.selection ? "Choose a model with a configured API key."
       : null;
     return {...availability,isDisabled:false,disabledReason:null,sendBlockedReason:reason,

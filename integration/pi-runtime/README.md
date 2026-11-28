@@ -71,10 +71,12 @@ session directory, transcript, ingest and prompt outbox stores. It consumes
 the original prompt ID, reuses the existing stream reducer and stream patch
 builder, and reconciles the outbox using the authoritative user-message echo.
 The existing dispatcher and Cancel workflow recognize Pi session records;
-legacy SSE/summary refresh does not attach to them. Only one live native
-session is supported. Unsupported attachments/config interactions fail
+legacy SSE/summary refresh does not attach to them. Multiple live native
+sessions are admitted up to the host bound (currently four worker processes,
+each with its own scoped scientific service); every command stays keyed to
+its own session ID. Unsupported attachments/config interactions fail
 explicitly. Disconnection/uncertain submission is not replayed. There is no
-second conversation store. The existing workspace composer calls this materialization seam, enqueues into the original outbox and activates the original chat tab. Admission checks the host-authorized path and selection generation, retains drafts on pre-enqueue failure, and pins the running worker model. Native session dismissal closes an idle worker; pending sends prevent closure. This remains opt-in development mode, one worker, existing local workspace inventory, text-only prompts. No implicit recovery of a restored Pi session; durable history, multiple sessions, independent workspace inventory and production desktop validation remain open.
+second conversation store. The existing workspace composer calls this materialization seam, enqueues into the original outbox and activates the original chat tab. Admission checks the host-authorized path and selection generation, retains drafts on pre-enqueue failure, and pins the running worker model. Native session dismissal closes an idle worker; pending sends prevent closure. This remains opt-in development mode, bounded live workers sharing the existing authorized local workspace inventory, text-only prompts. No implicit recovery of a restored Pi session; durable history, per-session workspaces, independent workspace inventory and production desktop validation remain open.
 
 ## Remaining integration
 
