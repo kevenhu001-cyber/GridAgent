@@ -5,9 +5,12 @@ import { renderDesktopCodeBlock } from "#product/components/content/ui/desktop-m
 import { CenterMessage } from "#product/components/workspace/files/viewer/CenterMessage";
 import { FileDiffPane } from "#product/components/workspace/files/viewer/FileDiffPane";
 import { FileSourceView } from "#product/components/workspace/files/viewer/FileSourceView";
-import { canPreviewAsSvg } from "#product/lib/domain/files/document-preview";
+import { lazy, Suspense } from "react";
+import { canPreviewAsScientific, canPreviewAsSvg } from "#product/lib/domain/files/document-preview";
 import type { FileDiffTarget } from "#product/lib/domain/workspaces/viewer/file-diff-options";
 import type { FileViewerMode } from "#product/lib/domain/workspaces/viewer/viewer-target";
+
+const ScientificPreview = lazy(() => import("./viewer/ScientificPreview"));
 
 interface FileViewerContentProps {
   filePath: string;
@@ -76,6 +79,13 @@ function RichPreview({
   filePath: string;
   content: string;
 }) {
+  if (canPreviewAsScientific(filePath)) {
+    return (
+      <Suspense fallback={<CenterMessage message="Loading scientific preview" />}>
+        <ScientificPreview key={filePath} content={content} filePath={filePath} />
+      </Suspense>
+    );
+  }
   if (canPreviewAsSvg(filePath)) {
     return (
       <div className="flex h-full min-h-0 min-w-0 items-center justify-center overflow-auto bg-background p-6">

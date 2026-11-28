@@ -47,6 +47,10 @@ export function canPreviewAsSvg(path: string): boolean {
   return path.split(/[\\/]/).pop()?.toLowerCase().endsWith(".svg") ?? false;
 }
 
+export function canPreviewAsScientific(path: string): boolean {
+  return /\.(chart|view)\.json$/i.test(path);
+}
+
 export function canPreviewAsRichFile(path: string): boolean {
-  return canPreviewAsMarkdown(path) || canPreviewAsSvg(path);
+  return canPreviewAsMarkdown(path) || canPreviewAsSvg(path) || canPreviewAsScientific(path);
 }
