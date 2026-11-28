@@ -83,12 +83,6 @@ export function writeScientificFile(path: string, text: string, expectedSha256: 
 /** Native scientific-project file transport primitives. No caller-supplied root or
  * AnyHarness process is needed. Consumers must bind these to an authorized
  * workspace before replacing the retained file tree's current transport. */
-export interface ScientificProjectIdentity {
-  id: string;
-  workspacePath: string;
-  projectPath: string;
-}
-
 export function listScientificProjects() {
   return invoke<NativeScientificProjectIdentity[]>("scientific_project_list");
 }

@@ -48,8 +48,8 @@ fn developer_tasks_enabled() -> bool {
 
 impl ScientificProcess {
     fn start(root: PathBuf) -> Result<Self, String> {
-        // Development-only host configuration. Packaged runtime discovery and
-        // user-authorized workspace selection replace this in the next phase.
+        // The selected canonical root is supplied by the host; packaged Python
+        // runtime discovery remains a separate release prerequisite.
         let python = configured_path("GRIDAGENT_NATIVE_PYTHON", true)?;
         let mut command = Command::new(python);
         command.args(["-I", "-X", "utf8", "-m", "gridagent.native_service"])

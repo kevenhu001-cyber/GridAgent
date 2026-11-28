@@ -17,6 +17,6 @@ describe("native scientific project inventory", () => {
     expect(logical[0].localWorkspace?.id).toBe(id);
   });
   it("rejects legacy and malformed identifiers", () => {
-    expect(() => nativeProjectWorkspace({id:"legacy",workspacePath:"/study",projectPath:"/study/scientific-project"})).toThrow();
+    expect(() => nativeProjectWorkspace({id:"legacy",workspacePath:"/study",projectPath:"/study/scientific-project",available:true,createdAt:"2026-11-28T00:00:00Z"})).toThrow();
   });
 });

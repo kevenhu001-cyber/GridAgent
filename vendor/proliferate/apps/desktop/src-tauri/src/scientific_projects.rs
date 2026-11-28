@@ -175,7 +175,7 @@ pub fn register(selected: PathBuf) -> Result<ProjectIdentity, String> {
     let root = selected.canonicalize().map_err(|_| "Selected project folder is unavailable")?;
     let app = crate::app_config::app_dir_path()?.canonicalize()
         .map_err(|_| "Cannot resolve GridAgent application data directory")?;
-    if app.starts_with(&root) {
+    if app.starts_with(&root) || root.starts_with(&app) {
         return Err("Choose a project folder that does not contain GridAgent application data".into());
     }
     let lock = lock_registry(&directory, true)?;

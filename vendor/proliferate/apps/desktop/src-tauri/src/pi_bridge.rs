@@ -377,7 +377,7 @@ pub async fn pi_resume(
     if !pi_enabled() { return Err("Native Pi development mode is disabled".into()); }
     let workspace = authorized_workspace(&workspace_path)
         .ok_or("Selected workspace is not authorized for Pi history")?;
-    let dir = history_directory(workspace).await?;
+    let dir = history_directory(workspace.clone()).await?;
     let mut guard = state.0.lock().await;
     if guard.len() >= MAX_PI_SESSIONS { return Err("Pi session limit reached".into()); }
     if guard.contains_key(&session_id) { return Err("Pi session is already open".into()); }
