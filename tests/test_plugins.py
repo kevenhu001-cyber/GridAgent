@@ -64,3 +64,45 @@ def test_plugin_probe_precedes_switch_and_rollback(tmp_path, monkeypatch):
     plugins.rollback("rainflow")
     assert plugins.installed_target("rainflow") == first
     assert plugins.installed_metadata("rainflow")["versions"] == {"rainflow": "3.2"}
+
+
+def test_uv_install_command_is_explicit_and_wheel_only(tmp_path, monkeypatch):
+    monkeypatch.delenv("GRIDAGENT_UV", raising=False)
+    target = tmp_path / "packages"
+    requirements = ["rainflow>=3.2,<4"]
+    assert plugins.install_command(target, requirements)[:4] == [sys.executable, "-I", "-m", "pip"]
+    executable = tmp_path / "uv.exe"
+    executable.touch()
+    monkeypatch.setenv("GRIDAGENT_UV", str(executable))
+    args = plugins.install_command(target, requirements)
+    assert args[:4] == [str(executable.resolve()), "--no-config", "pip", "install"]
+    assert args[args.index("--python") + 1] == sys.executable
+    assert "--no-python-downloads" in args
+    assert args[args.index("--only-binary") + 1] == ":all:"
+    assert args[args.index("--link-mode") + 1] == "copy"
+    assert args[args.index("--target") + 1] == str(target)
+    assert args[-1] == requirements[0]
+    assert "GRIDAGENT_UV" not in plugins.clean_env()
+    monkeypatch.setenv("GRIDAGENT_UV", "uv")
+    with pytest.raises(ValueError, match="absolute installed executable"):
+        plugins.install_command(target, requirements)
+
+
+def test_uv_failed_install_never_retries_with_pip(tmp_path, monkeypatch):
+    executable = tmp_path / "uv.exe"
+    executable.touch()
+    monkeypatch.setenv("GRIDAGENT_UV", str(executable))
+    monkeypatch.setenv("GRIDAGENT_PLUGIN_ROOT", str(tmp_path / "plugins"))
+    calls = []
+
+    def fail(args, **kwargs):
+        calls.append(args)
+        raise subprocess.CalledProcessError(1, args)
+
+    monkeypatch.setattr(plugins.subprocess, "run", fail)
+    with pytest.raises(ValueError, match="install or import check failed"):
+        plugins.install("rainflow")
+    assert len(calls) == 1
+    assert calls[0][0] == str(executable.resolve())
+    assert plugins.installed_target("rainflow") is None
+    assert not list((tmp_path / "plugins").glob(".stage-*"))

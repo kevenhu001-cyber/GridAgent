@@ -99,6 +99,7 @@ class JobSubmit(JobRef):
     entry: str = Field(min_length=1, max_length=240)
     arguments: list[str] = Field(default_factory=list, max_length=32)
     plugin_ids: list[str] = Field(default_factory=list, max_length=4)
+    kernel_cells: list[str] | None = Field(default=None, max_length=8)
 
 
 class ShellSubmit(JobRef):
@@ -179,6 +180,8 @@ def dispatch(root: Path, method: str, params: dict, *, allow_tasks=False):
 
         handler = {"job.status": native_jobs.status, "job.latest": native_jobs.latest, "job.submit": native_jobs.submit,
                    "job.cancel": native_jobs.cancel, "job.submit_shell": native_jobs.submit_shell}[method]
+        if method == "job.submit" and args.get("kernel_cells") is None:
+            args.pop("kernel_cells", None)
         return handler(root, **args)
     if method == "scientific.runs":
         return ws.list_scientific_runs(root, **args)

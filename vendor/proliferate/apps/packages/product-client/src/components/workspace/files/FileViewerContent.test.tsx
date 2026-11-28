@@ -37,3 +37,13 @@ describe("FileViewerContent rendered preview", () => {
     expect(body?.className).toContain("file-preview-virtualized");
   });
 });
+
+it("previews scientific tables in the retained viewer and labels them unverified", async () => {
+  const content = JSON.stringify({schema: "gridagent.view.v1", kind: "table", title: "Voltage",
+    columns: ["Bus"], rows: [["B1"]]});
+  const view = render(<FileViewerContent filePath="result.view.json" workspaceId="workspace-1"
+    effectiveMode="rendered" read={{...MARKDOWN_READ, path: "result.view.json", content}}
+    activeDiffTarget={null} diffLayout="unified" canShowRichPreview wordWrap={false}/>);
+  expect(await view.findByText("Project file preview · Unverified data")).toBeTruthy();
+  expect(await view.findByText("B1")).toBeTruthy();
+});
