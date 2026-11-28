@@ -20,7 +20,10 @@ try {
   await client.request("hello");
   await serveWorker({agent, projectEvent, input: process.stdin, output: process.stdout,
     expectContext: process.env.GRIDAGENT_PI_RESTORE_TEXT === "1",
-    onJob: emit => { jobSink.emit = emit; }});
+    onJob: emit => { jobSink.emit = emit; },
+    contextOptions: process.env.GRIDAGENT_PI_PERSIST_TOOLS === "1" &&
+      process.env.GRIDAGENT_PI_PROVIDER === "openai" && process.env.GRIDAGENT_PI_API_KEY?.trim() ?
+      {credential: process.env.GRIDAGENT_PI_API_KEY, toolNames: agent.state.tools.map(tool => tool.name)} : undefined});
 } finally {
   client.close();
 }

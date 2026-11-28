@@ -1,5 +1,5 @@
 //! Private, versioned Pi transport journal. The renderer rebuilds the existing
-//! transcript from public events. No worker context or delivery queue lives here.
+//! transcript from public events. Opt-in tool context is private and never serialized to the renderer.
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -38,6 +38,8 @@ pub enum Record {
         cancellation_requested: bool,
         #[serde(default)]
         context_safe: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool_context: Option<Value>,
     },
     // Written while the turn runs, so a worker that dies before settlement
     // still leaves its durable scientific job attached to the originating turn.
@@ -58,6 +60,8 @@ pub struct Turn {
     jobs: Vec<String>,
     #[serde(skip)]
     context_safe: bool,
+    #[serde(skip)]
+    tool_context: Option<Value>,
 }
 
 #[derive(Serialize)]
@@ -155,7 +159,58 @@ fn lock(path: &Path) -> Result<std::fs::File, String> {
     Ok(file)
 }
 
+pub fn bounded_tool_context(context: &Value) -> bool {
+    context["version"].as_u64() == Some(1) &&
+        context["messages"].as_array().is_some_and(|rows| (4..=64).contains(&rows.len())) &&
+        serde_json::to_vec(context).is_ok_and(|bytes| bytes.len() <= MAX_CONTEXT_BYTES)
+}
+
+pub fn contains_credential(value: &Value, key: &str) -> bool {
+    match value {
+        Value::String(s) => s.contains(key),
+        Value::Array(rows) => rows.iter().any(|row| contains_credential(row, key)),
+        Value::Object(rows) => rows.iter().any(|(name, row)| name.contains(key) || contains_credential(row, key)),
+        _ => false,
+    }
+}
+
+pub fn context_matches_events(context: &Value, events: &[Value]) -> bool {
+    if !bounded_tool_context(context) { return false; }
+    let Some(rows) = context["messages"].as_array() else { return false; };
+    let assistant: String = rows.iter().filter(|row| row["role"] == "assistant")
+        .filter_map(|row| row["content"].as_array()).flatten()
+        .filter(|part| part["type"] == "text").filter_map(|part| part["text"].as_str()).collect();
+    let visible: String = events.iter().filter_map(|event| event["delta"].as_str()).collect();
+    let tool_calls: Vec<_> = rows.iter().filter(|row| row["role"] == "assistant")
+        .filter_map(|row| row["content"].as_array()).flatten()
+        .filter(|part| part["type"] == "toolCall")
+        .filter_map(|part| Some((part["id"].as_str()?, part["name"].as_str()?))).collect();
+    let starts: Vec<_> = events.iter().filter(|event| event["kind"] == "tool_started")
+        .filter_map(|event| Some((event["tool_id"].as_str()?, event["name"].as_str()?))).collect();
+    !tool_calls.is_empty() && assistant == visible && tool_calls == starts
+}
+
 impl Session {
+    fn restore_context(&self, allow_tools: bool) -> Option<Value> {
+        if let Some(text) = self.text_context() { return Some(text); }
+        if !allow_tools || !self.complete || self.provider.as_deref() != Some("openai") || self.turns.is_empty() { return None; }
+        let turns = self.turns.iter().map(|turn| {
+            if turn.cancellation_requested { return None; }
+            if turn.context_safe {
+                let assistant: String = turn.events.iter().filter_map(|event| event["delta"].as_str()).collect();
+                if assistant.trim().is_empty() { return None; }
+                Some(serde_json::json!({"kind":"text","user":turn.text,"assistant":assistant,"timestamp":turn.timestamp.timestamp_millis()}))
+            } else {
+                let context = turn.tool_context.as_ref()?;
+                if context["messages"][0]["content"].as_str() != Some(turn.text.as_str()) ||
+                    !context_matches_events(context, &turn.events) { return None; }
+                Some(serde_json::json!({"kind":"tool","context":context}))
+            }
+        }).collect::<Option<Vec<_>>>()?;
+        let frame = serde_json::json!({"method":"restore_mixed","version":1,"turns":turns});
+        (serde_json::to_vec(&frame).ok()?.len() <= MAX_CONTEXT_BYTES).then_some(frame)
+    }
+
     fn text_context(&self) -> Option<Value> {
         if !self.complete || self.provider.is_none() || self.turns.is_empty() {
             return None;
@@ -188,7 +243,12 @@ impl Session {
 
 // Only the host opens an existing journal, with a matching directory revision
 // and an exclusive writer held for the lifetime of the worker.
+#[cfg(test)]
 pub fn resume(dir: &Path, id: &str, revision: &str) -> Result<(Session, Journal, Value), String> {
+    resume_with_tools(dir, id, revision, false)
+}
+
+pub fn resume_with_tools(dir: &Path, id: &str, revision: &str, allow_tools: bool) -> Result<(Session, Journal, Value), String> {
     if !crate::pi_bridge::valid_id(id) {
         return Err("Invalid Pi session ID".into());
     }
@@ -209,8 +269,8 @@ pub fn resume(dir: &Path, id: &str, revision: &str) -> Result<(Session, Journal,
         return Err("Pi history changed; reopen the workspace".into());
     }
     let frame = session
-        .text_context()
-        .ok_or("Pi session has no verified text context")?;
+        .restore_context(allow_tools)
+        .ok_or("Pi session has no verified restorable context")?;
     let file = std::fs::OpenOptions::new()
         .append(true)
         .open(&path)
@@ -257,7 +317,7 @@ impl Journal {
         bytes.push(b'\n');
         // Reserve space to record a full settlement before admitting a turn.
         let reserve = if matches!(record, Record::Submitted { .. }) {
-            MAX_TURN_EVENT_BYTES + 256
+            MAX_TURN_EVENT_BYTES + MAX_CONTEXT_BYTES + 4096
         } else {
             0
         };
@@ -339,6 +399,7 @@ fn read_session(path: &Path, id: String) -> Result<Session, &'static str> {
                     cancellation_requested: false,
                     jobs: Vec::new(),
                     context_safe: false,
+                    tool_context: None,
                 });
             }
             Record::Settled {
@@ -346,6 +407,7 @@ fn read_session(path: &Path, id: String) -> Result<Session, &'static str> {
                 events,
                 cancellation_requested,
                 context_safe,
+                tool_context,
             } => {
                 let turn = turns
                     .last_mut()
@@ -366,6 +428,9 @@ fn read_session(path: &Path, id: String) -> Result<Session, &'static str> {
                     })
                     .collect::<Result<_, _>>()?;
                 turn.cancellation_requested = cancellation_requested;
+                turn.tool_context = tool_context.filter(|context| !cancellation_requested &&
+                    context["messages"][0]["content"].as_str() == Some(turn.text.as_str()) &&
+                    context_matches_events(context, &turn.events));
                 turn.context_safe = context_safe
                     && turn.events.iter().all(|event| {
                         matches!(
@@ -436,7 +501,10 @@ pub async fn dismiss(dir: PathBuf, id: String) -> Result<(), String> {
     }
 }
 
-pub fn recent(dir: &Path) -> Result<History, String> {
+#[cfg(test)]
+pub fn recent(dir: &Path) -> Result<History, String> { recent_with_tools(dir, false) }
+
+pub fn recent_with_tools(dir: &Path, allow_tools: bool) -> Result<History, String> {
     let mut files = Vec::new();
     for entry in std::fs::read_dir(dir).map_err(|_| "Cannot list Pi history")? {
         let entry = entry.map_err(|_| "Cannot inspect Pi history")?;
@@ -466,7 +534,7 @@ pub fn recent(dir: &Path) -> Result<History, String> {
     for (_, id, path) in files {
         match read_session(&path, id) {
             Ok(mut session) if !session.turns.is_empty() => {
-                if session.text_context().is_some() {
+                if session.restore_context(allow_tools).is_some() {
                     session.resume_revision = session.turns.last().map(|turn| turn.id.clone());
                 }
                 result.sessions.push(session);
@@ -539,6 +607,7 @@ mod tests {
                 events,
                 cancellation_requested: false,
                 context_safe: false,
+                tool_context: None,
             })
             .await
             .unwrap();
@@ -598,6 +667,7 @@ mod tests {
                 ],
                 cancellation_requested: false,
                 context_safe: true,
+                tool_context: None,
             })
             .await
             .unwrap();

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { projectToolTurn, restoreToolContext } from "./tool-context.mjs";
+import { projectToolTurn, restoreToolContext, restoreMixedContext } from "./tool-context.mjs";
 
 const options = {toolNames: ["scientific_job_status"], credential: "provider-secret-test"};
 const job = "a".repeat(32);
@@ -61,4 +61,15 @@ test("restore is atomic and never prompts, replays tools or copies provider meta
   assert.equal(agent.state.messages[1].model, "test-model");
   assert.equal(agent.state.messages[2].toolCallId, "call_1");
   assert.throws(() => restoreToolContext(agent, [frame], options));
+});
+
+test("mixed history restores text and tool turns in order, atomically", () => {
+  const agent = {state: {messages: [], model: {api: "test-api", provider: "openai", id: "test-model"}}};
+  const tool = {kind: "tool", context: projectToolTurn(fixture(), options)};
+  const text = {kind: "text", user: "Prior question", assistant: "Prior answer", timestamp: 0};
+  const seed = {method: "restore_mixed", version: 1, turns: [text, tool, text]};
+  assert.throws(() => restoreMixedContext(agent, {...seed, turns: [text, tool, tool]}, options));
+  assert.deepEqual(agent.state.messages, []);
+  restoreMixedContext(agent, seed, options);
+  assert.deepEqual(agent.state.messages.map(m => m.role), ["user", "assistant", "user", "assistant", "toolResult", "assistant", "user", "assistant"]);
 });

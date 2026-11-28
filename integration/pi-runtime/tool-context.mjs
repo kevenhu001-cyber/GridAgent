@@ -1,5 +1,6 @@
+import { restoreTextContext } from "./text-context.mjs";
 // Private model-context projection, not a public transcript or disk format.
-// Do not persist this until host authorization and credential handling are wired.
+// Persistence is opt-in and host-owned; never forward this to the renderer.
 const MAX_BYTES = 48 * 1024;
 const MAX_MESSAGES = 64;
 const MAX_PARTS = 32;
@@ -155,6 +156,37 @@ export function restoreToolContext(agent, frames, options) {
         messages.push({...message, api, provider, model, usage: zeroUsage()});
       } else messages.push(message);
     }
+  }
+  agent.state.messages = messages;
+}
+
+/** Restore an ordered mix of verified text and completed tool turns atomically. */
+export function restoreMixedContext(agent, frame, options) {
+  if (frame?.method !== "restore_mixed" || frame.version !== 1 ||
+      !Array.isArray(frame.turns) || !frame.turns.length || frame.turns.length > MAX_MESSAGES ||
+      bytes(JSON.stringify(frame)) > MAX_BYTES ||
+      !Array.isArray(agent.state.messages) || agent.state.messages.length) reject();
+  const messages = [], ids = new Set();
+  for (const turn of frame.turns) {
+    const scratch = {state: {model: agent.state.model, messages: []}};
+    if (turn?.kind === "text") {
+      text(turn.user, options.credential);
+      text(turn.assistant, options.credential);
+      restoreTextContext(scratch, {method: "restore_text", version: 1,
+        turns: [{user: turn.user, assistant: turn.assistant, timestamp: turn.timestamp}]});
+    } else if (turn?.kind === "tool") {
+      restoreToolContext(scratch, [turn.context], options);
+    } else reject();
+    for (const message of scratch.state.messages) {
+      if (message.role === "assistant") for (const part of message.content) {
+        if (part.type === "toolCall") {
+          if (ids.has(part.id)) reject();
+          ids.add(part.id);
+        }
+      }
+      messages.push(message);
+    }
+    if (messages.length > MAX_MESSAGES) reject();
   }
   agent.state.messages = messages;
 }

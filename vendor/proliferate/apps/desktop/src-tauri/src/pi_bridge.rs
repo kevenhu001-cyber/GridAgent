@@ -30,6 +30,7 @@ struct PiProcess {
     active: Option<ActiveTurn>,
     journal: Journal,
     api_key: Option<Zeroizing<String>>,
+    persist_tools: bool,
 }
 
 struct ActiveTurn {
@@ -39,6 +40,7 @@ struct ActiveTurn {
     history_bytes: usize,
     prompt_redacted: bool,
     cancellation_requested: bool,
+    private_context: Option<Value>,
 }
 
 impl Drop for PiProcess {
@@ -110,6 +112,21 @@ pub(super) fn public_event(value: Value) -> Option<Value> {
     }
 }
 
+fn tool_persistence_enabled() -> bool {
+    std::env::var("GRIDAGENT_PI_PERSIST_TOOLS").as_deref() == Ok("1")
+}
+
+// Private worker frames are never accepted by public_event or returned to the renderer.
+fn worker_event(value: Value) -> Option<Value> {
+    if value["kind"] == "private_context" {
+        let id = value["id"].as_str()?;
+        let context = value.get("context")?;
+        if !valid_id(id) || !pi_history::bounded_tool_context(context) { return None; }
+        return Some(json!({"kind": "private_context", "id": id, "context": context}));
+    }
+    public_event(value)
+}
+
 pub(crate) fn pi_enabled() -> bool {
     cfg!(debug_assertions) && std::env::var("GRIDAGENT_PI_DEV").as_deref() == Ok("1")
 }
@@ -144,7 +161,7 @@ pub async fn pi_list_history(workspace_path: String) -> Result<pi_history::Histo
     let workspace = authorized_workspace(&workspace_path)
         .ok_or("Selected workspace is not authorized for Pi history")?;
     let dir = history_directory(workspace).await?;
-    tauri::async_runtime::spawn_blocking(move || pi_history::recent(&dir))
+    tauri::async_runtime::spawn_blocking(move || pi_history::recent_with_tools(&dir, tool_persistence_enabled()))
         .await.map_err(|_| "Pi history unavailable")?
 }
 
@@ -231,6 +248,9 @@ impl PiProcess {
         if let Some(key) = &api_key {
             command.env("GRIDAGENT_PI_API_KEY", key.as_str());
         }
+        let persist_tools = tool_persistence_enabled() && provider == "openai"
+            && api_key.as_ref().is_some_and(|key| !key.trim().is_empty());
+        if persist_tools { command.env("GRIDAGENT_PI_PERSIST_TOOLS", "1"); }
         let mut child = command.spawn().map_err(|_| "Cannot start embedded Pi worker")?;
         let input = child.stdin.take().ok_or("Pi stdin unavailable")?;
         let mut output = BufReader::new(child.stdout.take().ok_or("Pi stdout unavailable")?);
@@ -243,7 +263,7 @@ impl PiProcess {
                 if result.is_err() || line.last() != Some(&b'\n') || line.len() > MAX_FRAME {
                     break;
                 }
-                let Some(event) = serde_json::from_slice(&line).ok().and_then(public_event) else {
+                let Some(event) = serde_json::from_slice(&line).ok().and_then(worker_event) else {
                     break;
                 };
                 if send.send(event).await.is_err() { break; }
@@ -259,6 +279,7 @@ impl PiProcess {
             active: None,
             journal,
             api_key,
+            persist_tools,
         })
     }
 
@@ -269,6 +290,16 @@ impl PiProcess {
     }
 
     async fn capture(&mut self, event: &Value) -> Result<(), String> {
+        if event["kind"] == "private_context" {
+            let safe = self.persist_tools && self.credential().is_some_and(|key|
+                !pi_history::contains_credential(&event["context"], key));
+            let turn = self.active.as_mut().ok_or("No active Pi turn")?;
+            if !safe || turn.private_context.is_some() {
+                return Err("Unexpected private Pi context".into());
+            }
+            turn.private_context = Some(event["context"].clone());
+            return Ok(());
+        }
         // Record the durable job association before the turn settles, so an
         // interrupted worker still leaves the job attached to its turn.
         if event["kind"] == "job_submitted" {
@@ -304,11 +335,17 @@ impl PiProcess {
                 let redacted = self.credential().is_some_and(|key| pi_history::redact_events(&mut events, key));
                 let context_safe = event["context_ok"] == true && pure_text
                     && !redacted && !turn.prompt_redacted && !turn.cancellation_requested;
+                let tool_context = if self.persist_tools && !pure_text && !redacted &&
+                    !turn.prompt_redacted && !turn.cancellation_requested &&
+                    events.iter().all(|event| !matches!(event["kind"].as_str(), Some("error" | "rejected"))) {
+                    turn.private_context.filter(|context| pi_history::context_matches_events(context, &events))
+                } else { None };
                 self.journal.append(Record::Settled {
                     id: turn.id,
                     events,
                     cancellation_requested: turn.cancellation_requested,
                     context_safe,
+                    tool_context,
                 }).await?;
             }
         }
@@ -384,7 +421,7 @@ pub async fn pi_resume(
     if guard.len() >= MAX_PI_SESSIONS { return Err("Pi session limit reached".into()); }
     if guard.contains_key(&session_id) { return Err("Pi session is already open".into()); }
     let id = session_id.clone();
-    let (saved, journal, frame) = tauri::async_runtime::spawn_blocking(move || pi_history::resume(&dir, &id, &revision))
+    let (saved, journal, frame) = tauri::async_runtime::spawn_blocking(move || pi_history::resume_with_tools(&dir, &id, &revision, tool_persistence_enabled()))
         .await.map_err(|_| "Pi history unavailable")??;
     let provider = saved.provider.ok_or("Saved Pi provider is unavailable")?;
     crate::pi_credentials::validate_provider(&provider)?;
@@ -396,10 +433,8 @@ pub async fn pi_resume(
         (std::env::var("GRIDAGENT_PI_PROVIDER").as_deref() == Ok(provider.as_str()))
             .then(|| std::env::var("GRIDAGENT_PI_API_KEY").ok()).flatten()
     }).filter(|key| !key.trim().is_empty()).ok_or("Saved Pi provider has no local credential")?;
-    if frame["turns"].as_array().is_some_and(|turns| turns.iter().any(|turn| {
-        ["user", "assistant"].iter().any(|field| turn[*field].as_str().is_some_and(|text| text.contains(&key)))
-    })) {
-        return Err("Saved Pi text cannot be restored with the active credential".into());
+    if pi_history::contains_credential(&frame, &key) {
+        return Err("Saved Pi context cannot be restored with the active credential".into());
     }
     let mut process = PiProcess::start(&provider, &saved.model_id, Some(key), journal, true)?;
     process.send(frame).await?;
@@ -439,6 +474,7 @@ pub async fn pi_prompt(state: State<'_, PiState>, session_id: String, text: Stri
         history_bytes: 0,
         prompt_redacted,
         cancellation_requested: false,
+        private_context: None,
     });
     guard.insert(session_id, process);
     Ok(id)
@@ -486,7 +522,7 @@ pub async fn pi_poll(state: State<'_, PiState>, session_id: String) -> Result<Ve
                             break 'poll Err(error);
                         }
                     }
-                    batch.push(event);
+                    if event["kind"] != "private_context" { batch.push(event); }
                 }
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => {
