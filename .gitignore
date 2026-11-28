@@ -13,3 +13,7 @@ benchmark-assets/
 
 offline-evaluation/
 
+# .NET build output (retired Windows desktop app)
+desktop/**/bin/
+desktop/**/obj/
+
