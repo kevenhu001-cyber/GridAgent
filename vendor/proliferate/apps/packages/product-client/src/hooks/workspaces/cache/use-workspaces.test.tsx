@@ -62,7 +62,7 @@ describe("useWorkspaces", () => {
     useHarnessConnectionStore.getState().resetConnectionState();
   });
 
-  it("discovers an authorized native project without a legacy runtime", async () => {
+  it("discovers all registered native projects without a legacy runtime", async () => {
     useHarnessConnectionStore.setState({runtimeUrl:"",connectionState:"connecting",error:null});
     const id = "gridagent-scientific:" + "a".repeat(64);
     const list = vi.fn(async () => [

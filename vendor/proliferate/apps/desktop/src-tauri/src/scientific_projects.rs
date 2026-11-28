@@ -166,6 +166,7 @@ pub fn list() -> Result<Vec<ProjectIdentity>, String> {
         }
     }
     rows.sort_by(|a, b| a.workspace_path.to_lowercase().cmp(&b.workspace_path.to_lowercase()));
+    if rows.len() > MAX_PROJECTS { return Err("Scientific project registry limit exceeded".into()); }
     Ok(rows)
 }
 
@@ -177,6 +178,14 @@ pub fn register(selected: PathBuf) -> Result<ProjectIdentity, String> {
         .map_err(|_| "Cannot resolve GridAgent application data directory")?;
     if app.starts_with(&root) || root.starts_with(&app) {
         return Err("Choose a project folder that does not contain GridAgent application data".into());
+    }
+    let existing = list_in(&directory)?;
+    let id = id_for_path(&root);
+    let legacy_extra = configured_legacy_path().is_some_and(|legacy| {
+        id_for_path(&legacy) != id && !existing.iter().any(|row| row.id == id_for_path(&legacy))
+    });
+    if !existing.iter().any(|row| row.id == id) && existing.len() + usize::from(legacy_extra) >= MAX_PROJECTS {
+        return Err("The local scientific project limit has been reached".into());
     }
     let lock = lock_registry(&directory, true)?;
     let result = register_in(&directory, &root);

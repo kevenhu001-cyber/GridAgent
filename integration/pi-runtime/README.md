@@ -22,7 +22,7 @@ With GridAgent installed in the current Python environment, run
 
 The worker reads JSON lines (prompt and abort, with an optional startup text seed) on stdin and emits public
 text, tool status and terminal events on stdout. Configure it in the trusted
-host environment: GRIDAGENT_NATIVE_PYTHON, GRIDAGENT_NATIVE_WORKSPACE,
+host environment: GRIDAGENT_NATIVE_PYTHON, optional legacy GRIDAGENT_NATIVE_WORKSPACE,
 GRIDAGENT_PI_PROVIDER (openai/anthropic/google), GRIDAGENT_PI_MODEL,
 GRIDAGENT_PI_API_KEY. Do not log credentials. Developer task opt-in
 GRIDAGENT_NATIVE_TASKS=1 does not bypass the existing workspace grant.
@@ -84,7 +84,7 @@ sessions are admitted up to the host bound (currently four worker processes,
 each with its own scoped scientific service); every command stays keyed to
 its own session ID. Unsupported attachments/config interactions fail
 explicitly. Disconnection/uncertain submission is not replayed. There is no
-second conversation store. The existing workspace composer calls this materialization seam, enqueues into the original outbox and activates the original chat tab. Admission checks the host-authorized path and selection generation, retains drafts on pre-enqueue failure, and pins the running worker model. Native session dismissal closes an idle worker; pending sends prevent closure. This remains opt-in development mode, bounded live workers sharing the existing authorized local workspace inventory, text-only prompts. Eligible pure-text sessions can continue after restart. Tool context, per-session workspaces, independent workspace inventory and production desktop validation remain open.
+second conversation store. The existing workspace composer calls this materialization seam, enqueues into the original outbox and activates the original chat tab. Admission checks the host-authorized path and selection generation, retains drafts on pre-enqueue failure, and pins the running worker model. Native session dismissal closes an idle worker; pending sends prevent closure. This remains opt-in development mode, bounded live workers across the host-registered workspace inventory, text-only prompts. Eligible pure-text sessions can continue after restart. Tool context, per-session workspaces, independent workspace inventory and production desktop validation remain open.
 
 ## Desktop history and text continuation
 
