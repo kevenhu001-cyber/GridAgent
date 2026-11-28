@@ -255,6 +255,11 @@ export function useRenameWorkspaceEntryMutation(options?: { workspaceId?: string
 
   return useMutation({
     mutationFn: async (input: RenameWorkspaceFileEntryRequest) => {
+      const native = nativeProjectFiles(workspace, workspaceId);
+      if (native) {
+        if (!native.rename) throw new Error("Native project rename unavailable.");
+        return native.rename(workspaceId!, input);
+      }
       const resolved = await resolveWorkspaceConnectionFromContext(workspace, workspaceId);
       const client = getAnyHarnessClient(resolved.connection);
       return client.files.renameEntry(resolved.connection.anyharnessWorkspaceId, input);
@@ -311,6 +316,11 @@ export function useDeleteWorkspaceEntryMutation(options?: { workspaceId?: string
 
   return useMutation({
     mutationFn: async (input: { path: string }) => {
+      const native = nativeProjectFiles(workspace, workspaceId);
+      if (native) {
+        if (!native.delete) throw new Error("Native project delete unavailable.");
+        return native.delete(workspaceId!, input.path);
+      }
       const resolved = await resolveWorkspaceConnectionFromContext(workspace, workspaceId);
       const client = getAnyHarnessClient(resolved.connection);
       return client.files.deleteEntry(resolved.connection.anyharnessWorkspaceId, input.path);
@@ -360,6 +370,12 @@ function useCreateWorkspaceEntryMutation(
 
   return useMutation({
     mutationFn: async (input: { path: string; content?: string }) => {
+      const native = nativeProjectFiles(workspace, workspaceId);
+      if (native) {
+        if (!native.create) throw new Error("Native project create unavailable.");
+        return native.create(workspaceId!, {kind, path: input.path,
+          ...(kind === "file" ? {content: input.content ?? ""} : {})});
+      }
       const resolved = await resolveWorkspaceConnectionFromContext(workspace, workspaceId);
       const client = getAnyHarnessClient(resolved.connection);
       return client.files.createEntry(resolved.connection.anyharnessWorkspaceId, {

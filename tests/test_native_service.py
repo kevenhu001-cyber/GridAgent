@@ -85,3 +85,51 @@ def test_native_project_browser_refuses_links(tmp_path):
                          ("workspace.inspect", {"path": "link.txt"})]:
         with pytest.raises(ValueError):
             dispatch(tmp_path, method, args)
+
+
+def test_native_project_mutations_are_granted_and_revision_checked(tmp_path):
+    import pytest
+
+    from gridagent.native_service import dispatch
+
+    def call(method, **params):
+        return dispatch(tmp_path, method, params, allow_tasks=True)
+
+    with pytest.raises(ValueError, match="disabled"):
+        call("workspace.create", path="study.py", kind="file")
+    set_enabled(tmp_path, True)
+    with pytest.raises(ValueError, match="Unknown"):
+        dispatch(tmp_path, "workspace.create", {"path": "study.py", "kind": "file"})
+    call("workspace.create", path="models", kind="directory")
+    created = call("workspace.create", path="models/study.py", kind="file", text="x = 1")
+    revision = created["file"]["versionToken"]
+    assert created["entry"]["sizeBytes"] == 5
+    with pytest.raises(ValueError, match="exists"):
+        call("workspace.create", path="models/STUDY.py", kind="file")
+    with pytest.raises(ValueError, match="changed"):
+        call("workspace.rename", path="models/study.py", new_path="new.py",
+             kind="file", expected_sha256="0" * 64)
+    with pytest.raises(ValueError, match="empty"):
+        call("workspace.delete", path="models", kind="directory")
+    with pytest.raises(ValueError, match="empty"):
+        call("workspace.rename", path="models", new_path="other", kind="directory")
+    call("workspace.create", path="occupied.py", kind="file")
+    with pytest.raises(ValueError, match="exists"):
+        call("workspace.rename", path="models/study.py", new_path="occupied.py",
+             kind="file", expected_sha256=revision)
+    with pytest.raises(ValueError):
+        call("workspace.rename", path="models/study.py", new_path="../outside.py",
+             kind="file", expected_sha256=revision)
+    renamed = call("workspace.rename", path="models/study.py", new_path="new.py",
+                   kind="file", expected_sha256=revision)
+    assert renamed["entry"]["path"] == "new.py"
+    assert call("workspace.inspect", path="new.py")["sha256"] == revision
+    with pytest.raises(ValueError, match="changed"):
+        call("workspace.delete", path="new.py", kind="file", expected_sha256="0" * 64)
+    call("workspace.delete", path="new.py", kind="file", expected_sha256=revision)
+    call("workspace.rename", path="models", new_path="empty", kind="directory")
+    call("workspace.delete", path="empty", kind="directory")
+    assert [row["path"] for row in call("workspace.tree")["entries"]] == ["occupied.py"]
+    set_enabled(tmp_path, False)
+    with pytest.raises(ValueError, match="disabled"):
+        call("workspace.delete", path="occupied.py", kind="file", expected_sha256=revision)

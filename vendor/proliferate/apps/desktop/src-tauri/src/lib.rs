@@ -295,6 +295,7 @@ pub fn run() {
             scientific::scientific_project_identity,
             scientific::scientific_project_read,
             scientific::scientific_project_write,
+            scientific::scientific_project_mutate,
             anonymous_telemetry::load_anonymous_telemetry_bootstrap,
             anonymous_telemetry::save_anonymous_telemetry_state,
             config::get_app_config,

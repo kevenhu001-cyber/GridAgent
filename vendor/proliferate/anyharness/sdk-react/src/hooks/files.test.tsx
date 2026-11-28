@@ -3,11 +3,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import type { WriteWorkspaceFileRequest } from "@anyharness/sdk";
+import type { WriteWorkspaceFileRequest, CreateWorkspaceFileEntryRequest, RenameWorkspaceFileEntryRequest } from "@anyharness/sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AnyHarnessRuntime } from "../context/AnyHarnessRuntime.js";
 import { AnyHarnessWorkspace, type NativeProjectFiles } from "../context/AnyHarnessWorkspace.js";
-import { useStatWorkspaceFileQuery, useWorkspaceFilesQuery, useWriteWorkspaceFileMutation, useDeleteWorkspaceEntryMutation } from "./files.js";
+import { useStatWorkspaceFileQuery, useWorkspaceFilesQuery, useWriteWorkspaceFileMutation, useDeleteWorkspaceEntryMutation, useCreateWorkspaceFileMutation, useRenameWorkspaceEntryMutation } from "./files.js";
 
 const mocks = vi.hoisted(() => ({
   stat: vi.fn(),
@@ -135,6 +135,28 @@ describe("native scientific project file routing", () => {
     expect(legacy).not.toHaveBeenCalled();
   });
 
+  it("creates, renames and deletes via the same native project identity", async () => {
+    const native = makeNative();
+    native.create = vi.fn(async (_id: string, input: CreateWorkspaceFileEntryRequest) =>
+      ({entry: {path:input.path,name:"study.py",kind:"file" as const}}));
+    native.rename = vi.fn(async (_id: string, input: RenameWorkspaceFileEntryRequest) =>
+      ({oldPath:input.path,entry:{path:input.newPath,name:"new.py",kind:"file" as const}}));
+    native.delete = vi.fn(async (_id: string, path: string) => ({path,kind:"file" as const}));
+    const {wrap,legacy} = wrapper(native);
+    const {result} = renderHook(() => ({
+      create: useCreateWorkspaceFileMutation(),
+      rename: useRenameWorkspaceEntryMutation(),
+      remove: useDeleteWorkspaceEntryMutation(),
+    }), {wrapper:wrap});
+    await result.current.create.mutateAsync({path:"study.py",content:"x=1"});
+    await result.current.rename.mutateAsync({path:"study.py",newPath:"new.py"});
+    await result.current.remove.mutateAsync({path:"new.py"});
+    expect(native.create).toHaveBeenCalledWith(id,{kind:"file",path:"study.py",content:"x=1"});
+    expect(native.rename).toHaveBeenCalledWith(id,{path:"study.py",newPath:"new.py"});
+    expect(native.delete).toHaveBeenCalledWith(id,"new.py");
+    expect(legacy).not.toHaveBeenCalled();
+  });
+
   it("fails closed when native capability is absent or an operation is unsupported", async () => {
     const {wrap, legacy} = wrapper();
     const {result} = renderHook(() => ({
@@ -142,7 +164,7 @@ describe("native scientific project file routing", () => {
       remove: useDeleteWorkspaceEntryMutation(),
     }), {wrapper: wrap});
     await waitFor(() => expect(result.current.tree.isError).toBe(true));
-    await expect(result.current.remove.mutateAsync({path: "study.py"})).rejects.toThrow("no AnyHarness connection");
+    await expect(result.current.remove.mutateAsync({path: "study.py"})).rejects.toThrow("Native scientific project file transport unavailable");
     expect(legacy).not.toHaveBeenCalled();
   });
 });

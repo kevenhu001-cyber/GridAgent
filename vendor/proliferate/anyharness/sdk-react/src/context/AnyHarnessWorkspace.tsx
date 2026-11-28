@@ -2,6 +2,8 @@ import { createContext, type ReactNode, useContext } from "react";
 import type {
   TerminalWebSocketAuthTransport, ListWorkspaceFilesResponse, SearchWorkspaceFilesResponse,
   ReadWorkspaceFileResponse, StatWorkspaceFileResponse, WriteWorkspaceFileRequest, WriteWorkspaceFileResponse,
+  CreateWorkspaceFileEntryRequest, CreateWorkspaceFileEntryResponse, RenameWorkspaceFileEntryRequest,
+  RenameWorkspaceFileEntryResponse, DeleteWorkspaceFileEntryResponse,
 } from "@anyharness/sdk";
 
 /** Native scientific project file capability; no HTTP or external Agent dependency. */
@@ -11,6 +13,9 @@ export interface NativeProjectFiles {
   read(id: string, path: string): Promise<ReadWorkspaceFileResponse>;
   stat(id: string, path: string): Promise<StatWorkspaceFileResponse>;
   write(id: string, input: WriteWorkspaceFileRequest): Promise<WriteWorkspaceFileResponse>;
+  create?(id: string, input: CreateWorkspaceFileEntryRequest): Promise<CreateWorkspaceFileEntryResponse>;
+  rename?(id: string, input: RenameWorkspaceFileEntryRequest): Promise<RenameWorkspaceFileEntryResponse>;
+  delete?(id: string, path: string): Promise<DeleteWorkspaceFileEntryResponse>;
 }
 
 export function isNativeProjectId(id: string | null | undefined): boolean {

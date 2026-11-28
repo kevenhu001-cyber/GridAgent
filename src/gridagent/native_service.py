@@ -71,6 +71,20 @@ class ProjectWrite(Strict):
     expected_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
 
+class ProjectCreate(ProjectFile):
+    kind: Literal["file", "directory"]
+    text: str = Field(default="", max_length=48000)
+
+
+class ProjectDelete(ProjectFile):
+    kind: Literal["file", "directory"]
+    expected_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+
+
+class ProjectRename(ProjectDelete):
+    new_path: str = Field(min_length=1, max_length=240)
+
+
 class JobRef(Strict):
     job_id: str = Field(pattern=r"^[a-f0-9]{32}$")
 
@@ -110,7 +124,8 @@ METHODS = {
 }
 
 
-TASK_METHODS = {"workspace.write": ProjectWrite, "job.submit": JobSubmit, "job.cancel": JobRef,
+TASK_METHODS = {"workspace.create": ProjectCreate, "workspace.rename": ProjectRename,
+                "workspace.delete": ProjectDelete, "workspace.write": ProjectWrite, "job.submit": JobSubmit, "job.cancel": JobRef,
                 "job.submit_shell": ShellSubmit}
 
 
@@ -141,6 +156,12 @@ def dispatch(root: Path, method: str, params: dict, *, allow_tasks=False):
         return ws.inspect_project(root, **args)
     if method == "workspace.read":
         return ws.read_project(root, **args)
+    if method == "workspace.create":
+        return ws.create_project_entry(root, **args)
+    if method == "workspace.rename":
+        return ws.rename_project_entry(root, **args)
+    if method == "workspace.delete":
+        return ws.delete_project_entry(root, **args)
     if method == "workspace.write":
         return ws.write_project(root, **args)
     if method.startswith("job."):

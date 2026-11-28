@@ -210,6 +210,21 @@ pub async fn scientific_project_write(
         json!({"path":path,"text":text,"expected_sha256":expected_sha256})).await
 }
 
+#[tauri::command]
+pub async fn scientific_project_mutate(
+    state: State<'_, ScientificState>, project_id: String, method: String, params: Value,
+) -> Result<Value, String> {
+    let root = project_root()?;
+    bound_project(&root, &project_id)?;
+    if !developer_tasks_enabled() {
+        return Err("Scientific project mutation requires explicit development opt-in".into());
+    }
+    if !matches!(method.as_str(), "workspace.create" | "workspace.rename" | "workspace.delete") {
+        return Err("Unknown native project mutation".into());
+    }
+    exchange_at(&state, &root, &method, params).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

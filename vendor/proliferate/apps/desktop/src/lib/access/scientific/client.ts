@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { NativeProjectFiles } from "@anyharness/sdk-react";
-import type { StatWorkspaceFileResponse, ListWorkspaceFilesResponse, SearchWorkspaceFilesResponse, ReadWorkspaceFileResponse, WriteWorkspaceFileRequest, WriteWorkspaceFileResponse } from "@anyharness/sdk";
+import type { CreateWorkspaceFileEntryRequest, CreateWorkspaceFileEntryResponse, RenameWorkspaceFileEntryRequest, RenameWorkspaceFileEntryResponse, DeleteWorkspaceFileEntryResponse, StatWorkspaceFileResponse, ListWorkspaceFilesResponse, SearchWorkspaceFilesResponse, ReadWorkspaceFileResponse, WriteWorkspaceFileRequest, WriteWorkspaceFileResponse } from "@anyharness/sdk";
 
 export type ScientificReadMethod =
   | "hello" | "scientific.status" | "scientific.runs" | "scientific.artifact"
@@ -192,10 +192,50 @@ export async function statScientificProjectFile(id: string, path: string): Promi
   return {path, kind: "file", sizeBytes: meta.size_bytes, isText: meta.text_readable};
 }
 
+async function mutateScientificProject<T>(projectId: string, method: "workspace.create" | "workspace.rename" | "workspace.delete", params: Record<string, unknown>): Promise<T> {
+  const response = await invoke<ScientificResponse<T>>("scientific_project_mutate", {projectId, method, params});
+  if (response.version !== 1) throw new Error("Scientific protocol version mismatch");
+  if (!response.ok) throw new Error(response.error.code);
+  return response.result;
+}
+
+function createScientificEntry(id: string, input: CreateWorkspaceFileEntryRequest) {
+  return mutateScientificProject<CreateWorkspaceFileEntryResponse>(id, "workspace.create", {
+    path: input.path, kind: input.kind, text: input.content ?? "",
+  });
+}
+
+/** Observe the source revision immediately before mutation. The Python lock
+ * checks it again; only files and empty directories are currently supported. */
+async function mutationSource(id: string, path: string) {
+  if (!path) throw new Error("The project root cannot be renamed or deleted");
+  const entry = await statScientificProjectFile(id, path);
+  if (entry.kind === "directory") return {kind: "directory", expected_sha256: null};
+  if (entry.kind !== "file") throw new Error("Unsupported scientific project entry");
+  const meta = await projectRead<ProjectMetadata>(id, "workspace.inspect", {path});
+  if (meta.path !== path) throw new Error("Scientific file identity mismatch");
+  return {kind: "file", expected_sha256: meta.sha256};
+}
+
+async function renameScientificEntry(id: string, input: RenameWorkspaceFileEntryRequest) {
+  const source = await mutationSource(id, input.path);
+  return mutateScientificProject<RenameWorkspaceFileEntryResponse>(id, "workspace.rename", {
+    path: input.path, new_path: input.newPath, ...source,
+  });
+}
+
+async function deleteScientificEntry(id: string, path: string) {
+  const source = await mutationSource(id, path);
+  return mutateScientificProject<DeleteWorkspaceFileEntryResponse>(id, "workspace.delete", {path, ...source});
+}
+
 export const nativeScientificFiles: NativeProjectFiles = {
   list: listScientificDirectory,
   search: searchScientificFiles,
   read: readScientificProjectFile,
   stat: statScientificProjectFile,
   write: saveScientificProjectFile,
+  create: createScientificEntry,
+  rename: renameScientificEntry,
+  delete: deleteScientificEntry,
 };

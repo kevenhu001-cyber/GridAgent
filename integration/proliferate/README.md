@@ -118,3 +118,12 @@ row for this development workspace. This is still a single configured root,
 not a general directory picker or multi-project registry. Other startup gates,
 Git, creation/rename/delete and external Agent lifecycle remain to be migrated;
 interactive desktop acceptance is pending.
+
+Native file mutations now reuse the retained create/rename/delete hooks and
+cache invalidation. Creation requires an existing parent and refuses case-folded
+name collisions; file rename/delete recheck a SHA-256 observed just before the
+operation. Directory rename/delete are restricted to empty directories; no
+recursive deletion, replacement of existing targets, or case-only rename.
+All mutations require the same host project identity, task opt-in and grant.
+The existing project lock coordinates GridAgent writers; it is not a defense
+against arbitrary concurrent filesystem changes from external programs.
