@@ -77,7 +77,7 @@ def _launch_worker(root, job_id):
     Thread(target=child.wait, daemon=True).start()
 
 
-def submit(root, job_id, entry, arguments, plugin_ids, *, launch=_launch_worker, shell_command=None):
+def submit(root, job_id, entry, arguments, plugin_ids, *, launch=_launch_worker, shell_command=None, kernel_cells=None):
     ws.require_grant(root)
     ws.safe_parts(entry)
     if not entry.endswith(".py"):
@@ -92,6 +92,13 @@ def submit(root, job_id, entry, arguments, plugin_ids, *, launch=_launch_worker,
 
         isolated_shell_source(shell_command["shell"], shell_command["command"])
         request["shell_command"] = shell_command
+    if kernel_cells is not None:
+        from .kernel_batch import validate_cells
+
+        validate_cells(kernel_cells)
+        if shell_command is not None or plugin_ids or arguments:
+            raise ValueError("Kernel batch cannot be combined with shell, plugins or script arguments")
+        request["kernel_cells"] = kernel_cells
     with FileLock(str(base / "submit.lock"), timeout=2):
         if folder.exists():
             folder = _folder(root, job_id)
