@@ -118,3 +118,15 @@ and mocked shell job responses; they are not real model or sandbox tests.
 ### Home and workspace selection
 
 In opt-in native mode the existing Home composer receives the same Pi picker props and persisted model selection as the workspace composer. Existing authorized standard local workspaces only: no Cowork/worktree/cloud creation or deferred Agent launch. Both entry points use submitPiWorkspacePrompt and the original outbox. Native workspace selection reuses the original selection and shell-intent stores without bootstrapping an external Agent session. Header tabs derive native slots from the existing directory and suppress the old runtime roster/hierarchy reads. The workspace inventory and file transport still depend on retained services. Standalone runtime migration and real desktop qualification remain pending.
+
+## Tool-bearing context projection (milestone 2, development)
+
+`tool-context.mjs` defines a bounded private projection for completed turns with
+matched SDK tool calls and text results. It strips thinking, signatures, provider
+metadata and raw tool details, rejects incomplete turns and known credential
+occurrences, and can seed a fresh SDK state without dispatching anything. This is
+not a public event or a persistence format yet. Arbitrary project text may still
+contain other sensitive information; host-controlled storage policy, canonical
+workspace binding, atomic journal integration, mixed text/tool history and real
+provider compatibility must be verified before enabling disk persistence or
+continuation. The existing text-only behavior is unchanged.
