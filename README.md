@@ -100,6 +100,19 @@ gridagent --ask "Inspect the Kundur case and run a power flow."
 
 For sessions, model imports, research tasks and result inspection, see the [general agent guide](docs/general-agent.md), [workspace guide](docs/workspace.md) and [research workflows](docs/research-tasks.md).
 
+### Optional uv development environment (Windows)
+
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) from its official distribution, then run:
+
+```powershell
+uv python install 3.11
+uv venv --managed-python --python 3.11 .venv
+uv pip install --python .venv/Scripts/python.exe -e ".[dev,core]"
+.venv/Scripts/python.exe -m pytest tests/test_plugins.py -q
+```
+
+For trusted local CLI development, set `GRIDAGENT_UV` to the absolute installed uv executable to opt into uv-backed managed plugin installation. This is not a production desktop runtime or sandbox change. See the [infrastructure reuse plan](docs/infrastructure-reuse.md) for constraints.
+
 ### Windows desktop (development)
 
 The desktop source is in [vendor/proliferate](vendor/proliferate). Development requires Node.js 22.19.0, pnpm 10.11.0, Rust with the x86_64 Windows MSVC target, Windows SDK, and Python with the core scientific dependencies.
