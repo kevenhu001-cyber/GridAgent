@@ -11,9 +11,16 @@ const mocks = vi.hoisted(() => ({
     isError: false,
   },
   queryOptions: [] as Array<{ workspaceId: string | null; enabled: boolean }>,
+  list: vi.fn(),
 }));
 
+vi.mock("@proliferate/product-client/host/ProductHostProvider", () => {
+  const host = {desktop: {scientificProject: {list: mocks.list}}};
+  return {useProductHost: () => host};
+});
+
 vi.mock("@anyharness/sdk-react", () => ({
+  isNativeProjectId: (id: string | null) => id?.startsWith("gridagent-scientific:") ?? false,
   useWorkspaceQuery: (options: { workspaceId: string | null; enabled: boolean }) => {
     mocks.queryOptions.push(options);
     return mocks.query;
@@ -67,6 +74,7 @@ beforeEach(() => {
   mocks.query.isPending = true;
   mocks.query.isError = false;
   mocks.queryOptions.length = 0;
+  mocks.list.mockReset();
   useSessionSelectionStore.setState({
     selectedWorkspaceId: null,
     selectedLogicalWorkspaceId: null,
@@ -78,6 +86,17 @@ afterEach(() => {
 });
 
 describe("WorkspacePathProvider", () => {
+  it("uses the scientific-project subdirectory instead of the Pi authorization root", async () => {
+    const id = "gridagent-scientific:" + "a".repeat(64);
+    useSessionSelectionStore.setState({selectedWorkspaceId: id, selectedLogicalWorkspaceId: id});
+    mocks.list.mockResolvedValue([{id, workspacePath: "/study", projectPath: "/study/scientific-project", available: true, createdAt: "2026-11-28T00:00:00Z"}]);
+    const resolveConnection = vi.fn<ProductWorkspaceConnectionResolver>();
+    renderProvider(resolveConnection);
+    await waitFor(() => expect(state().workspaceRoot).toEqual({status:"settled",path:"/study/scientific-project"}));
+    expect(state().filesystemOrigin).toEqual({status:"settled",origin:"desktop-local"});
+    expect(resolveConnection).not.toHaveBeenCalled();
+    expect(mocks.queryOptions.at(-1)).toEqual({workspaceId:id,enabled:false});
+  });
   it("keeps null selection pending without resolving or querying", () => {
     const resolveConnection = vi.fn<ProductWorkspaceConnectionResolver>();
     renderProvider(resolveConnection);

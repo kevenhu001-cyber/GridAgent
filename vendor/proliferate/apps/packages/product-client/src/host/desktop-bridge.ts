@@ -1,4 +1,4 @@
-import type { AnyHarnessClientConnection } from "@anyharness/sdk-react";
+import type { AnyHarnessClientConnection, NativeProjectFiles } from "@anyharness/sdk-react";
 import type { ServerMeta } from "#product/lib/domain/auth/connect-server";
 import type { DroppedPathsSnapshot } from "./desktop-file-drop-bridge";
 import type { DesktopUpdaterBridge } from "./desktop-updater-bridge";
@@ -21,10 +21,25 @@ import type {
  * adapter. Types here mirror the concrete shapes Desktop already uses so
  * migrated product code keeps its behavior.
  */
+export interface NativeScientificProjectIdentity {
+  id: string;
+  workspacePath: string;
+  projectPath: string;
+  available: boolean;
+  createdAt: string;
+}
+
 export interface DesktopBridge {
   runtime: DesktopRuntimeBridge;
   /** Optional during migration; never fall back to an external Agent on failure. */
   pi?: DesktopPiBridge;
+  /** Native scientific-project files, keyed by the host-issued project ID. */
+  scientificFiles?: NativeProjectFiles;
+  /** List host-registered projects; add only through the native OS folder picker. */
+  scientificProject?: {
+    list(): Promise<NativeScientificProjectIdentity[]>;
+    addFromPicker(): Promise<NativeScientificProjectIdentity | null>;
+  };
   files: DesktopFilesBridge;
   nativeUi: DesktopNativeUiBridge;
   updater: DesktopUpdaterBridge;
@@ -409,7 +424,7 @@ export interface DesktopPiBridge {
   credentials?: DesktopPiCredentialBridge;
   history?: {
     list(workspacePath: string): Promise<PiHistory>;
-    dismiss(sessionId: string): Promise<void>;
+    dismiss(workspacePath: string, sessionId: string): Promise<void>;
   };
   listModels?(): Promise<PiModelRecord[]>;
   mode(): Promise<boolean>;

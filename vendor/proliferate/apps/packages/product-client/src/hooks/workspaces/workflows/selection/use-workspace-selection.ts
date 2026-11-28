@@ -4,6 +4,8 @@ import { writeChatShellIntentForEmptySurface, writeChatShellIntentForSession } f
 import { markWorkspaceViewed } from "#product/stores/preferences/workspace-ui-store";
 import { useCallback } from "react";
 import type { Workspace } from "@anyharness/sdk";
+import { isNativeProjectId } from "@anyharness/sdk-react";
+import { nativeProjectWorkspace } from "#product/lib/access/pi/native-project";
 import { useProductHost } from "@proliferate/product-client/host/ProductHostProvider";
 import { useWorkspaceBootstrapActions } from "#product/hooks/workspaces/workflows/use-workspace-bootstrap-actions";
 import { useWorkspaceSelectionCache } from "#product/hooks/workspaces/cache/use-workspace-selection-cache";
@@ -80,7 +82,14 @@ export function useWorkspaceSelection() {
         const native=await desktop.pi.mode();
         if (native) {
           const logical=findLogicalWorkspace(logicalWorkspaces,workspaceId);
-          const workspace=workspaceCollections?.localWorkspaces.find(w=>w.id===(logical?.localWorkspace?.id ?? workspaceId));
+          const targetId = logical?.localWorkspace?.id ?? workspaceId;
+          let workspace=workspaceCollections?.localWorkspaces.find(w=>w.id===targetId);
+          if (isNativeProjectId(targetId)) {
+            if (!desktop.scientificProject) throw new Error("Native project discovery unavailable.");
+            const identity = (await desktop.scientificProject.list()).find(project => project.id === targetId);
+            if (!identity || !identity.available) throw new Error("Selected native project is no longer authorized or its folder is missing.");
+            workspace = nativeProjectWorkspace(identity);
+          }
           if (!workspace || workspace.surface!=="standard" || workspace.lifecycleState!=="active" ||
             workspace.availability==="workspace_directory_missing" || !await desktop.pi.matchesWorkspace(workspace.path))
             throw new Error("Choose a local workspace authorized for native Pi.");
@@ -99,13 +108,14 @@ export function useWorkspaceSelection() {
             ? requestedSlot?.workspaceId===workspace.id && requestedSlot.agentKind==="pi" ? requestedSlot.sessionId : null
             : Object.values(getWorkspaceSessionRecords(workspace.id)).find(s=>s.agentKind==="pi" && s.status!=="closed")?.sessionId ?? null;
           cancelPreviousWorkspaceDisplayQueries({runtimeUrl,previousWorkspaceIds:[now.selectedLogicalWorkspaceId,now.selectedWorkspaceId],nextWorkspaceIds:[workspace.id]});
-          setSelectedWorkspace({logicalWorkspaceId:logical?.id ?? workspace.id,workspaceId:workspace.id,initialActiveSessionId:initial,hotPaintGate:null});
+          setSelectedWorkspace({logicalWorkspaceId:isNativeProjectId(workspace.id) ? workspace.id : logical?.id ?? workspace.id,workspaceId:workspace.id,initialActiveSessionId:initial,hotPaintGate:null});
           if(initial) writeChatShellIntentForSession({workspaceId:workspace.id,sessionId:initial});
           else writeChatShellIntentForEmptySurface({workspaceId:workspace.id});
           markWorkspaceViewed(workspace.id);
           return;
         }
       }
+      if (isNativeProjectId(workspaceId)) throw new Error("Native project mode is unavailable.");
       const deps = {
         localRuntime,
         cloudClient,
@@ -145,6 +155,7 @@ export function useWorkspaceSelection() {
       getWorkspaceSelectionSnapshot,
       localRuntime,
       desktop?.pi,
+      desktop?.scientificProject,
       reconcileHotWorkspace,
       setSelectedLogicalWorkspaceId,
       setSelectedWorkspace,

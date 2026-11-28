@@ -1,4 +1,5 @@
 import type { RepoRoot, Workspace } from "@anyharness/sdk";
+import { isNativeProjectId } from "@anyharness/sdk-react";
 import type { CloudWorkspaceSummary } from "#product/lib/domain/workspaces/cloud/cloud-workspace-model";
 import {
   workspaceCurrentBranchName,
@@ -55,6 +56,7 @@ export function buildBaseLogicalWorkspaceIdForLocalWorkspace(
   workspace: Workspace,
   repoRoot: RepoRoot | null,
 ): string {
+  if (isNativeProjectId(workspace.id)) return workspace.id;
   if (repoRoot?.remoteProvider && repoRoot.remoteOwner && repoRoot.remoteRepoName) {
     return buildRemoteLogicalWorkspaceId(
       repoRoot.remoteProvider,

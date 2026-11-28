@@ -16,6 +16,7 @@ import type {
 
 import { getRuntimeInfo, restartRuntime } from "./runtime";
 import { embeddedPi } from "../scientific/pi";
+import { nativeScientificFiles, listScientificProjects, addScientificProjectFromPicker } from "../scientific/client";
 import {
   getHomeDir,
   inspectPath,
@@ -97,6 +98,8 @@ const desktopSupportSnapshotBridge: DesktopSupportSnapshotBridge = {
  */
 export const desktopBridge: DesktopBridge = {
   pi: embeddedPi,
+  scientificFiles: nativeScientificFiles,
+  scientificProject: { list: listScientificProjects, addFromPicker: addScientificProjectFromPicker },
   runtime: {
     async getConnection(): Promise<LocalRuntimeSnapshot> {
       const info = await getRuntimeInfo();

@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { AnyHarnessError } from "@anyharness/sdk";
 import {
   resolveWorkspaceConnectionFromContext,
+  nativeProjectFiles,
   useAnyHarnessWorkspaceContext,
   useWriteWorkspaceFileMutation,
 } from "@anyharness/sdk-react";
@@ -47,6 +48,17 @@ export function useWorkspaceFileBufferActions(fileContext: WorkspaceFileContext)
 
   const reloadFile = useCallback(async (filePath: string) => {
     if (!fileContext.materializedWorkspaceId) {
+      return;
+    }
+    const native = nativeProjectFiles(workspace, fileContext.materializedWorkspaceId);
+    if (native) {
+      const read = await reloadWorkspaceFile({
+        materializedWorkspaceId: fileContext.materializedWorkspaceId,
+        anyharnessWorkspaceId: fileContext.materializedWorkspaceId,
+        runtimeUrl: "",
+        filePath,
+      });
+      replaceBufferFromRead(filePath, read);
       return;
     }
     const resolved = await resolveWorkspaceConnectionFromContext(

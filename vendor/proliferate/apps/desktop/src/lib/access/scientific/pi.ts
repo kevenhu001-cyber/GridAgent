@@ -11,7 +11,7 @@ export const embeddedPi: DesktopPiBridge = {
   listModels: () => invoke("pi_list_models"),
   history: {
     list: workspacePath => invoke("pi_list_history", { workspacePath }),
-    dismiss: sessionId => invoke("pi_dismiss_history", { sessionId }),
+    dismiss: (workspacePath, sessionId) => invoke("pi_dismiss_history", { workspacePath, sessionId }),
   },
   mode: () => invoke<boolean>("pi_mode"),
   matchesWorkspace: path => invoke<boolean>("pi_matches_workspace", { path }),

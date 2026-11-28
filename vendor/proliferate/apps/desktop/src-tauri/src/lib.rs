@@ -9,6 +9,7 @@ mod quit_flow;
 mod runtime_version_assert;
 mod sidecar;
 mod scientific;
+mod scientific_projects;
 mod pi_bridge;
 mod pi_credentials;
 mod pi_history;
@@ -292,6 +293,11 @@ pub fn run() {
             pi_bridge::pi_close,
             scientific::scientific_read,
             scientific::scientific_task,
+            scientific::scientific_project_list,
+            scientific::scientific_project_add_from_picker,
+            scientific::scientific_project_read,
+            scientific::scientific_project_write,
+            scientific::scientific_project_mutate,
             anonymous_telemetry::load_anonymous_telemetry_bootstrap,
             anonymous_telemetry::save_anonymous_telemetry_state,
             config::get_app_config,

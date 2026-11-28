@@ -4,6 +4,7 @@ import {
   anyHarnessWorkspaceFileSearchKey,
   anyHarnessWorkspaceFileStatKey,
   getAnyHarnessClient,
+  nativeProjectFiles,
   resolveWorkspaceConnectionFromContext,
   useAnyHarnessCacheScopeKey,
   useAnyHarnessWorkspaceContext,
@@ -32,6 +33,8 @@ export function useWorkspaceFileLookup() {
     ),
     retry: false,
     queryFn: async () => {
+      const native = nativeProjectFiles(workspace, materializedWorkspaceId);
+      if (native) return native.search(materializedWorkspaceId, query, 128);
       const { connection } = await resolveWorkspaceConnectionFromContext(
         workspace,
         materializedWorkspaceId,
@@ -54,6 +57,8 @@ export function useWorkspaceFileLookup() {
     queryKey: anyHarnessWorkspaceFileStatKey(cacheScopeKey, materializedWorkspaceId, path),
     retry: false,
     queryFn: async () => {
+      const native = nativeProjectFiles(workspace, materializedWorkspaceId);
+      if (native) return native.stat(materializedWorkspaceId, path);
       const { connection } = await resolveWorkspaceConnectionFromContext(
         workspace,
         materializedWorkspaceId,

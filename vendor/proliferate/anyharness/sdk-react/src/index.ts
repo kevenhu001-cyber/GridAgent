@@ -9,6 +9,9 @@ export {
   AnyHarnessWorkspace,
   resolveWorkspaceConnectionFromContext,
   useAnyHarnessWorkspaceContext,
+  useOptionalAnyHarnessWorkspaceContext,
+  nativeProjectFiles,
+  isNativeProjectId,
 } from "./context/AnyHarnessWorkspace.js";
 export type {
   AnyHarnessRuntimeContextValue,
@@ -16,6 +19,7 @@ export type {
 export type {
   AnyHarnessResolvedConnection,
   AnyHarnessWorkspaceContextValue,
+  NativeProjectFiles,
 } from "./context/AnyHarnessWorkspace.js";
 
 export { getAnyHarnessClient } from "./lib/client-cache.js";

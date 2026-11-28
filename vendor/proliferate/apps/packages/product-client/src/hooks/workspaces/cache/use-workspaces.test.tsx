@@ -11,6 +11,7 @@ import type { CloudWorkspaceSummary } from "#product/lib/domain/workspaces/cloud
 import { useHarnessConnectionStore } from "#product/stores/sessions/harness-connection-store";
 import { ProductHostProvider } from "@proliferate/product-client/host/ProductHostProvider";
 import { makeTestProductHost } from "#product/test/product-host-test-utils";
+import type { ProductHost } from "@proliferate/product-client/host/product-host";
 import { workspaceCollectionsKey } from "#product/hooks/workspaces/cache/query-keys";
 import { useWorkspaces } from "#product/hooks/workspaces/cache/use-workspaces";
 
@@ -59,6 +60,23 @@ describe("useWorkspaces", () => {
     mocks.repoRootsList.mockReset();
     mocks.workspacesList.mockReset();
     useHarnessConnectionStore.getState().resetConnectionState();
+  });
+
+  it("discovers all registered native projects without a legacy runtime", async () => {
+    useHarnessConnectionStore.setState({runtimeUrl:"",connectionState:"connecting",error:null});
+    const id = "gridagent-scientific:" + "a".repeat(64);
+    const list = vi.fn(async () => [
+      {id,workspacePath:"/study",projectPath:"/study/scientific-project",available:true,createdAt:"2026-11-28T00:00:00Z"},
+      {id:"gridagent-scientific:" + "b".repeat(64),workspacePath:"/study-two",projectPath:"/study-two/scientific-project",available:true,createdAt:"2026-11-28T00:00:00Z"},
+    ]);
+    const base = makeTestProductHost();
+    // Only these capabilities are consumed by the inventory hook.
+    const host = {...base, desktop: {pi:{mode:async()=>true},scientificProject:{list}}} as unknown as ProductHost;
+    const {result} = renderUseWorkspaces(createQueryClient(), host);
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.localWorkspaces.map(row=>row.id)).toEqual([id, "gridagent-scientific:" + "b".repeat(64)]);
+    expect(mocks.workspacesList).not.toHaveBeenCalled();
+    expect(mocks.repoRootsList).not.toHaveBeenCalled();
   });
 
   it("does not cache empty workspace collections when a request is aborted", async () => {
@@ -188,8 +206,7 @@ function createQueryClient() {
   });
 }
 
-function renderUseWorkspaces(queryClient = createQueryClient()) {
-  const host = makeTestProductHost();
+function renderUseWorkspaces(queryClient = createQueryClient(), host = makeTestProductHost()) {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={queryClient}>
       <ProductHostProvider host={host}>{children}</ProductHostProvider>
