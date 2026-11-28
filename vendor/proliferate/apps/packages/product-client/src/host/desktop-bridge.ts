@@ -25,6 +25,8 @@ export interface NativeScientificProjectIdentity {
   id: string;
   workspacePath: string;
   projectPath: string;
+  available: boolean;
+  createdAt: string;
 }
 
 export interface DesktopBridge {
@@ -33,8 +35,11 @@ export interface DesktopBridge {
   pi?: DesktopPiBridge;
   /** Native scientific-project files, keyed by the host-issued project ID. */
   scientificFiles?: NativeProjectFiles;
-  /** Discover the single explicitly configured development project; no arbitrary root. */
-  scientificProject?: { identity(): Promise<NativeScientificProjectIdentity> };
+  /** List host-registered projects; add only through the native OS folder picker. */
+  scientificProject?: {
+    list(): Promise<NativeScientificProjectIdentity[]>;
+    addFromPicker(): Promise<NativeScientificProjectIdentity | null>;
+  };
   files: DesktopFilesBridge;
   nativeUi: DesktopNativeUiBridge;
   updater: DesktopUpdaterBridge;
@@ -419,7 +424,7 @@ export interface DesktopPiBridge {
   credentials?: DesktopPiCredentialBridge;
   history?: {
     list(workspacePath: string): Promise<PiHistory>;
-    dismiss(sessionId: string): Promise<void>;
+    dismiss(workspacePath: string, sessionId: string): Promise<void>;
   };
   listModels?(): Promise<PiModelRecord[]>;
   mode(): Promise<boolean>;

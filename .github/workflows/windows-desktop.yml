@@ -61,5 +61,6 @@ jobs:
         run: cargo check --locked --target x86_64-pc-windows-msvc -p proliferate --tests
       - name: Verify Pi history recovery and workspace isolation
         run: cargo test --locked --target x86_64-pc-windows-msvc -p proliferate --lib pi_history::tests
+          cargo test --locked --target x86_64-pc-windows-msvc -p proliferate --lib scientific_projects::tests
       - name: Verify native project identity binding
         run: cargo test --locked --target x86_64-pc-windows-msvc -p proliferate --lib scientific::tests

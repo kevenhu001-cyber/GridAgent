@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { NativeProjectFiles } from "@anyharness/sdk-react";
+import type { NativeScientificProjectIdentity } from "@proliferate/product-client/host/desktop-bridge";
 import type { CreateWorkspaceFileEntryRequest, CreateWorkspaceFileEntryResponse, RenameWorkspaceFileEntryRequest, RenameWorkspaceFileEntryResponse, DeleteWorkspaceFileEntryResponse, StatWorkspaceFileResponse, ListWorkspaceFilesResponse, SearchWorkspaceFilesResponse, ReadWorkspaceFileResponse, WriteWorkspaceFileRequest, WriteWorkspaceFileResponse } from "@anyharness/sdk";
 
 export type ScientificReadMethod =
@@ -88,8 +89,12 @@ export interface ScientificProjectIdentity {
   projectPath: string;
 }
 
-export function getScientificProjectIdentity() {
-  return invoke<ScientificProjectIdentity>("scientific_project_identity");
+export function listScientificProjects() {
+  return invoke<NativeScientificProjectIdentity[]>("scientific_project_list");
+}
+
+export function addScientificProjectFromPicker() {
+  return invoke<NativeScientificProjectIdentity | null>("scientific_project_add_from_picker");
 }
 
 async function projectRead<T>(

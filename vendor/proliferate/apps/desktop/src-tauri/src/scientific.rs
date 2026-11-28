@@ -2,7 +2,6 @@
 //! The default lane is read-only. Mutations require explicit debug-host opt-in.
 //! No model or renderer supplies an executable or root.
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::{collections::HashMap, path::PathBuf, process::Stdio, time::{Duration, Instant}};
 use tauri::State;
 use tokio::{
@@ -20,7 +19,6 @@ pub struct ScientificState(Mutex<HashMap<PathBuf, ScientificProcess>>);
 
 struct ScientificProcess {
     _child: Child,
-    root: PathBuf,
     input: ChildStdin,
     output: BufReader<ChildStdout>,
     last_used: Instant,
@@ -74,7 +72,7 @@ impl ScientificProcess {
         let mut child = command.spawn().map_err(|_| "Cannot start scientific service".to_string())?;
         let input = child.stdin.take().ok_or("Scientific stdin unavailable")?;
         let output = BufReader::new(child.stdout.take().ok_or("Scientific stdout unavailable")?);
-        Ok(Self { _child: child, root, input, output, last_used: Instant::now() })
+        Ok(Self { _child: child, input, output, last_used: Instant::now() })
     }
 
     async fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {

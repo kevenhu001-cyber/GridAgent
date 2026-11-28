@@ -54,7 +54,7 @@ fn registry_directory() -> Result<PathBuf, String> {
 }
 
 fn lock_registry(directory: &Path, exclusive: bool) -> Result<std::fs::File, String> {
-    let lock = OpenOptions::new().read(true).write(true).create(true)
+    let lock = OpenOptions::new().read(true).write(true).create(true).truncate(false)
         .open(directory.join(".lock")).map_err(|_| "Cannot open scientific project registry lock")?;
     if exclusive { lock.lock_exclusive() } else { lock.lock_shared() }
         .map_err(|_| "Cannot lock scientific project registry")?;

@@ -124,9 +124,9 @@ export function useWorkspaces(options?: UseWorkspacesOptions) {
     queryFn: async ({ signal }) => {
       if (desktop?.pi && desktop.scientificProject && await desktop.pi.mode()) {
         signal.throwIfAborted();
-        const identity = await desktop.scientificProject.identity();
+        const identities = await desktop.scientificProject.list();
         signal.throwIfAborted();
-        return buildWorkspaceCollections([nativeProjectWorkspace(identity)], [], []);
+        return buildWorkspaceCollections(identities.map(nativeProjectWorkspace), [], []);
       }
       if (!hasLocalRuntime && canDiscoverNative) return buildWorkspaceCollections([], [], []);
       if (!hasLocalRuntime) {

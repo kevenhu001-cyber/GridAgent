@@ -86,8 +86,8 @@ export function useWorkspaceSelection() {
           let workspace=workspaceCollections?.localWorkspaces.find(w=>w.id===targetId);
           if (isNativeProjectId(targetId)) {
             if (!desktop.scientificProject) throw new Error("Native project discovery unavailable.");
-            const identity = await desktop.scientificProject.identity();
-            if (identity.id !== targetId) throw new Error("Selected native project is no longer authorized.");
+            const identity = (await desktop.scientificProject.list()).find(project => project.id === targetId);
+            if (!identity || !identity.available) throw new Error("Selected native project is no longer authorized or its folder is missing.");
             workspace = nativeProjectWorkspace(identity);
           }
           if (!workspace || workspace.surface!=="standard" || workspace.lifecycleState!=="active" ||

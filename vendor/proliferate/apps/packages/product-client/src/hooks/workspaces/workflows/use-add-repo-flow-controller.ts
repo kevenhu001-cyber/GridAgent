@@ -24,6 +24,8 @@ import {
   buildCloudRepoAddedReceipt,
   useRepoAddedToast,
 } from "#product/hooks/workspaces/ui/use-repo-added-toast";
+import { useWorkspaceCollectionsInvalidationActions } from "#product/hooks/workspaces/cache/use-workspace-collections-invalidation";
+import { useHarnessConnectionStore } from "#product/stores/sessions/harness-connection-store";
 
 /** Confirmation on arrival, once the checklist has actually been walked. */
 const GITHUB_CONNECTED_BANNER = "GitHub connected. Choose a repository.";
@@ -88,6 +90,7 @@ export function useAddRepoFlowController({
   const authStatus = useProductAuthStatus();
   const files = host.desktop?.files ?? null;
   const showRepoAddedToast = useRepoAddedToast();
+  const { invalidateWorkspaceCollectionsForRuntime } = useWorkspaceCollectionsInvalidationActions();
   const [flowError, setFlowError] = useState<string | null>(null);
 
   const canManageInstallation = isSettingsAdminRole(
@@ -279,6 +282,16 @@ export function useAddRepoFlowController({
         setFlowError("Local repositories are only available in Desktop.");
         return;
       }
+      // In embedded Pi mode, reuse this existing Add Folder entry but let the
+      // native host own the picker and registration. A renderer-provided path
+      // is never accepted as authorization for a new project root.
+      if (host.desktop?.pi && host.desktop.scientificProject && await host.desktop.pi.mode()) {
+        const added = await host.desktop.scientificProject.addFromPicker();
+        if (!added) return;
+        await invalidateWorkspaceCollectionsForRuntime(useHarnessConnectionStore.getState().runtimeUrl);
+        onClose();
+        return;
+      }
       const picked = await files.pickDirectory();
       if (picked.kind === "cancelled") {
         return;
@@ -300,8 +313,10 @@ export function useAddRepoFlowController({
       // Failures also toast from useAddRepo; surface the reason inline and
       // keep the surface open so the user can retry or back out.
       setFlowError(result.error);
-    })();
-  }, [addRepoFromPath, files, onClose, setStep]);
+    })().catch((error: unknown) => {
+      setFlowError(error instanceof Error ? error.message : "Failed to add project folder.");
+    });
+  }, [addRepoFromPath, files, host.desktop, invalidateWorkspaceCollectionsForRuntime, onClose, setStep]);
 
   const onBack = useCallback(() => {
     setFlowError(null);

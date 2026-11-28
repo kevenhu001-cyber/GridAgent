@@ -65,13 +65,16 @@ describe("useWorkspaces", () => {
   it("discovers an authorized native project without a legacy runtime", async () => {
     useHarnessConnectionStore.setState({runtimeUrl:"",connectionState:"connecting",error:null});
     const id = "gridagent-scientific:" + "a".repeat(64);
-    const identity = vi.fn(async () => ({id,workspacePath:"/study",projectPath:"/study/scientific-project"}));
+    const list = vi.fn(async () => [
+      {id,workspacePath:"/study",projectPath:"/study/scientific-project",available:true,createdAt:"2026-11-28T00:00:00Z"},
+      {id:"gridagent-scientific:" + "b".repeat(64),workspacePath:"/study-two",projectPath:"/study-two/scientific-project",available:true,createdAt:"2026-11-28T00:00:00Z"},
+    ]);
     const base = makeTestProductHost();
     // Only these capabilities are consumed by the inventory hook.
-    const host = {...base, desktop: {pi:{mode:async()=>true},scientificProject:{identity}}} as unknown as ProductHost;
+    const host = {...base, desktop: {pi:{mode:async()=>true},scientificProject:{list}}} as unknown as ProductHost;
     const {result} = renderUseWorkspaces(createQueryClient(), host);
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data?.localWorkspaces.map(row=>row.id)).toEqual([id]);
+    expect(result.current.data?.localWorkspaces.map(row=>row.id)).toEqual([id, "gridagent-scientific:" + "b".repeat(64)]);
     expect(mocks.workspacesList).not.toHaveBeenCalled();
     expect(mocks.repoRootsList).not.toHaveBeenCalled();
   });
